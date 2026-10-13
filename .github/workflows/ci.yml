@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned tool versions. Keep in sync with the Makefile. Review monthly.
+  GOLANGCI_LINT_VERSION: v2.13.2
+  GOSEC_VERSION: v2.28.0
+  GOVULNCHECK_VERSION: v1.9.0      # golang.org/x/vuln module version
+  GITLEAKS_VERSION: v8.30.1
+
+jobs:
+  rules:
+    name: Warden rules (no shell, no secrets, os/exec location)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rule checker
+        run: python3 .github/scripts/check_rules.py
+      - name: Hook self-tests
+        run: python3 .claude/hooks/test_hooks.py
+
+  guardrail-label:
+    name: Guardrail changes need the guardrail-change label
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check changed guardrail files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'guardrail-change') }}
+        run: |
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD" \
+            | grep -E '^(CLAUDE\.md|\.claude/|\.github/|\.golangci\.yml|Makefile$)' || true)
+          if [ -n "$changed" ] && [ "$HAS_LABEL" != "true" ]; then
+            echo "This PR changes guardrail files:"
+            echo "$changed"
+            echo "Only Nofal changes guardrails. Add the 'guardrail-change' label after reviewing."
+            exit 1
+          fi
+          echo "ok"
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: gitleaks
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
+          "$(go env GOPATH)/bin/gitleaks" detect --source . --redact --verbose
+
+  go:
+    name: Go lint, security scans and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Detect Go code
+        id: pkgs
+        run: |
+          if git ls-files '*.go' | grep -q .; then echo "present=true" >> "$GITHUB_OUTPUT";
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "No Go files yet; Go checks skipped."; fi
+      - name: Module and packages load
+        if: steps.pkgs.outputs.present == 'true'
+        run: go list ./...
+      - name: Install tools
+        if: steps.pkgs.outputs.present == 'true'
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: gofmt
+        if: steps.pkgs.outputs.present == 'true'
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - name: go vet
+        if: steps.pkgs.outputs.present == 'true'
+        run: go vet ./...
+      - name: golangci-lint
+        if: steps.pkgs.outputs.present == 'true'
+        run: golangci-lint run ./...
+      - name: gosec
+        if: steps.pkgs.outputs.present == 'true'
+        run: gosec -quiet ./...
+      - name: govulncheck
+        if: steps.pkgs.outputs.present == 'true'
+        run: govulncheck ./...
+      - name: Tests with race detector and coverage
+        if: steps.pkgs.outputs.present == 'true'
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Coverage gate
+        if: steps.pkgs.outputs.present == 'true'
+        run: python3 .github/scripts/coverage_gate.py coverage.out

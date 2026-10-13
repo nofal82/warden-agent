@@ -1,0 +1,7 @@
+# Linux line endings everywhere, even when files are touched from Windows.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.go text eol=lf
+*.png binary
+*.jpg binary

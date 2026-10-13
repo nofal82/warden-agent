@@ -1,0 +1,43 @@
+# golangci-lint v2 configuration. Guardrail file: agents may not edit it.
+# Repeats Warden's hard rules at the type-checked level (the regex rule
+# checker in .github/scripts/check_rules.py is the first line).
+version: "2"
+linters:
+  default: standard
+  enable:
+    - gosec
+    - errorlint
+    - bodyclose
+    - noctx
+    - misspell
+    - depguard
+    - forbidigo
+  settings:
+    depguard:
+      rules:
+        exec-only-in-primitives:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!**/internal/executor/primitives/**"
+            - "!**/lab/**"
+          deny:
+            - pkg: "os/exec"
+              desc: "Only executor primitives (and lab tooling) may run processes. See CLAUDE.md, Forbidden."
+        executor-no-network:
+          list-mode: lax
+          files:
+            - "**/internal/executor/**"
+            - "**/cmd/warden-executor/**"
+          deny:
+            - pkg: "net"
+              desc: "The executor must never use the network."
+            - pkg: "google.golang.org/grpc"
+              desc: "The executor must never use the network."
+    forbidigo:
+      analyze-types: true   # catches aliased imports such as `sc "syscall"`
+      forbid:
+        - pattern: '^(syscall|unix)\.(Exec|ForkExec|StartProcess)$'
+          msg: "Raw process start is forbidden. Use an executor primitive."
+        - pattern: '^os\.StartProcess$'
+          msg: "Raw process start is forbidden. Use an executor primitive."
