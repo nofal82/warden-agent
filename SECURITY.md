@@ -12,6 +12,8 @@ Email **security@cloudvertex.net** with:
 - how to reproduce it
 - the impact you expect
 
+You can also report privately through GitHub: Security tab → Report a vulnerability.
+
 We acknowledge reports within 2 business days and give an assessment within
 7 days. We credit reporters who wish to be named once a fix ships.
 
