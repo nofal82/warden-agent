@@ -14,7 +14,9 @@ Specs live in `specs/` of the `warden` repository (from `warden-agent`, that is
 
 1. Identify the spec and section the change claims to implement (PR
    description, branch name or commit messages). If none is named, report
-   that as a blocking finding.
+   that as a blocking finding, unless the change is documentation-only
+   (no code and no change to specified behaviour): then report
+   `VERDICT: MATCHES (docs-only)` and stop.
 2. Read the spec section fully, including its acceptance criteria and test
    scenarios.
 3. Read the diff: `git diff origin/main...HEAD`.

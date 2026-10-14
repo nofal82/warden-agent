@@ -70,6 +70,11 @@ warden-agent (unprivileged user)          repo: warden-agent
         |  Unix socket, signed typed requests
         v
 warden-executor (root, tiny, no network)   repo: warden-agent
+        |
+        |  fixed binary, typed arguments (database playbooks only)
+        v
+warden-dbhelper (dedicated non-root user, local DB sockets only)
+                                           repo: warden-agent
 ```
 
 - **warden-agent**: telemetry, discovery, local log matching, redaction,
@@ -77,6 +82,11 @@ warden-executor (root, tiny, no network)   repo: warden-agent
 - **warden-executor**: the ONLY root process. Re-verifies the signed action
   envelope independently, runs exactly one typed primitive, returns a result.
   No network, no telemetry parsing, no shell.
+- **warden-dbhelper** (decision 0012): the ONLY place database drivers are
+  allowed. Dedicated non-root user, empty network namespace, local Unix
+  sockets only, own cgroup, read-only privilege allow-list checked at every
+  connection. Started by the executor as a fixed binary with typed
+  arguments; it never verifies envelopes and never runs a shell.
 - **Control plane**: one Go binary. PostgreSQL (state, durable workflows,
   hash-chained audit, incident log extracts) and VictoriaMetrics (metrics).
   OPA embedded for policy (Rego). Dashboard in TypeScript + React, built into
@@ -97,7 +107,10 @@ warden-executor (root, tiny, no network)   repo: warden-agent
   validated typed values (and in `warden/lab/` tooling, which never ships).
 - No raw-script or "run any command" feature. It is removed from V1.
 - No network, firewall, routing, kernel, schema-change or data-deletion
-  actions.
+  actions. "Data deletion" means client data: database contents,
+  application or user files, backups, volumes. Housekeeping defined in
+  `specs/typed-action-catalog.md` (package cache, journal keeping 7 days,
+  rotated logs at least 7 days old, core dumps) is not data deletion.
 - No listening network socket on client servers. The agent only dials out.
 - No secrets in code, tests, fixtures, logs, commits or PR text. Use obvious
   fakes such as `FAKE-SECRET-123`. Tests that need realistic-looking secrets
@@ -119,6 +132,7 @@ warden-executor (root, tiny, no network)   repo: warden-agent
 
 A PR is `security-critical` if it touches:
 - `warden-executor`, any typed primitive, or its input validation
+- `warden-dbhelper`: its containment, credentials or privilege checks
 - the action envelope (signature, expiry, target host, playbook
   id/version/digest, idempotency, replay)
 - identity: enrollment, certificate issuance, rotation, revocation, mTLS
@@ -149,8 +163,11 @@ For these PRs:
   inventory. Numbers, sizes, durations, counts: explicit min and max.
 - Databases (MySQL/MariaDB, PostgreSQL, MongoDB): parameterised or typed
   commands only; never build a query from strings.
-- Keep the executor under about 2,000 lines. If a change would grow it a
-  lot, stop and propose a design change.
+- Keep the executor at about 2,500-3,000 lines including the typed
+  primitives (the shared strict decoder and warden-dbhelper are counted
+  separately). Reviewability is kept by a clear module split and at least
+  90% coverage. If a change would grow it a lot, stop and propose a
+  design change.
 
 ## Action envelope (every action)
 
@@ -189,6 +206,8 @@ plane is down, and a server reboot mid-action.
 - Use the `work-on-issue` skill. One issue = one branch = one pull request.
 - Specs are the scope. If a spec is missing, unclear or wrong, ask in the
   PR and stop. Do not invent behaviour; put ideas under "Suggestions".
+  Documentation-only PRs (no code and no change to specified behaviour)
+  need no spec citation.
 - Every PR gets the `spec-checker` and `security-reviewer` subagent verdicts
   and a `pr-walkthrough` for Nofal, who owns the architecture and is learning
   Go during the build.
