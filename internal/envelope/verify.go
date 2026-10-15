@@ -1,6 +1,7 @@
 package envelope
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"sync/atomic"
@@ -40,7 +41,8 @@ const (
 
 // Test-only observability (AC4, AC7, AC8): the body is never decoded, and
 // ed25519.Verify is never reached for a non-canonical S, before the earlier
-// checks pass.
+// checks pass. They are process-wide, so tests that assert on them must
+// not run in parallel (t.Parallel).
 var (
 	bodyDecodes       atomic.Uint64
 	signatureVerifies atomic.Uint64
@@ -108,13 +110,16 @@ func (v *Verifier) Verify(raw []byte) (*Verified, error) {
 		return nil, reject(CodeUnknownKey, checkKey)
 	}
 
-	if !verifySignature(key.PublicKey, outer.GetBody(), outer.GetSignature()) {
+	// One private copy is both verified and decoded, so a caller that
+	// reuses raw cannot make the decoded bytes differ from the signed ones.
+	signed := bytes.Clone(outer.GetBody())
+	if !verifySignature(key.PublicKey, signed, outer.GetSignature()) {
 		return nil, reject(CodeBadSignature, checkSignature)
 	}
 
 	bodyDecodes.Add(1)
 	body := new(wardenv1.EnvelopeBody)
-	if wirescan.Unmarshal(outer.GetBody(), body) != nil || !bodyWithinLimits(body) {
+	if wirescan.Unmarshal(signed, body) != nil || !bodyWithinLimits(body) {
 		return nil, reject(CodeBodyInvalid, checkBody)
 	}
 	if body.GetFormatVersion() != FormatVersion {
