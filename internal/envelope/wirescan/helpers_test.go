@@ -37,7 +37,7 @@ func assertSentinel(t testing.TB, err, want error) {
 		t.Fatalf("error %v does not wrap %v", err, want)
 	}
 	for name, s := range sentinels {
-		if s != want && errors.Is(err, s) {
+		if !errors.Is(s, want) && errors.Is(err, s) {
 			t.Fatalf("error %v also wraps %s; want exactly one sentinel", err, name)
 		}
 	}
@@ -57,7 +57,6 @@ func countSentinels(err error) int {
 var (
 	bodyMD   = (&wardenv1.EnvelopeBody{}).ProtoReflect().Descriptor()
 	outerMD  = (&wardenv1.SignedEnvelope{}).ProtoReflect().Descriptor()
-	pdMD     = (&wardenv1.PolicyDecision{}).ProtoReflect().Descriptor()
 	paramsMD = (&wardenv1.TypedRequest{}).ProtoReflect().Descriptor()
 	dbTermMD = (&wardenv1.DbTerminateSessionRequest{}).ProtoReflect().Descriptor()
 )
@@ -124,7 +123,7 @@ func populate(m protoreflect.Message) {
 		}
 		if fd.IsList() {
 			l := m.Mutable(fd).List()
-			for j := 0; j < 2; j++ {
+			for j := uint8(0); j < 2; j++ {
 				if fd.Kind() == protoreflect.MessageKind {
 					e := l.NewElement()
 					populate(e.Message())
@@ -143,18 +142,18 @@ func populate(m protoreflect.Message) {
 	}
 }
 
-func scalar(fd protoreflect.FieldDescriptor, j int) protoreflect.Value {
+func scalar(fd protoreflect.FieldDescriptor, j uint8) protoreflect.Value {
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
 		return protoreflect.ValueOfBool(true)
 	case protoreflect.EnumKind:
-		return protoreflect.ValueOfEnum(protoreflect.EnumNumber(1 + j))
+		return protoreflect.ValueOfEnum(protoreflect.EnumNumber(1 + int32(j)))
 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-		return protoreflect.ValueOfInt32(int32(-7 - j))
+		return protoreflect.ValueOfInt32(-7 - int32(j))
 	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
 		return protoreflect.ValueOfInt64(int64(-1) << 40 >> j)
 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-		return protoreflect.ValueOfUint32(uint32(4_000_000_000 + j))
+		return protoreflect.ValueOfUint32(4_000_000_000 + uint32(j))
 	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
 		return protoreflect.ValueOfUint64(uint64(1)<<62 + uint64(j))
 	case protoreflect.FloatKind:
@@ -162,7 +161,7 @@ func scalar(fd protoreflect.FieldDescriptor, j int) protoreflect.Value {
 	case protoreflect.DoubleKind:
 		return protoreflect.ValueOfFloat64(2.5)
 	case protoreflect.StringKind:
-		return protoreflect.ValueOfString("svc-" + string(rune('a'+j)) + ".service")
+		return protoreflect.ValueOfString("svc-" + string(rune('a')+rune(j)) + ".service")
 	case protoreflect.BytesKind:
 		return protoreflect.ValueOfBytes(make([]byte, 32))
 	}

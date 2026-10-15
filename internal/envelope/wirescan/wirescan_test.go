@@ -255,12 +255,18 @@ func TestOuterCases(t *testing.T) {
 func TestRepeatedFields(t *testing.T) {
 	ids := []uint64{1, 300, 1 << 40}
 	starts := []int64{-1, 0, 1_700_000_000_000_000}
+	// Packed payload of field 4 as proto.Marshal writes it (int64 values
+	// are encoded as two's complement varints).
 	packedStarts := func() []byte {
-		var b []byte
-		for _, v := range starts {
-			b = protowire.AppendVarint(b, uint64(v))
+		b, err := proto.Marshal(&wardenv1.DbTerminateSessionRequest{SessionStartedAt: starts})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return b
+		v, n := protowire.ConsumeBytes(b[1:])
+		if n < 0 || b[0] != 4<<3|byte(protowire.BytesType) {
+			t.Fatal("unexpected encoding of field 4")
+		}
+		return v
 	}()
 	unpackedIDs := func() []byte {
 		var b []byte
@@ -277,7 +283,7 @@ func TestRepeatedFields(t *testing.T) {
 		{"two_packed_runs", dbTermMD, cat(fBytes(nil, 3, packedVarints(1)), fBytes(nil, 3, packedVarints(2))), nil},
 		{"packed_empty", dbTermMD, fBytes(nil, 3, nil), nil},
 		{"packed_starts_negative", dbTermMD, fBytes(nil, 4, packedStarts), nil},
-		{"unpacked_starts", dbTermMD, cat(fVarint(nil, 4, uint64(starts[0])), fVarint(nil, 4, 5)), nil},
+		{"unpacked_starts", dbTermMD, cat(fVarint(nil, 4, math.MaxUint64) /* -1 as two's complement */, fVarint(nil, 4, 5)), nil},
 		{"repeated_bytes_three_times", dbTermMD, cat(fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},
 		{"many_ids", dbTermMD, fBytes(nil, 3, packedVarints(make([]uint64, 1000)...)), nil},
 		{"full_message", dbTermMD, marshalDet(t, &wardenv1.DbTerminateSessionRequest{

@@ -59,7 +59,7 @@ func strictClean(b []byte, md protoreflect.MessageDescriptor, depth int) bool {
 		if fd.IsList() {
 			native := nativeWireType(fd)
 			packable := native != protowire.BytesType
-			if typ != native && !(packable && typ == protowire.BytesType) {
+			if typ != native && (!packable || typ != protowire.BytesType) {
 				return false
 			}
 			if fd.Kind() == protoreflect.MessageKind {

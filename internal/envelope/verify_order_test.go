@@ -6,6 +6,7 @@ package envelope
 import (
 	"bytes"
 	"crypto/ed25519"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -286,8 +287,8 @@ func TestVerifyConcurrent(t *testing.T) {
 					}
 					continue
 				}
-				rej, ok := err.(*Rejection)
-				if !ok || rej.Code != in.code || res != nil {
+				var rej *Rejection
+				if !errors.As(err, &rej) || rej.Code != in.code || res != nil {
 					errs <- "wrong concurrent rejection"
 					return
 				}
