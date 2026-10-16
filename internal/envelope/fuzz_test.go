@@ -171,13 +171,13 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			b = b[k:]
 		case protowire.BytesType:
 			l, k := readVarint(b)
-			if k < 0 || k != minimalLen(l) || l > math.MaxInt32 {
+			// int(l) cannot overflow once l <= MaxInt32, and comparing with
+			// the remaining length first keeps k+int(l) from overflowing on
+			// 32-bit platforms.
+			if k < 0 || k != minimalLen(l) || l > math.MaxInt32 || int(l) > len(b)-k {
 				return false
 			}
 			end := k + int(l)
-			if end > len(b) {
-				return false
-			}
 			payload := b[k:end]
 			b = b[end:]
 			if fd.Kind() == protoreflect.MessageKind {
