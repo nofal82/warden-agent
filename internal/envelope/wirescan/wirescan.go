@@ -28,7 +28,8 @@ var (
 	// ErrTooDeep: nesting beyond maxDepth.
 	ErrTooDeep = errors.New("wirescan: nesting too deep")
 	// ErrNonCanonical: a varint (tag, length or value) that is not minimally
-	// encoded, or a value outside the range of its field's type. Generated
+	// encoded, a value outside the range of its field's type, or a repeated
+	// numeric or enum field that is not packed. Generated
 	// decoders silently truncate such values (2^32+1 in a uint32 reads as
 	// 1), and decoders in other languages may not, so the same signed bytes
 	// could be read two ways.
@@ -44,8 +45,8 @@ const maxDepth = 16
 // silently accepts: unknown fields, repeated non-repeated fields (where the
 // last one wins or messages merge), two members of one oneof, groups and
 // wire-type mismatches (action-envelope R13), and non-canonical encodings:
-// overlong varints and int32, enum, uint32 or bool values outside their
-// type's range.
+// overlong varints, int32, enum, uint32 or bool values outside their
+// type's range, and unpacked repeated numeric or enum fields.
 func Check(b []byte, md protoreflect.MessageDescriptor) error {
 	return check(b, md, 0)
 }
@@ -130,6 +131,11 @@ func checkValue(fd protoreflect.FieldDescriptor, typ protowire.Type, v []byte, d
 	packed := typ == protowire.BytesType && fd.IsList() && isPackable(want)
 	if typ != want && !packed {
 		return fmt.Errorf("field %d: %w", fd.Number(), ErrWireType)
+	}
+	if fd.IsList() && isPackable(want) && !packed {
+		// One record per element decodes to the same list as the packed
+		// form, so only the packed form is accepted (R13 (i)).
+		return fmt.Errorf("field %d: unpacked repeated: %w", fd.Number(), ErrNonCanonical)
 	}
 	switch typ {
 	case protowire.VarintType:
