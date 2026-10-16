@@ -34,6 +34,14 @@ linters:
               desc: "The executor must never use the network."
             - pkg: "google.golang.org/grpc"
               desc: "The executor must never use the network."
+        agent-no-signature-verifier:
+          list-mode: lax
+          files:
+            - "**/internal/agent/**"
+            - "**/cmd/warden-agent/**"
+          deny:
+            - pkg: "github.com/nofal82/warden-agent/internal/envelope$"
+              desc: "The agent's envelope checks are advisory; only the executor links the signature verifier. The agent may use internal/envelope/wirescan."
     forbidigo:
       analyze-types: true   # catches aliased imports such as `sc "syscall"`
       forbid:

@@ -7,7 +7,7 @@ HAS_GO    := $(shell git ls-files '*.go' 2>/dev/null | head -n 1)
 FUZZTIME  ?= 30s
 
 # Pinned tool versions. Keep in sync with .github/workflows/ci.yml.
-GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT_VERSION := v2.14.0
 GOSEC_VERSION         := v2.28.0
 GOVULNCHECK_VERSION   := v1.9.0
 GITLEAKS_VERSION      := v8.30.1
@@ -47,7 +47,7 @@ endif
 
 sec: ## gosec static security scan and gitleaks secret scan
 ifneq ($(HAS_GO),)
-	$(GOBIN)/gosec -quiet ./...
+	$(GOBIN)/gosec -quiet -exclude-generated ./...
 endif
 	$(GOBIN)/gitleaks detect --source . --redact --no-banner
 
