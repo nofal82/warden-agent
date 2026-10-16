@@ -235,8 +235,10 @@ func minimalLen(v uint64) int { return (bits.Len64(v|1) + 6) / 7 }
 func inRange(k protoreflect.Kind, v uint64) bool {
 	switch k {
 	case protoreflect.Int32Kind, protoreflect.EnumKind:
-		s := int64(v) //nolint:gosec // intended reinterpretation
-		return s >= math.MinInt32 && s <= math.MaxInt32
+		// In int32 range exactly when the top 33 bits are all 0 (0 … MaxInt32)
+		// or all 1 (sign-extended MinInt32 … -1).
+		top := v >> 31
+		return top == 0 || top == 1<<33-1
 	case protoreflect.Uint32Kind, protoreflect.Sint32Kind:
 		return v <= math.MaxUint32
 	case protoreflect.BoolKind:
@@ -267,7 +269,8 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			return false
 		}
 		b = b[n:]
-		fd := md.Fields().ByNumber(protowire.Number(tag >> 3)) //nolint:gosec // bounded by the lookup
+		num, _ := protowire.DecodeTag(tag)
+		fd := md.Fields().ByNumber(num)
 		if fd == nil {
 			return false
 		}
@@ -290,11 +293,15 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			b = b[8:]
 		case protowire.BytesType:
 			l, k := readVarint(b)
-			if k < 0 || k != minimalLen(l) || l > uint64(len(b)-k) {
+			if k < 0 || k != minimalLen(l) || l > math.MaxInt32 {
 				return false
 			}
-			payload := b[k : k+int(l)] //nolint:gosec // l <= len(b)
-			b = b[k+int(l):]           //nolint:gosec // l <= len(b)
+			end := k + int(l)
+			if end > len(b) {
+				return false
+			}
+			payload := b[k:end]
+			b = b[end:]
 			switch {
 			case fd.Kind() == protoreflect.MessageKind:
 				if !canonicalOK(payload, fd.Message()) {

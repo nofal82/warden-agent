@@ -10,6 +10,7 @@ package wirescan_test
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"testing"
 
@@ -516,7 +517,7 @@ func TestCanonicalNestedKinds(t *testing.T) {
 	}
 	var cases []scanCase
 	for _, depth := range []int{0, 1, 2, 5, 15} {
-		d := string(rune('0'+depth/10)) + string(rune('0'+depth%10))
+		d := fmt.Sprintf("%02d", depth)
 		cases = append(cases,
 			scanCase{"depth" + d + "_valid_extremes", kindsMD, nest(depth, cat(
 				fVarint(nil, 1, i64(math.MinInt32)), fVarint(nil, 2, math.MaxUint32), fVarint(nil, 3, math.MaxUint32),

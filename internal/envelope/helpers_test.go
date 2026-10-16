@@ -361,11 +361,22 @@ func overlong(v uint64) []byte { return overlongN(v, protowire.SizeVarint(v)+1) 
 
 // rawTag is the varint value of a field tag.
 func rawTag(num protowire.Number, typ protowire.Type) uint64 {
-	return uint64(num)<<3 | uint64(typ)
+	return protowire.EncodeTag(num, typ)
 }
 
 // i64 is the two's-complement wire value of a signed integer.
-func i64(v int64) uint64 { return uint64(v) } //nolint:gosec // intended reinterpretation
+// i64 is the two's complement uint64 that a varint carries for v.
+func i64(v int64) uint64 {
+	if v >= 0 {
+		return uint64(v)
+	}
+	// For v < 0, m = -(v+1) is in 0 … MaxInt64 (no overflow, even for
+	// MinInt64), and ^m = 2^64 - 1 - m = 2^64 + v.
+	if m := -(v + 1); m >= 0 {
+		return ^uint64(m)
+	}
+	panic("unreachable")
+}
 
 // encMut says how mutateAt re-encodes the field it finds.
 type encMut int
