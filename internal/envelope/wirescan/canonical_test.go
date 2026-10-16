@@ -105,6 +105,14 @@ var kindsMD = func() protoreflect.MessageDescriptor {
 	return file.Messages().ByName("Kinds")
 }()
 
+// wantIfList is want for a repeated field and nil for any other.
+func wantIfList(fd protoreflect.FieldDescriptor, want error) error {
+	if fd.IsList() {
+		return want
+	}
+	return nil
+}
+
 // newMessage returns an empty message for md: the generated type when one is
 // registered, otherwise a dynamic message.
 func newMessage(md protoreflect.MessageDescriptor) proto.Message {
@@ -212,7 +220,10 @@ func isVarintKind(k protoreflect.Kind) bool {
 
 // Every varint field of every contract message (and of kindsMD) rejects an
 // out-of-range value and accepts boundary in-range values, as a single
-// field, packed (bad element in the middle) and unpacked.
+// field and, for repeated fields, packed (bad element first, in the middle
+// and alone). A repeated field written unpacked is rejected whatever its
+// values (R13 (i)), so range coverage for repeated fields lives in the
+// packed cases.
 func TestCanonicalRangeEveryField(t *testing.T) {
 	mds := append(contractMessages(), kindsMD)
 	checked := 0
@@ -232,6 +243,8 @@ func TestCanonicalRangeEveryField(t *testing.T) {
 					cases = append(cases,
 						scanCase{name + "/packed", md, fBytes(nil, num, packedVarints(1, bad.v, 1)), wirescan.ErrNonCanonical},
 						scanCase{name + "/packed_only", md, fBytes(nil, num, packedVarints(bad.v)), wirescan.ErrNonCanonical},
+						scanCase{name + "/packed_first", md, fBytes(nil, num, packedVarints(bad.v, 1)), wirescan.ErrNonCanonical},
+						// Rejected as unpacked (R13 (i)) before the value is looked at.
 						scanCase{name + "/unpacked", md, cat(fVarint(nil, num, 1), fVarint(nil, num, bad.v)), wirescan.ErrNonCanonical},
 					)
 					continue
@@ -243,7 +256,10 @@ func TestCanonicalRangeEveryField(t *testing.T) {
 				if fd.IsList() {
 					cases = append(cases,
 						scanCase{name + "/packed", md, fBytes(nil, num, packedVarints(1, good.v, 1)), nil},
-						scanCase{name + "/unpacked", md, cat(fVarint(nil, num, good.v), fVarint(nil, num, good.v)), nil},
+						scanCase{name + "/packed_only", md, fBytes(nil, num, packedVarints(good.v)), nil},
+						// R13 (i): in-range values written unpacked are still rejected.
+						scanCase{name + "/unpacked", md, cat(fVarint(nil, num, good.v), fVarint(nil, num, good.v)), wirescan.ErrNonCanonical},
+						scanCase{name + "/unpacked_single", md, fVarint(nil, num, good.v), wirescan.ErrNonCanonical},
 					)
 					continue
 				}
@@ -279,7 +295,9 @@ func TestCanonicalOverlongEveryField(t *testing.T) {
 			}
 			switch {
 			case isVarintKind(fd.Kind()):
-				add("minimal", fVarint(nil, num, 1), nil)
+				// A repeated field's single unpacked record is non-canonical
+				// (R13 (i)); its minimal form is the packed one below.
+				add("minimal", fVarint(nil, num, 1), wantIfList(fd, wirescan.ErrNonCanonical))
 				add("tag_overlong", fOverlongTagVarint(nil, num, 1), wirescan.ErrNonCanonical)
 				add("tag_overlong_10_bytes", cat(tagOver(protowire.VarintType, 10), []byte{0x01}), wirescan.ErrNonCanonical)
 				add("value_1_as_81_00", fVarintOverlong(nil, num, 1), wirescan.ErrNonCanonical)
@@ -307,10 +325,12 @@ func TestCanonicalOverlongEveryField(t *testing.T) {
 				add("len_0_as_80_00", fBytesOverlongLen(nil, num, nil), wirescan.ErrNonCanonical)
 				add("len_200_overlong", fBytesOverlongLen(nil, num, bytes.Repeat([]byte("a"), 200)), wirescan.ErrNonCanonical)
 			case fd.Kind() == protoreflect.Fixed32Kind:
-				add("minimal", fFixed32(nil, num, math.MaxUint32), nil)
+				add("minimal", fFixed32(nil, num, math.MaxUint32), wantIfList(fd, wirescan.ErrNonCanonical))
 				add("tag_overlong", cat(overlong(rawTag(num, protowire.Fixed32Type)), protowire.AppendFixed32(nil, 1)), wirescan.ErrNonCanonical)
 				if fd.IsList() {
+					add("packed_minimal", fBytes(nil, num, cat(protowire.AppendFixed32(nil, math.MaxUint32), protowire.AppendFixed32(nil, 0))), nil)
 					add("packed_len_overlong", fBytesOverlongLen(nil, num, protowire.AppendFixed32(nil, 1)), wirescan.ErrNonCanonical)
+					add("packed_tag_overlong", fOverlongTagBytes(nil, num, protowire.AppendFixed32(nil, 1)), wirescan.ErrNonCanonical)
 				}
 			case fd.Kind() == protoreflect.Sfixed64Kind:
 				add("minimal", fFixed64(nil, num, math.MaxUint64), nil)
@@ -458,8 +478,13 @@ func TestCanonicalPacked64(t *testing.T) {
 		{"ids_elem_2^56_as_10_bytes", dbTermMD, fBytes(nil, 3, overlongN(1<<56, 10)), wirescan.ErrNonCanonical},
 		{"starts_elem_overlong", dbTermMD, fBytes(nil, 4, cat(packedVarints(math.MaxUint64), overlong(1_700_000_000))), wirescan.ErrNonCanonical},
 		{"ids_len_overlong", dbTermMD, fBytesOverlongLen(nil, 3, packedVarints(1, 2)), wirescan.ErrNonCanonical},
+		// Since R13 (i) the first, minimal unpacked record is already
+		// rejected; the overlong value and tag are covered packed below.
 		{"ids_unpacked_value_overlong", dbTermMD, cat(fVarint(nil, 3, 1), fVarintOverlong(nil, 3, 2)), wirescan.ErrNonCanonical},
 		{"ids_unpacked_tag_overlong", dbTermMD, cat(fVarint(nil, 3, 1), fOverlongTagVarint(nil, 3, 2)), wirescan.ErrNonCanonical},
+		{"ids_packed_elem_2_overlong_alone", dbTermMD, fBytes(nil, 3, overlong(2)), wirescan.ErrNonCanonical},
+		{"ids_packed_tag_overlong", dbTermMD, fOverlongTagBytes(nil, 3, packedVarints(1, 2)), wirescan.ErrNonCanonical},
+		{"starts_packed_tag_overlong", dbTermMD, fOverlongTagBytes(nil, 4, packedVarints(math.MaxUint64)), wirescan.ErrNonCanonical},
 		{"second_packed_run_overlong", dbTermMD, cat(fBytes(nil, 3, packedVarints(1)), fBytes(nil, 3, overlong(2))), wirescan.ErrNonCanonical},
 		{"digests_second_len_overlong", dbTermMD, cat(fBytes(nil, 6, digest), fBytesOverlongLen(nil, 6, digest)), wirescan.ErrNonCanonical},
 		{"server_started_overlong", dbTermMD, fVarintOverlong(nil, 5, 1_700_000_000), wirescan.ErrNonCanonical},
@@ -500,6 +525,9 @@ func TestCanonicalWellKnownWrappers(t *testing.T) {
 		{"uint64_2^56_10_bytes", u64, cat([]byte{0x08}, overlongN(1<<56, 10)), wirescan.ErrNonCanonical},
 		{"location_path_elem_2^32+4", loc, fBytes(nil, 1, packedVarints(1, 1<<32+4)), wirescan.ErrNonCanonical},
 		{"location_path_elem_overlong", loc, fBytes(nil, 1, cat(packedVarints(1), overlong(2))), wirescan.ErrNonCanonical},
+		// R13 (i) applies to any schema, not only the warden contract.
+		{"location_path_unpacked", loc, fVarint(nil, 1, 1), wirescan.ErrNonCanonical},
+		{"location_span_unpacked", loc, cat(fBytes(nil, 2, packedVarints(1, 2)), fVarint(nil, 2, 3)), wirescan.ErrNonCanonical},
 	}
 	runCanonCases(t, cases)
 }
@@ -521,7 +549,11 @@ func TestCanonicalNestedKinds(t *testing.T) {
 		cases = append(cases,
 			scanCase{"depth" + d + "_valid_extremes", kindsMD, nest(depth, cat(
 				fVarint(nil, 1, i64(math.MinInt32)), fVarint(nil, 2, math.MaxUint32), fVarint(nil, 3, math.MaxUint32),
-				fVarint(nil, 4, 1), fVarint(nil, 5, math.MaxUint64), fVarint(nil, 16, 0))), nil},
+				fVarint(nil, 4, 1), fVarint(nil, 5, math.MaxUint64), fBytes(nil, 16, packedVarints(0)))), nil},
+			scanCase{"depth" + d + "_unpacked_bool", kindsMD, nest(depth, fVarint(nil, 16, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_unpacked_enum", kindsMD, nest(depth, fVarint(nil, 17, 1)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_unpacked_fixed32", kindsMD, nest(depth, fFixed32(nil, 21, 1)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_unpacked_in_repeated_child", kindsMD, nest(depth, inList(fVarint(nil, 20, 1))), wirescan.ErrNonCanonical},
 			scanCase{"depth" + d + "_int32_2^31", kindsMD, nest(depth, fVarint(nil, 1, 1<<31)), wirescan.ErrNonCanonical},
 			scanCase{"depth" + d + "_sint32_2^32", kindsMD, nest(depth, fVarint(nil, 2, 1<<32)), wirescan.ErrNonCanonical},
 			scanCase{"depth" + d + "_bool_2", kindsMD, nest(depth, fVarint(nil, 4, 2)), wirescan.ErrNonCanonical},

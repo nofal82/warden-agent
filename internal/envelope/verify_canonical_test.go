@@ -56,8 +56,16 @@ func TestCheck5NonCanonicalInEveryParamsMember(t *testing.T) {
 		reqMD := member.Message()
 		for j := 0; j < reqMD.Fields().Len(); j++ {
 			fd := reqMD.Fields().Get(j)
-			var good, tagBad, valBad []byte
+			var good, tagBad, valBad, unpacked []byte
 			switch {
+			case fd.IsList() && fd.Kind() != protoreflect.StringKind && fd.Kind() != protoreflect.BytesKind:
+				// Repeated numeric field: canonical only when packed
+				// (R13 (i)), so the overlong cases are built on the packed
+				// record and the unpacked form is a case of its own.
+				good = fBytes(nil, fd.Number(), protowire.AppendVarint(nil, 1))
+				tagBad = protowire.AppendBytes(overlong(rawTag(fd.Number(), protowire.BytesType)), protowire.AppendVarint(nil, 1))
+				valBad = fBytes(nil, fd.Number(), overlong(1))
+				unpacked = fVarint(nil, fd.Number(), 1)
 			case fd.Kind() == protoreflect.StringKind || fd.Kind() == protoreflect.BytesKind:
 				good = protowire.AppendBytes(protowire.AppendTag(nil, fd.Number(), protowire.BytesType), []byte("a"))
 				tagBad = protowire.AppendBytes(overlong(rawTag(fd.Number(), protowire.BytesType)), []byte("a"))
@@ -84,6 +92,11 @@ func TestCheck5NonCanonicalInEveryParamsMember(t *testing.T) {
 			t.Run(name+"/value_overlong", func(t *testing.T) {
 				expectBodyReject(t, v, wrapParams(valBad), CodeBodyInvalid, 5)
 			})
+			if unpacked != nil {
+				t.Run(name+"/unpacked", func(t *testing.T) {
+					expectBodyReject(t, v, wrapParams(unpacked), CodeBodyInvalid, 5)
+				})
+			}
 		}
 	}
 }
@@ -216,6 +229,75 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 	req := fVarint(marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1)}), 5, 0)
 	if res, err := v.Verify(sealBytes(keyA, fBytes(noParams, 8, fBytes(nil, 17, req)))); err != nil || res == nil {
 		t.Fatalf("explicit dry_run=false rejected: %v", err)
+	}
+}
+
+// R13 (i): a correctly signed body whose DbTerminateSessionRequest carries
+// session_ids or session_started_at unpacked (one record per element) is
+// BODY_INVALID at check 5, even for a single element and when mixed with a
+// packed record. proto.Unmarshal would read every one of these as the same
+// list as the packed form, so accepting them would let two different signed
+// byte strings stand for one action. The packed forms, and several records
+// of the repeated bytes field session_owner_digests, are accepted.
+//
+// Not decided by the spec yet, so not asserted here: two packed records for
+// one field, and an empty packed record.
+func TestCheck5UnpackedRepeated(t *testing.T) {
+	v := defaultVerifier(t)
+	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
+	withReq := func(req []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 22, req)) }
+	head := marshalDet(t, &wardenv1.DbTerminateSessionRequest{
+		Engine: wardenv1.Engine(1), Instance: "mysql.service", ServerStartedAt: 1_700_000_000, MinIdleSeconds: 600,
+	})
+	app := func(more ...[]byte) []byte { return cat(append([][]byte{append([]byte(nil), head...)}, more...)...) }
+	packed := func(num protowire.Number, vals ...uint64) []byte {
+		var p []byte
+		for _, x := range vals {
+			p = protowire.AppendVarint(p, x)
+		}
+		return fBytes(nil, num, p)
+	}
+	digests := cat(fBytes(nil, 6, digest("owner-1")), fBytes(nil, 6, digest("owner-2")))
+	minus1 := uint64(math.MaxUint64)
+
+	accepted := map[string][]byte{
+		"ids_and_starts_packed":       app(packed(3, 101, 202), packed(4, 0, 0)),
+		"starts_packed_negative":      app(packed(3, 101), packed(4, minus1)),
+		"digests_two_records":         app(packed(3, 101, 202), packed(4, 0, 0), digests),
+		"deterministic_marshal_order": marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service", SessionIds: []uint64{101, 202}, SessionStartedAt: []int64{0, 0}, ServerStartedAt: 1_700_000_000, SessionOwnerDigests: [][]byte{digest("owner-1"), digest("owner-2")}, MinIdleSeconds: 600}),
+	}
+	for name, req := range accepted {
+		t.Run("accepted/"+name, func(t *testing.T) {
+			res, err := v.Verify(sealBytes(keyA, withReq(req)))
+			if err != nil || res == nil {
+				t.Fatalf("packed encoding rejected: %v", err)
+			}
+		})
+	}
+
+	rejected := map[string][]byte{
+		"ids_single":                  app(fVarint(nil, 3, 101)),
+		"ids_single_zero":             app(fVarint(nil, 3, 0)),
+		"ids_single_max":              app(fVarint(nil, 3, math.MaxUint64)),
+		"ids_two":                     app(fVarint(nil, 3, 101), fVarint(nil, 3, 202)),
+		"ids_packed_then_unpacked":    app(packed(3, 101), fVarint(nil, 3, 202)),
+		"ids_unpacked_then_packed":    app(fVarint(nil, 3, 101), packed(3, 202)),
+		"ids_unpacked_before_head":    cat(fVarint(nil, 3, 101), head),
+		"starts_single":               app(packed(3, 101), fVarint(nil, 4, 1_700_000_000_000_000)),
+		"starts_single_minus1":        app(packed(3, 101), fVarint(nil, 4, minus1)),
+		"starts_single_zero":          app(packed(3, 101), fVarint(nil, 4, 0)),
+		"starts_packed_then_unpacked": app(packed(3, 101, 202), packed(4, 0), fVarint(nil, 4, 0)),
+		"starts_unpacked_then_packed": app(packed(3, 101, 202), fVarint(nil, 4, 0), packed(4, 0)),
+		"both_unpacked":               app(fVarint(nil, 3, 101), fVarint(nil, 4, 0)),
+		"unpacked_with_digests":       app(fVarint(nil, 3, 101), fVarint(nil, 4, 0), digests),
+		// wire-type mismatch stays BODY_INVALID too
+		"ids_as_i64":    app(fFixed64(nil, 3, 101)),
+		"starts_as_i32": app(packed(3, 101), fFixed32(nil, 4, 0)),
+	}
+	for name, req := range rejected {
+		t.Run("rejected/"+name, func(t *testing.T) {
+			expectBodyReject(t, v, withReq(req), CodeBodyInvalid, 5)
+		})
 	}
 }
 

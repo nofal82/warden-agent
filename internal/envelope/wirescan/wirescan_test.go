@@ -278,12 +278,17 @@ func TestRepeatedFields(t *testing.T) {
 	digest := make([]byte, 32)
 	runScanCases(t, []scanCase{
 		{"packed_ids", dbTermMD, fBytes(nil, 3, packedVarints(ids...)), nil},
-		{"unpacked_ids", dbTermMD, unpackedIDs, nil},
-		{"packed_then_unpacked", dbTermMD, cat(fBytes(nil, 3, packedVarints(1, 2)), fVarint(nil, 3, 3)), nil},
+		// R13 (i): a repeated numeric or enum field must be packed; one
+		// record per element is non-canonical.
+		{"unpacked_ids", dbTermMD, unpackedIDs, wirescan.ErrNonCanonical},
+		{"packed_then_unpacked", dbTermMD, cat(fBytes(nil, 3, packedVarints(1, 2)), fVarint(nil, 3, 3)), wirescan.ErrNonCanonical},
+		// The spec does not decide yet whether two packed records for one
+		// field, or an empty packed record, are canonical. These two keep
+		// today's behaviour and must not be read as a requirement.
 		{"two_packed_runs", dbTermMD, cat(fBytes(nil, 3, packedVarints(1)), fBytes(nil, 3, packedVarints(2))), nil},
 		{"packed_empty", dbTermMD, fBytes(nil, 3, nil), nil},
 		{"packed_starts_negative", dbTermMD, fBytes(nil, 4, packedStarts), nil},
-		{"unpacked_starts", dbTermMD, cat(fVarint(nil, 4, math.MaxUint64) /* -1 as two's complement */, fVarint(nil, 4, 5)), nil},
+		{"unpacked_starts", dbTermMD, cat(fVarint(nil, 4, math.MaxUint64) /* -1 as two's complement */, fVarint(nil, 4, 5)), wirescan.ErrNonCanonical},
 		{"repeated_bytes_three_times", dbTermMD, cat(fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},
 		{"many_ids", dbTermMD, fBytes(nil, 3, packedVarints(make([]uint64, 1000)...)), nil},
 		{"full_message", dbTermMD, marshalDet(t, &wardenv1.DbTerminateSessionRequest{

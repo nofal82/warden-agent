@@ -103,6 +103,13 @@ func nonCanonicalBodies(tb testing.TB) [][]byte {
 		withReq(17, fVarint(nil, 2, 1<<32+7)),
 		withReq(22, fBytes(nil, 3, cat(protowire.AppendVarint(nil, 1), overlong(2)))),
 		withReq(22, fBytes(nil, 4, cat(protowire.AppendVarint(nil, math.MaxUint64), protowire.AppendVarint(nil, 1<<63)))),
+		// R13 (i): repeated numeric fields written unpacked.
+		withReq(22, fVarint(nil, 3, 101)),
+		withReq(22, cat(fVarint(nil, 3, 101), fVarint(nil, 3, 202))),
+		withReq(22, cat(fBytes(nil, 3, protowire.AppendVarint(nil, 101)), fVarint(nil, 3, 202))),
+		withReq(22, fVarint(nil, 4, math.MaxUint64)),
+		withReq(22, cat(fBytes(nil, 3, protowire.AppendVarint(nil, 101)), fVarint(nil, 4, 0))),
+		withReq(22, fFixed64(nil, 3, 101)),
 	}
 }
 
@@ -148,8 +155,9 @@ func inRange(k protoreflect.Kind, v uint64) bool {
 
 // canonicalOK is an independent oracle for the canonical-encoding rule: every
 // tag, length prefix, varint value and packed element in b (recursively, by
-// md) is minimal, and every int32/enum, uint32/sint32 and bool value is in
-// range. Anything it cannot parse is "not OK".
+// md) is minimal, every int32/enum, uint32/sint32 and bool value is in
+// range, and every repeated numeric or enum field is packed (R13 (i)).
+// Anything it cannot parse is "not OK".
 func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 	for len(b) > 0 {
 		tag, n := readVarint(b)
@@ -164,6 +172,10 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 		}
 		switch protowire.Type(tag & 7) {
 		case protowire.VarintType:
+			if fd.IsList() {
+				// An unpacked element of a repeated numeric or enum field.
+				return false
+			}
 			v, k := readVarint(b)
 			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
 				return false
