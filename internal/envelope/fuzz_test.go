@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"errors"
+	"math"
 	"math/big"
+	"math/bits"
 	"regexp"
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -64,7 +67,132 @@ func attackBodies(tb testing.TB) [][]byte {
 		{0x00},
 		{0xff, 0xff, 0xff},
 	}
-	return out
+	return append(out, nonCanonicalBodies(tb)...)
+}
+
+// nonCanonicalBodies is one signed-body seed for each non-canonical form
+// (R13): overlong tag, value and length at depths 0-2, and out-of-range
+// uint32, enum and bool values that a lax decoder would truncate.
+func nonCanonicalBodies(tb testing.TB) [][]byte {
+	base := marshalDet(tb, validBody())
+	noFV := marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 }))
+	noPD := marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision = nil }))
+	noParams := marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
+	pdNoLevel := marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision.AutonomyLevel = 0 }).PolicyDecision)
+	withLevel := func(v uint64) []byte {
+		return fBytes(append([]byte(nil), noPD...), 9, cat(pdNoLevel, []byte{0x10}, protowire.AppendVarint(nil, v)))
+	}
+	withReq := func(member protowire.Number, req []byte) []byte {
+		return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, member, req))
+	}
+	return [][]byte{
+		fVarint(append([]byte(nil), noFV...), 1, 1<<32+1),
+		fVarint(append([]byte(nil), noFV...), 1, math.MaxUint64),
+		cat(noFV, []byte{0x08, 0x81, 0x00}),
+		cat(noFV, []byte{0x88, 0x00, 0x01}),
+		withLevel(1<<32 + 4),
+		withLevel(1 << 31),
+		withLevel(i64(math.MinInt32 - 1)),
+		fBytes(append([]byte(nil), noPD...), 9, cat(pdNoLevel, []byte{0x10, 0xff, 0xff, 0xff, 0xff, 0x0f})),
+		mutateAt(tb, base, []protowire.Number{10}, mutValue),
+		mutateAt(tb, base, []protowire.Number{2}, mutValue),
+		mutateAt(tb, base, []protowire.Number{9}, mutTag),
+		mutateAt(tb, base, []protowire.Number{9, 2}, mutValue),
+		mutateAt(tb, base, []protowire.Number{8, 11, 1}, mutValue),
+		withReq(17, fVarint(nil, 5, 2)),
+		withReq(17, fVarint(nil, 2, 1<<32+7)),
+		withReq(22, fBytes(nil, 3, cat(protowire.AppendVarint(nil, 1), overlong(2)))),
+		withReq(22, fBytes(nil, 4, cat(protowire.AppendVarint(nil, math.MaxUint64), protowire.AppendVarint(nil, 1<<63)))),
+	}
+}
+
+var (
+	bodyDescriptor  = (&wardenv1.EnvelopeBody{}).ProtoReflect().Descriptor()
+	outerDescriptor = (&wardenv1.SignedEnvelope{}).ProtoReflect().Descriptor()
+)
+
+// readVarint decodes a base-128 varint without protowire: at most 10 bytes,
+// and the 10th byte may only carry bit 63.
+func readVarint(b []byte) (uint64, int) {
+	var v uint64
+	for i := 0; i < len(b) && i < 10; i++ {
+		c := b[i]
+		if i == 9 && c > 1 {
+			return 0, -1
+		}
+		v |= uint64(c&0x7f) << (7 * uint(i))
+		if c < 0x80 {
+			return v, i + 1
+		}
+	}
+	return 0, -1
+}
+
+// minimalLen is the length of the shortest varint encoding of v.
+func minimalLen(v uint64) int { return (bits.Len64(v|1) + 6) / 7 }
+
+func inRange(k protoreflect.Kind, v uint64) bool {
+	switch k {
+	case protoreflect.Int32Kind, protoreflect.EnumKind:
+		s := int64(v) //nolint:gosec // intended reinterpretation
+		return s >= math.MinInt32 && s <= math.MaxInt32
+	case protoreflect.Uint32Kind, protoreflect.Sint32Kind:
+		return v <= math.MaxUint32
+	case protoreflect.BoolKind:
+		return v <= 1
+	}
+	return true
+}
+
+// canonicalOK is an independent oracle for the canonical-encoding rule: every
+// tag, length prefix, varint value and packed element in b (recursively, by
+// md) is minimal, and every int32/enum, uint32/sint32 and bool value is in
+// range. Anything it cannot parse is "not OK".
+func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
+	for len(b) > 0 {
+		tag, n := readVarint(b)
+		if n < 0 || n != minimalLen(tag) {
+			return false
+		}
+		b = b[n:]
+		fd := md.Fields().ByNumber(protowire.Number(tag >> 3)) //nolint:gosec // bounded by the lookup
+		if fd == nil {
+			return false
+		}
+		switch protowire.Type(tag & 7) {
+		case protowire.VarintType:
+			v, k := readVarint(b)
+			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+				return false
+			}
+			b = b[k:]
+		case protowire.BytesType:
+			l, k := readVarint(b)
+			if k < 0 || k != minimalLen(l) || l > uint64(len(b)-k) {
+				return false
+			}
+			payload := b[k : k+int(l)] //nolint:gosec // l <= len(b)
+			b = b[k+int(l):]           //nolint:gosec // l <= len(b)
+			if fd.Kind() == protoreflect.MessageKind {
+				if !canonicalOK(payload, fd.Message()) {
+					return false
+				}
+				continue
+			}
+			if fd.IsList() && fd.Kind() != protoreflect.BytesKind && fd.Kind() != protoreflect.StringKind {
+				for len(payload) > 0 {
+					v, k := readVarint(payload)
+					if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+						return false
+					}
+					payload = payload[k:]
+				}
+			}
+		default: // the contract has no fixed-width or group fields
+			return false
+		}
+	}
+	return true
 }
 
 var allowedChecks = func() map[Code]map[int]bool {
@@ -142,6 +270,9 @@ func FuzzVerify(f *testing.F) {
 			}
 			if res.KeyID != KeyIDOf(pub) {
 				t.Fatalf("accepted with unexpected key id")
+			}
+			if !canonicalOK(raw, outerDescriptor) || !canonicalOK(env.GetBody(), bodyDescriptor) {
+				t.Fatalf("accepted a non-canonical encoding: %x", raw)
 			}
 			return
 		}
@@ -278,6 +409,9 @@ func FuzzVerifyBody(f *testing.F) {
 			t.Fatalf("nil result without error")
 		}
 		assertBodyInvariants(t, res.Body)
+		if !canonicalOK(body, bodyDescriptor) {
+			t.Fatalf("accepted a non-canonical body: %x", body)
+		}
 		var fresh wardenv1.EnvelopeBody
 		if uerr := proto.Unmarshal(body, &fresh); uerr != nil || !proto.Equal(&fresh, res.Body) {
 			t.Fatalf("returned body differs from the signed bytes: %v", uerr)

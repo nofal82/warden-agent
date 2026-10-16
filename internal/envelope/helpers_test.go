@@ -339,3 +339,94 @@ func consumeFieldLen(b []byte) int {
 	}
 	return n + m
 }
+
+// Non-canonical encodings (R13 canonical-encoding rule) --------------------
+
+// overlongN returns a non-minimal varint encoding of v that is exactly total
+// bytes long; it still decodes to v with protowire.ConsumeVarint.
+func overlongN(v uint64, total int) []byte {
+	b := protowire.AppendVarint(nil, v)
+	if total <= len(b) || total > 10 {
+		panic("overlongN: impossible length")
+	}
+	b[len(b)-1] |= 0x80
+	for len(b) < total-1 {
+		b = append(b, 0x80)
+	}
+	return append(b, 0x00)
+}
+
+// overlong is v encoded one byte longer than necessary.
+func overlong(v uint64) []byte { return overlongN(v, protowire.SizeVarint(v)+1) }
+
+// rawTag is the varint value of a field tag.
+func rawTag(num protowire.Number, typ protowire.Type) uint64 {
+	return uint64(num)<<3 | uint64(typ)
+}
+
+// i64 is the two's-complement wire value of a signed integer.
+func i64(v int64) uint64 { return uint64(v) } //nolint:gosec // intended reinterpretation
+
+// encMut says how mutateAt re-encodes the field it finds.
+type encMut int
+
+const (
+	mutTag   encMut = iota // overlong tag, value unchanged
+	mutValue               // overlong varint value, or overlong length prefix
+)
+
+// mutateAt re-encodes the first field found at path (field numbers, outer
+// first) of the message encoding b non-minimally, re-encoding the enclosing
+// length prefixes minimally. Everything else is copied byte for byte, so
+// exactly one varint becomes non-canonical.
+func mutateAt(tb testing.TB, b []byte, path []protowire.Number, how encMut) []byte {
+	tb.Helper()
+	out, ok := mutateFields(b, path, how)
+	if !ok {
+		tb.Fatalf("mutateAt: field path %v not found", path)
+	}
+	return out
+}
+
+func mutateFields(b []byte, path []protowire.Number, how encMut) ([]byte, bool) {
+	var out []byte
+	done := false
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return nil, false
+		}
+		m := protowire.ConsumeFieldValue(num, typ, b[n:])
+		if m < 0 {
+			return nil, false
+		}
+		tag, val := b[:n], b[n:n+m]
+		b = b[n+m:]
+		if done || num != path[0] {
+			out = append(append(out, tag...), val...)
+			continue
+		}
+		done = true
+		switch {
+		case len(path) > 1:
+			payload, _ := protowire.ConsumeBytes(val)
+			inner, ok := mutateFields(payload, path[1:], how)
+			if !ok {
+				return nil, false
+			}
+			out = protowire.AppendBytes(append(out, tag...), inner)
+		case how == mutTag:
+			out = append(append(out, overlong(rawTag(num, typ))...), val...)
+		case typ == protowire.VarintType:
+			v, _ := protowire.ConsumeVarint(val)
+			out = append(append(out, tag...), overlong(v)...)
+		case typ == protowire.BytesType:
+			payload, _ := protowire.ConsumeBytes(val)
+			out = append(append(out, tag...), overlong(uint64(len(payload)))...)
+			out = append(out, payload...)
+		default:
+			return nil, false
+		}
+	}
+	return out, done
+}

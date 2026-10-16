@@ -19,6 +19,7 @@ var sentinels = map[string]error{
 	"ErrGroup":          wirescan.ErrGroup,
 	"ErrWireType":       wirescan.ErrWireType,
 	"ErrTooDeep":        wirescan.ErrTooDeep,
+	"ErrNonCanonical":   wirescan.ErrNonCanonical,
 }
 
 // assertSentinel checks err wraps want and no other sentinel.
@@ -167,3 +168,58 @@ func scalar(fd protoreflect.FieldDescriptor, j uint8) protoreflect.Value {
 	}
 	panic("unhandled kind " + fd.Kind().String())
 }
+
+// Non-canonical encodings (R13 canonical-encoding rule) --------------------
+
+// overlongN returns a non-minimal varint encoding of v that is exactly total
+// bytes long: the minimal encoding with continuation bits set, padded with
+// 0x80 bytes and closed by 0x00. It decodes to v with protowire.ConsumeVarint.
+func overlongN(v uint64, total int) []byte {
+	b := protowire.AppendVarint(nil, v)
+	if total <= len(b) || total > 10 {
+		panic("overlongN: impossible length")
+	}
+	b[len(b)-1] |= 0x80
+	for len(b) < total-1 {
+		b = append(b, 0x80)
+	}
+	return append(b, 0x00)
+}
+
+// overlong is v encoded one byte longer than necessary.
+func overlong(v uint64) []byte { return overlongN(v, protowire.SizeVarint(v)+1) }
+
+// rawTag is the varint value of a field tag.
+func rawTag(num protowire.Number, typ protowire.Type) uint64 {
+	return uint64(num)<<3 | uint64(typ)
+}
+
+// fVarintOverlong is a varint field whose value is not minimally encoded.
+func fVarintOverlong(b []byte, num protowire.Number, v uint64) []byte {
+	b = protowire.AppendTag(b, num, protowire.VarintType)
+	return append(b, overlong(v)...)
+}
+
+// fBytesOverlongLen is a length-delimited field whose length prefix is not
+// minimally encoded.
+func fBytesOverlongLen(b []byte, num protowire.Number, v []byte) []byte {
+	b = protowire.AppendTag(b, num, protowire.BytesType)
+	b = append(b, overlong(uint64(len(v)))...)
+	return append(b, v...)
+}
+
+// fOverlongTagVarint is a varint field whose tag is not minimally encoded.
+func fOverlongTagVarint(b []byte, num protowire.Number, v uint64) []byte {
+	b = append(b, overlong(rawTag(num, protowire.VarintType))...)
+	return protowire.AppendVarint(b, v)
+}
+
+// fOverlongTagBytes is a length-delimited field whose tag is not minimally
+// encoded.
+func fOverlongTagBytes(b []byte, num protowire.Number, v []byte) []byte {
+	b = append(b, overlong(rawTag(num, protowire.BytesType))...)
+	return protowire.AppendBytes(b, v)
+}
+
+// i64 is the two's-complement wire value of a signed integer.
+func i64(v int64) uint64 { return uint64(v) } //nolint:gosec // intended reinterpretation

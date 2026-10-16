@@ -2,11 +2,14 @@ package wirescan_test
 
 import (
 	"errors"
+	"math"
+	"math/bits"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 	"github.com/nofal82/warden-agent/internal/envelope/wirescan"
@@ -146,6 +149,7 @@ func FuzzCheck(f *testing.F) {
 		protowire.AppendVarint(nil, uint64(protowire.MaxValidNumber+1)<<3),
 		fBytes(append([]byte(nil), outer...), 1, make([]byte, 32)),
 	}
+	seeds = append(seeds, nonCanonicalSeeds(f)...)
 	for _, s := range seeds {
 		f.Add(s)
 	}
@@ -156,7 +160,10 @@ func FuzzCheck(f *testing.F) {
 			if checkErr != nil && countSentinels(checkErr) != 1 {
 				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
 			}
-			clean := strictClean(b, md, 0)
+			if checkErr == nil && !canonicalOK(b, md) {
+				t.Fatalf("Check accepted a non-canonical encoding (%s): %x", md.FullName(), b)
+			}
+			clean := strictClean(b, md, 0) && canonicalOK(b, md)
 			if checkErr == nil && !clean {
 				t.Fatalf("Check accepted input the strict oracle rejects (%s): %x", md.FullName(), b)
 			}
@@ -197,6 +204,202 @@ func FuzzCheck(f *testing.F) {
 			proto.Reset(m2)
 			if err := wirescan.Unmarshal(re, m2); err != nil || !proto.Equal(m, m2) {
 				t.Fatalf("re-marshalled message does not round trip: %v", err)
+			}
+		}
+	})
+}
+
+// Independent oracle for the canonical-encoding rule (R13) ----------------
+
+// readVarint decodes a base-128 varint without protowire: at most 10 bytes,
+// and the 10th byte may only carry bit 63.
+func readVarint(b []byte) (uint64, int) {
+	var v uint64
+	for i := 0; i < len(b) && i < 10; i++ {
+		c := b[i]
+		if i == 9 && c > 1 {
+			return 0, -1
+		}
+		v |= uint64(c&0x7f) << (7 * uint(i))
+		if c < 0x80 {
+			return v, i + 1
+		}
+	}
+	return 0, -1
+}
+
+// minimalLen is the length of the shortest varint encoding of v.
+func minimalLen(v uint64) int { return (bits.Len64(v|1) + 6) / 7 }
+
+// inRange reports whether a varint wire value fits the field's type.
+func inRange(k protoreflect.Kind, v uint64) bool {
+	switch k {
+	case protoreflect.Int32Kind, protoreflect.EnumKind:
+		s := int64(v) //nolint:gosec // intended reinterpretation
+		return s >= math.MinInt32 && s <= math.MaxInt32
+	case protoreflect.Uint32Kind, protoreflect.Sint32Kind:
+		return v <= math.MaxUint32
+	case protoreflect.BoolKind:
+		return v <= 1
+	}
+	return true
+}
+
+func varintKind(k protoreflect.Kind) bool {
+	switch k {
+	case protoreflect.BoolKind, protoreflect.EnumKind,
+		protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Uint32Kind,
+		protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Uint64Kind:
+		return true
+	}
+	return false
+}
+
+// canonicalOK is true if every tag, length prefix, varint value and packed
+// element in b (recursively, by md) is minimally encoded and every
+// int32/enum, uint32/sint32 and bool value is in range. It returns false
+// for anything it cannot parse or does not know, so it is only meaningful
+// as "Check accepted => canonicalOK".
+func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
+	for len(b) > 0 {
+		tag, n := readVarint(b)
+		if n < 0 || n != minimalLen(tag) {
+			return false
+		}
+		b = b[n:]
+		fd := md.Fields().ByNumber(protowire.Number(tag >> 3)) //nolint:gosec // bounded by the lookup
+		if fd == nil {
+			return false
+		}
+		switch protowire.Type(tag & 7) {
+		case protowire.VarintType:
+			v, k := readVarint(b)
+			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+				return false
+			}
+			b = b[k:]
+		case protowire.Fixed32Type:
+			if len(b) < 4 {
+				return false
+			}
+			b = b[4:]
+		case protowire.Fixed64Type:
+			if len(b) < 8 {
+				return false
+			}
+			b = b[8:]
+		case protowire.BytesType:
+			l, k := readVarint(b)
+			if k < 0 || k != minimalLen(l) || l > uint64(len(b)-k) {
+				return false
+			}
+			payload := b[k : k+int(l)] //nolint:gosec // l <= len(b)
+			b = b[k+int(l):]           //nolint:gosec // l <= len(b)
+			switch {
+			case fd.Kind() == protoreflect.MessageKind:
+				if !canonicalOK(payload, fd.Message()) {
+					return false
+				}
+			case fd.IsList() && varintKind(fd.Kind()):
+				for len(payload) > 0 {
+					v, k := readVarint(payload)
+					if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+						return false
+					}
+					payload = payload[k:]
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// nonCanonicalSeeds is one input for each rejected form.
+func nonCanonicalSeeds(tb testing.TB) [][]byte {
+	body := marshalDet(tb, validBody())
+	without := func(m func(b *wardenv1.EnvelopeBody)) []byte { b := validBody(); m(b); return marshalDet(tb, b) }
+	noFV := without(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 })
+	noPD := without(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision = nil })
+	noParams := without(func(b *wardenv1.EnvelopeBody) { b.Params = nil })
+	pdNoLevel := marshalDet(tb, &wardenv1.PolicyDecision{DecisionId: "3c4d5e6f-7a8b-4c9d-ae0f-1a2b3c4d5e6f", PolicyBundleDigest: make([]byte, 32)})
+	withLevel := func(v []byte) []byte { return fBytes(append([]byte(nil), noPD...), 9, cat(pdNoLevel, []byte{0x10}, v)) }
+	withReq := func(member protowire.Number, req []byte) []byte {
+		return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, member, req))
+	}
+	kid, sig := make([]byte, 32), make([]byte, 64)
+	return [][]byte{
+		cat(noFV, []byte{0x08, 0x81, 0x00}),
+		cat(noFV, []byte{0x88, 0x00, 0x01}),
+		cat(noFV, []byte{0x08}, overlongN(1, 10)),
+		fVarint(append([]byte(nil), noFV...), 1, 1<<32+1),
+		fVarint(append([]byte(nil), noFV...), 1, 1<<32),
+		fVarint(append([]byte(nil), noFV...), 1, math.MaxUint64),
+		withLevel(protowire.AppendVarint(nil, 1<<32+4)),
+		withLevel(protowire.AppendVarint(nil, 1<<31)),
+		withLevel(protowire.AppendVarint(nil, i64(math.MinInt32-1))),
+		withLevel([]byte{0xff, 0xff, 0xff, 0xff, 0x0f}),
+		withLevel(protowire.AppendVarint(nil, math.MaxUint64)),
+		withLevel(overlong(3)),
+		fBytesOverlongLen(without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, []byte("abc")),
+		fBytesOverlongLen(append([]byte(nil), noPD...), 9, pdNoLevel),
+		withReq(17, fVarint(nil, 5, 2)),
+		withReq(17, fVarint(nil, 5, 1<<32)),
+		withReq(17, fVarint(nil, 2, 1<<32+7)),
+		withReq(22, fBytes(nil, 3, cat(packedVarints(1), overlong(2)))),
+		withReq(22, fBytesOverlongLen(nil, 3, packedVarints(1, 2))),
+		withReq(22, fBytes(nil, 4, packedVarints(math.MaxUint64, 1<<63))),
+		withReq(11, fBytesOverlongLen(nil, 1, []byte("nginx.service"))),
+		append(append([]byte(nil), body...), 0x88, 0x80),
+		cat(fOverlongTagBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, sig)),
+		cat(fBytes(nil, 1, kid), fBytesOverlongLen(nil, 2, body), fBytes(nil, 3, sig)),
+		cat([]byte{0x0a, 0xa0, 0x00}, kid, fBytes(nil, 2, body), fBytes(nil, 3, sig)),
+	}
+}
+
+// FuzzCanonical: whenever Check accepts, every varint is minimal and every
+// 32-bit and bool value is in range; whenever the input is strictly clean,
+// canonical and decodes, Check accepts. It runs over the contract and over
+// descriptors that have int32, sint32, bool and packed 32-bit fields.
+func FuzzCanonical(f *testing.F) {
+	for _, s := range nonCanonicalSeeds(f) {
+		f.Add(s)
+	}
+	f.Add(marshalDet(f, validBody()))
+	f.Add(fVarint(nil, 1, 1<<31))
+	f.Add([]byte{0x08, 0xff, 0xff, 0xff, 0xff, 0x0f})
+	f.Add(fVarint(nil, 1, math.MaxUint64))
+	f.Add(fVarint(nil, 2, 1<<32))
+	f.Add(fVarint(nil, 4, 2))
+	f.Add(fBytes(nil, 16, packedVarints(0, 1, 2)))
+	f.Add(fBytes(nil, 13, packedVarints(math.MaxUint64, 1<<32+4)))
+	f.Add(fBytes(nil, 12, fBytes(nil, 12, fVarintOverlong(nil, 1, 1))))
+	f.Add(fBytes(nil, 22, fVarint(nil, 5, 1<<32+1)))
+	mds := []protoreflect.MessageDescriptor{
+		bodyMD, outerMD, dbTermMD, kindsMD,
+		(&wrapperspb.Int32Value{}).ProtoReflect().Descriptor(),
+		(&wrapperspb.UInt32Value{}).ProtoReflect().Descriptor(),
+		(&wrapperspb.BoolValue{}).ProtoReflect().Descriptor(),
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		for _, md := range mds {
+			checkErr := wirescan.Check(b, md)
+			if checkErr != nil && countSentinels(checkErr) != 1 {
+				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
+			}
+			canon := canonicalOK(b, md)
+			if checkErr == nil && !canon {
+				t.Fatalf("Check accepted a non-canonical encoding (%s): %x", md.FullName(), b)
+			}
+			if checkErr != nil && errors.Is(checkErr, wirescan.ErrNonCanonical) && canon && strictClean(b, md, 0) {
+				t.Fatalf("ErrNonCanonical for an input the oracle finds canonical and clean (%s): %x", md.FullName(), b)
+			}
+			if !canon || !strictClean(b, md, 0) || errors.Is(checkErr, wirescan.ErrTooDeep) {
+				continue
+			}
+			if proto.Unmarshal(b, newMessage(md)) == nil && checkErr != nil {
+				t.Fatalf("Check rejected a clean canonical input (%s): %v (%x)", md.FullName(), checkErr, b)
 			}
 		}
 	})
