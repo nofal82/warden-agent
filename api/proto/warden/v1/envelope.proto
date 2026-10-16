@@ -1,0 +1,81 @@
+// Signed action envelope: the only way a change reaches a client server.
+//
+// Source of truth: warden/specs/action-envelope.md §4.1–§4.3.
+// Field numbers are part of the signed wire format. Never renumber or reuse
+// one; remove a field only by reserving its number and name.
+//
+// Timestamps are int64 Unix seconds, not google.protobuf.Timestamp, so there
+// is no nanosecond field to normalise or compare (§4.2).
+
+syntax = "proto3";
+
+package warden.v1;
+
+import "warden/v1/typed_request.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
+
+// SignedEnvelope is the outer message. It is the only thing a verifier
+// parses before the signature check (R5), so it holds three length-limited
+// byte fields and nothing else.
+message SignedEnvelope {
+  // SHA-256 of the raw 32-byte Ed25519 public key that signed body. Exactly
+  // 32 bytes.
+  bytes key_id = 1;
+  // Deterministic encoding of EnvelopeBody, signed as received and never
+  // re-marshalled (R3, R4). At least 1 byte.
+  bytes body = 2;
+  // Ed25519 over "warden/v1/action-envelope" || 0x00 || body. Exactly 64
+  // bytes.
+  bytes signature = 3;
+}
+
+// EnvelopeBody is decoded only after the signature over its bytes verified.
+message EnvelopeBody {
+  // Must be 1 (R14).
+  uint32 format_version = 1;
+  // UUID v7, lowercase canonical form.
+  string action_id = 2;
+  // Server UUID assigned at enrollment, lowercase canonical form (R17).
+  string target_server_id = 3;
+  // ^[a-z][a-z0-9-]{1,62}$
+  string playbook_id = 4;
+  // SemVer 2.0.0 without build metadata, at most 32 characters.
+  string playbook_version = 5;
+  // SHA-256 of the signed playbook package. Exactly 32 bytes.
+  bytes playbook_digest = 6;
+  // ^[a-z][a-z0-9-]{0,62}$
+  string step_id = 7;
+  // Exactly one typed request (R20).
+  TypedRequest params = 8;
+  // Required (R21).
+  PolicyDecision policy_decision = 9;
+  // Unix seconds, 1 … 2^40 − 1.
+  int64 created_at = 10;
+  // Unix seconds, 1 … 2^40 − 1.
+  int64 expires_at = 11;
+  // 1–128 characters, ^[A-Za-z0-9._:-]+$, never containing "..".
+  string idempotency_key = 12;
+}
+
+// PolicyDecision records the policy and autonomy decision that allowed the
+// step. The executor enforces the autonomy ceilings (R21).
+message PolicyDecision {
+  // UUID v4, lowercase canonical form.
+  string decision_id = 1;
+  // UNSPECIFIED is invalid.
+  AutonomyLevel autonomy_level = 2;
+  // SHA-256 of the policy bundle. Exactly 32 bytes.
+  bytes policy_bundle_digest = 3;
+  // Empty, or UUID v4 (lowercase canonical form) when a human approved.
+  string approval_id = 4;
+}
+
+// AutonomyLevel values are defined by policy-and-autonomy.md.
+enum AutonomyLevel {
+  AUTONOMY_LEVEL_UNSPECIFIED = 0;
+  AUTONOMY_LEVEL_L0 = 1;
+  AUTONOMY_LEVEL_L1 = 2;
+  AUTONOMY_LEVEL_L2 = 3;
+  AUTONOMY_LEVEL_L3 = 4;
+}
