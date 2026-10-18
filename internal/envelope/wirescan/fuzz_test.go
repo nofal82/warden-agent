@@ -202,6 +202,13 @@ func FuzzCheck(f *testing.F) {
 			if err != nil {
 				t.Fatalf("re-marshal: %v", err)
 			}
+			// Oracle that shares no predicate with the scanner: field order
+			// is the only freedom R13 leaves, so an accepted input has
+			// exactly the length of Go's deterministic encoding. Any other
+			// second encoding of the same value shows up as a length change.
+			if len(re) != len(b) {
+				t.Fatalf("accepted input is %d bytes, its deterministic encoding %d: %x", len(b), len(re), b)
+			}
 			if err := wirescan.Check(re, md); err != nil {
 				t.Fatalf("re-marshalled message fails Check: %v", err)
 			}
