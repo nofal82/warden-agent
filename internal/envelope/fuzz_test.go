@@ -110,6 +110,20 @@ func nonCanonicalBodies(tb testing.TB) [][]byte {
 		withReq(22, fVarint(nil, 4, math.MaxUint64)),
 		withReq(22, cat(fBytes(nil, 3, protowire.AppendVarint(nil, 101)), fVarint(nil, 4, 0))),
 		withReq(22, fFixed64(nil, 3, 101)),
+		// R13 (i), 2026-10-18: split and empty packed records.
+		withReq(22, cat(fBytes(nil, 3, protowire.AppendVarint(nil, 101)), fBytes(nil, 3, protowire.AppendVarint(nil, 202)))),
+		withReq(22, fBytes(nil, 3, nil)),
+		withReq(22, cat(fBytes(nil, 4, nil), fBytes(nil, 4, protowire.AppendVarint(nil, 0)))),
+		withReq(22, cat(fBytes(nil, 4, protowire.AppendVarint(nil, 0)), fBytes(nil, 4, nil))),
+		// R13 (j), R14: explicit proto3 defaults at depths 0-2.
+		fVarint(append([]byte(nil), noFV...), 1, 0),
+		cat([]byte{0x08, 0x00}, noFV),
+		fVarint(marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 })), 10, 0),
+		fBytes(append([]byte(nil), noPD...), 9, fBytes(marshalDet(tb, validBody().PolicyDecision), 4, nil)),
+		fBytes(append([]byte(nil), noPD...), 9, cat(pdNoLevel, fVarint(nil, 2, 0))),
+		withReq(17, fVarint(nil, 5, 0)),
+		withReq(22, fVarint(nil, 5, 0)),
+		withReq(11, fBytes(nil, 1, nil)),
 	}
 }
 
@@ -156,9 +170,12 @@ func inRange(k protoreflect.Kind, v uint64) bool {
 // canonicalOK is an independent oracle for the canonical-encoding rule: every
 // tag, length prefix, varint value and packed element in b (recursively, by
 // md) is minimal, every int32/enum, uint32/sint32 and bool value is in
-// range, and every repeated numeric or enum field is packed (R13 (i)).
-// Anything it cannot parse is "not OK".
+// range, every repeated numeric or enum field is exactly one non-empty
+// packed record per message (R13 (i)), and no non-repeated, non-message
+// field with implicit presence holds its explicitly encoded default (R13
+// (j)). Anything it cannot parse is "not OK".
 func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
+	packedSeen := map[protowire.Number]bool{}
 	for len(b) > 0 {
 		tag, n := readVarint(b)
 		if n < 0 || n != minimalLen(tag) {
@@ -170,6 +187,8 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 		if fd == nil {
 			return false
 		}
+		// R13 (j): a zero value here would be the proto3 default written out.
+		implicit := !fd.IsList() && fd.Kind() != protoreflect.MessageKind && !fd.HasPresence()
 		switch protowire.Type(tag & 7) {
 		case protowire.VarintType:
 			if fd.IsList() {
@@ -177,7 +196,7 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 				return false
 			}
 			v, k := readVarint(b)
-			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) || (implicit && v == 0) {
 				return false
 			}
 			b = b[k:]
@@ -192,6 +211,9 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			end := k + int(l)
 			payload := b[k:end]
 			b = b[end:]
+			if implicit && l == 0 {
+				return false
+			}
 			if fd.Kind() == protoreflect.MessageKind {
 				if !canonicalOK(payload, fd.Message()) {
 					return false
@@ -199,6 +221,11 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 				continue
 			}
 			if fd.IsList() && fd.Kind() != protoreflect.BytesKind && fd.Kind() != protoreflect.StringKind {
+				// R13 (i): one non-empty packed record per field per message.
+				if packedSeen[num] || l == 0 {
+					return false
+				}
+				packedSeen[num] = true
 				for len(payload) > 0 {
 					v, k := readVarint(payload)
 					if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
@@ -250,6 +277,9 @@ func FuzzVerify(f *testing.F) {
 	f.Add(fBytes(append([]byte(nil), good...), 1, kid))
 	f.Add(fVarint(append([]byte(nil), good...), 4, 1))
 	f.Add(fGroup(append([]byte(nil), good...), 2, nil))
+	// R13 (j): explicit empty outer fields.
+	f.Add(cat(fBytes(nil, 1, nil), fBytes(nil, 2, body), fBytes(nil, 3, sig)))
+	f.Add(cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, nil)))
 	for _, b := range attackBodies(f) {
 		f.Add(sealBytes(keyA, b))
 	}
@@ -307,6 +337,10 @@ func FuzzVerify(f *testing.F) {
 		}
 		if rej.Check <= 4 && d1 != d0 {
 			t.Fatalf("body decoded before rejection at check %d", rej.Check)
+		}
+		// A rejection after check 2 means the outer strict scan passed.
+		if rej.Check >= 3 && !canonicalOK(raw, outerDescriptor) {
+			t.Fatalf("non-canonical outer envelope passed check 2 (rejected at %d): %x", rej.Check, raw)
 		}
 		if len(raw) > MaxEnvelopeBytes && rej.Code != CodeOversized {
 			t.Fatalf("oversized input gave %s", rej.Code)
@@ -421,6 +455,12 @@ func FuzzVerifyBody(f *testing.F) {
 			}
 			if rej.Check < 5 || rej.Check > 11 || !allowedChecks[rej.Code][rej.Check] {
 				t.Fatalf("correctly signed body rejected with %s at check %d", rej.Code, rej.Check)
+			}
+			// A rejection after check 5 means the body passed the strict
+			// scan, so it must be canonical: in particular a format_version
+			// written as 0 must never reach check 6 (R14, R13 (j)).
+			if rej.Check >= 6 && !canonicalOK(body, bodyDescriptor) {
+				t.Fatalf("non-canonical body passed check 5 (rejected with %s at check %d): %x", rej.Code, rej.Check, body)
 			}
 			return
 		}

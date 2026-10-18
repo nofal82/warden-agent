@@ -198,7 +198,7 @@ func TestBodyCases(t *testing.T) {
 		{"action_id_as_varint", bodyMD, fVarint(without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, 7), wirescan.ErrWireType},
 		{"digest_as_fixed64", bodyMD, fFixed64(without(func(b *wardenv1.EnvelopeBody) { b.PlaybookDigest = nil }), 6, 7), wirescan.ErrWireType},
 		{"params_as_varint", bodyMD, fVarint(app(noParams), 8, 11), wirescan.ErrWireType},
-		{"pd_as_fixed32", bodyMD, fFixed32(app(noPD), 9, 0), wirescan.ErrWireType},
+		{"pd_as_fixed32", bodyMD, fFixed32(app(noPD), 9, 1), wirescan.ErrWireType},
 		{"autonomy_as_bytes_in_pd", bodyMD, withPD(fBytes(marshalDet(t, &wardenv1.PolicyDecision{DecisionId: "x"}), 2, []byte{1})), wirescan.ErrWireType},
 		{"member_as_varint", bodyMD, withParams(fVarint(nil, 11, 1)), wirescan.ErrWireType},
 		{"unit_as_varint_in_request", bodyMD, withParams(fBytes(nil, 11, fVarint(nil, 1, 1))), wirescan.ErrWireType},
@@ -232,7 +232,20 @@ func TestOuterCases(t *testing.T) {
 	runScanCases(t, []scanCase{
 		{"valid", outerMD, good, nil},
 		{"valid_reordered", outerMD, cat(fBytes(nil, 3, sig), fBytes(nil, 1, kid), fBytes(nil, 2, body)), nil},
-		{"valid_empty_fields", outerMD, cat(fBytes(nil, 1, nil), fBytes(nil, 2, nil), fBytes(nil, 3, nil)), nil},
+		// The outer scan does not check R12 lengths (check 2 does that
+		// after the scan), so short non-empty fields pass it.
+		{"valid_short_fields", outerMD, cat(fBytes(nil, 1, []byte{1}), fBytes(nil, 2, []byte{1}), fBytes(nil, 3, []byte{1})), nil},
+		{"valid_fields_left_out", outerMD, nil, nil},
+		// R13 (j): key_id, body and signature are implicit-presence bytes
+		// fields, so an explicit empty record is non-canonical (MALFORMED at
+		// check 2 in the verifier). It used to be accepted by the scan.
+		{"explicit_empty_fields", outerMD, cat(fBytes(nil, 1, nil), fBytes(nil, 2, nil), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"explicit_empty_key_id", outerMD, cat(fBytes(nil, 1, nil), fBytes(nil, 2, body), fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
+		{"explicit_empty_body", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, nil), fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
+		{"explicit_empty_signature", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"key_id_left_out", outerMD, cat(fBytes(nil, 2, body), fBytes(nil, 3, sig)), nil},
+		{"body_left_out", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 3, sig)), nil},
+		{"signature_left_out", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, body)), nil},
 		{"dup_key_id", outerMD, fBytes(append([]byte(nil), good...), 1, kid), wirescan.ErrDuplicateField},
 		{"dup_body", outerMD, fBytes(append([]byte(nil), good...), 2, body), wirescan.ErrDuplicateField},
 		{"dup_signature", outerMD, fBytes(append([]byte(nil), good...), 3, sig), wirescan.ErrDuplicateField},
@@ -282,11 +295,12 @@ func TestRepeatedFields(t *testing.T) {
 		// record per element is non-canonical.
 		{"unpacked_ids", dbTermMD, unpackedIDs, wirescan.ErrNonCanonical},
 		{"packed_then_unpacked", dbTermMD, cat(fBytes(nil, 3, packedVarints(1, 2)), fVarint(nil, 3, 3)), wirescan.ErrNonCanonical},
-		// The spec does not decide yet whether two packed records for one
-		// field, or an empty packed record, are canonical. These two keep
-		// today's behaviour and must not be read as a requirement.
-		{"two_packed_runs", dbTermMD, cat(fBytes(nil, 3, packedVarints(1)), fBytes(nil, 3, packedVarints(2))), nil},
-		{"packed_empty", dbTermMD, fBytes(nil, 3, nil), nil},
+		// R13 (i) (Nofal 2026-10-18): exactly one non-empty packed record
+		// per field; a list split over two records, or an empty record, is
+		// non-canonical (the empty list is the field left out).
+		{"two_packed_runs", dbTermMD, cat(fBytes(nil, 3, packedVarints(1)), fBytes(nil, 3, packedVarints(2))), wirescan.ErrNonCanonical},
+		{"packed_empty", dbTermMD, fBytes(nil, 3, nil), wirescan.ErrNonCanonical},
+		{"ids_left_out", dbTermMD, fBytes(nil, 4, packedVarints(1)), nil},
 		{"packed_starts_negative", dbTermMD, fBytes(nil, 4, packedStarts), nil},
 		{"unpacked_starts", dbTermMD, cat(fVarint(nil, 4, math.MaxUint64) /* -1 as two's complement */, fVarint(nil, 4, 5)), wirescan.ErrNonCanonical},
 		{"repeated_bytes_three_times", dbTermMD, cat(fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},

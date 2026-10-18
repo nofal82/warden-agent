@@ -224,12 +224,15 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 			expectAccept(t, v, raw, body, keyA)
 		})
 	}
-	// An explicit minimal zero for a bool is canonical.
+	// R13 (j) (2026-10-18): an explicit minimal zero for a bool used to be
+	// canonical; it is the proto3 default written out, so it is now
+	// BODY_INVALID at check 5. dry_run=false left out is accepted.
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
-	req := fVarint(marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1)}), 5, 0)
-	if res, err := v.Verify(sealBytes(keyA, fBytes(noParams, 8, fBytes(nil, 17, req)))); err != nil || res == nil {
-		t.Fatalf("explicit dry_run=false rejected: %v", err)
+	head := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1)})
+	if res, err := v.Verify(sealBytes(keyA, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, head)))); err != nil || res == nil {
+		t.Fatalf("dry_run=false left out rejected: %v", err)
 	}
+	expectBodyReject(t, v, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, fVarint(append([]byte(nil), head...), 5, 0))), CodeBodyInvalid, 5)
 }
 
 // R13 (i): a correctly signed body whose DbTerminateSessionRequest carries
@@ -240,8 +243,11 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 // byte strings stand for one action. The packed forms, and several records
 // of the repeated bytes field session_owner_digests, are accepted.
 //
-// Not decided by the spec yet, so not asserted here: two packed records for
-// one field, and an empty packed record.
+// Since 2026-10-18 R13 (i) also requires exactly one non-empty packed
+// record per field: the same list split over two packed records, an empty
+// packed record alone, and an empty one before or after a valid one are
+// BODY_INVALID at check 5 too (AC8). MySQL's all-zero session_started_at
+// elements stay valid as packed elements (R13 (j) skips repeated elements).
 func TestCheck5UnpackedRepeated(t *testing.T) {
 	v := defaultVerifier(t)
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
@@ -265,6 +271,7 @@ func TestCheck5UnpackedRepeated(t *testing.T) {
 		"starts_packed_negative":      app(packed(3, 101), packed(4, minus1)),
 		"digests_two_records":         app(packed(3, 101, 202), packed(4, 0, 0), digests),
 		"deterministic_marshal_order": marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service", SessionIds: []uint64{101, 202}, SessionStartedAt: []int64{0, 0}, ServerStartedAt: 1_700_000_000, SessionOwnerDigests: [][]byte{digest("owner-1"), digest("owner-2")}, MinIdleSeconds: 600}),
+		"three_ids_one_record_each":   app(packed(3, 101, 202, 303), packed(4, 0, 0, 0)),
 	}
 	for name, req := range accepted {
 		t.Run("accepted/"+name, func(t *testing.T) {
@@ -293,6 +300,17 @@ func TestCheck5UnpackedRepeated(t *testing.T) {
 		// wire-type mismatch stays BODY_INVALID too
 		"ids_as_i64":    app(fFixed64(nil, 3, 101)),
 		"starts_as_i32": app(packed(3, 101), fFixed32(nil, 4, 0)),
+
+		// R13 (i), 2026-10-18: one non-empty packed record per field.
+		"ids_split_one_then_two":    app(packed(3, 101), packed(3, 202, 303), packed(4, 0, 0, 0)),
+		"ids_split_around_starts":   app(packed(3, 101), packed(4, 0, 0, 0), packed(3, 202, 303)),
+		"ids_empty_alone":           app(fBytes(nil, 3, nil)),
+		"ids_empty_before_valid":    app(fBytes(nil, 3, nil), packed(3, 101, 202, 303), packed(4, 0, 0, 0)),
+		"ids_empty_after_valid":     app(packed(3, 101, 202, 303), fBytes(nil, 3, nil), packed(4, 0, 0, 0)),
+		"starts_split_one_then_two": app(packed(3, 101, 202, 303), packed(4, 0), packed(4, 0, 0)),
+		"starts_empty_alone":        app(packed(3, 101), fBytes(nil, 4, nil)),
+		"starts_empty_before_valid": app(packed(3, 101), fBytes(nil, 4, nil), packed(4, 0)),
+		"starts_empty_after_valid":  app(packed(3, 101), packed(4, 0), fBytes(nil, 4, nil)),
 	}
 	for name, req := range rejected {
 		t.Run("rejected/"+name, func(t *testing.T) {

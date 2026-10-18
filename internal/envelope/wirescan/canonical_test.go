@@ -105,6 +105,16 @@ var kindsMD = func() protoreflect.MessageDescriptor {
 	return file.Messages().ByName("Kinds")
 }()
 
+// wantExplicitDefault is ErrNonCanonical for a varint 0 written explicitly
+// in a non-repeated field with implicit presence (R13 (j)), and nil for
+// any other field or value.
+func wantExplicitDefault(fd protoreflect.FieldDescriptor, v uint64) error {
+	if v == 0 && !fd.IsList() && !fd.HasPresence() {
+		return wirescan.ErrNonCanonical
+	}
+	return nil
+}
+
 // wantIfList is want for a repeated field and nil for any other.
 func wantIfList(fd protoreflect.FieldDescriptor, want error) error {
 	if fd.IsList() {
@@ -223,7 +233,9 @@ func isVarintKind(k protoreflect.Kind) bool {
 // field and, for repeated fields, packed (bad element first, in the middle
 // and alone). A repeated field written unpacked is rejected whatever its
 // values (R13 (i)), so range coverage for repeated fields lives in the
-// packed cases.
+// packed cases. The in-range value 0 written explicitly in a singular
+// implicit-presence field is the proto3 default and is rejected (R13 (j));
+// as a packed element it stays valid.
 func TestCanonicalRangeEveryField(t *testing.T) {
 	mds := append(contractMessages(), kindsMD)
 	checked := 0
@@ -263,7 +275,7 @@ func TestCanonicalRangeEveryField(t *testing.T) {
 					)
 					continue
 				}
-				cases = append(cases, scanCase{name, md, fVarint(nil, num, good.v), nil})
+				cases = append(cases, scanCase{name, md, fVarint(nil, num, good.v), wantExplicitDefault(fd, good.v)})
 			}
 			runCanonCases(t, cases)
 		}
@@ -388,9 +400,34 @@ func TestCanonicalBodyCases(t *testing.T) {
 		{"autonomy_minus1_ten_bytes", bodyMD, withLevel(math.MaxUint64), nil},
 		{"autonomy_minInt32_ten_bytes", bodyMD, withLevel(i64(math.MinInt32)), nil},
 		{"autonomy_maxInt32", bodyMD, withLevel(math.MaxInt32), nil},
-		{"autonomy_explicit_zero", bodyMD, withLevel(0), nil},
 		{"dry_run_true", bodyMD, withDryRun(1), nil},
-		{"dry_run_explicit_false", bodyMD, withDryRun(0), nil},
+
+		// R13 (j), AC8: explicit proto3 defaults at depths 0 to 2. These two
+		// were accepted before 2026-10-18. Each "left out" counterpart
+		// passes the scan (the verifier may still refuse it later, as
+		// check 5 or 6).
+		{"autonomy_explicit_zero", bodyMD, withLevel(0), wirescan.ErrNonCanonical},
+		{"dry_run_explicit_false", bodyMD, withDryRun(0), wirescan.ErrNonCanonical},
+		{"autonomy_left_out", bodyMD, withPD(pdNoLevel), nil},
+		{"dry_run_left_out", bodyMD, withParams(fBytes(nil, 17, fileDelete)), nil},
+		{"format_version_explicit_0", bodyMD, fVarint(app(noFV), 1, 0), wirescan.ErrNonCanonical},
+		{"format_version_explicit_0_first", bodyMD, cat(fVarint(nil, 1, 0), noFV), wirescan.ErrNonCanonical},
+		{"format_version_left_out", bodyMD, noFV, nil},
+		{"created_at_explicit_0", bodyMD, fVarint(app(noCreated), 10, 0), wirescan.ErrNonCanonical},
+		{"created_at_left_out", bodyMD, noCreated, nil},
+		{"action_id_explicit_empty", bodyMD, fBytes(app(noAction), 2, nil), wirescan.ErrNonCanonical},
+		{"playbook_digest_explicit_empty", bodyMD, fBytes(app(noDigest), 6, nil), wirescan.ErrNonCanonical},
+		{"approval_id_explicit_empty", bodyMD, withPD(fBytes(app(pd), 4, nil)), wirescan.ErrNonCanonical},
+		{"approval_id_left_out", bodyMD, withPD(pd), nil},
+		{"decision_id_explicit_empty", bodyMD, withPD(fBytes(app(pdNoDecision), 1, nil)), wirescan.ErrNonCanonical},
+		{"unit_explicit_empty", bodyMD, withParams(fBytes(nil, 11, fBytes(nil, 1, nil))), wirescan.ErrNonCanonical},
+		{"unit_left_out", bodyMD, withParams(fBytes(nil, 11, nil)), nil},
+		{"min_age_days_explicit_0", bodyMD, withParams(fBytes(nil, 17, fVarint(nil, 2, 0))), wirescan.ErrNonCanonical},
+		{"db_engine_explicit_0", bodyMD, withParams(fBytes(nil, 22, fVarint(nil, 1, 0))), wirescan.ErrNonCanonical},
+		{"db_server_started_at_explicit_0", bodyMD, withParams(fBytes(nil, 22, fVarint(nil, 5, 0))), wirescan.ErrNonCanonical},
+		{"db_starts_packed_zeros", bodyMD, withParams(fBytes(nil, 22, cat(fBytes(nil, 3, packedVarints(1, 2)), fBytes(nil, 4, packedVarints(0, 0))))), nil},
+		// An empty params member (message-typed) is not a proto3 default.
+		{"empty_member_message", bodyMD, withParams(fBytes(nil, 7, nil)), nil},
 
 		// overlong varints at depth 0
 		{"format_version_1_as_81_00", bodyMD, app(noFV, []byte{0x08, 0x81, 0x00}), wirescan.ErrNonCanonical},
@@ -455,6 +492,13 @@ func TestCanonicalOuterCases(t *testing.T) {
 		{"body_len_overlong", outerMD, cat(fBytes(nil, 1, kid), fBytesOverlongLen(nil, 2, body), fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
 		{"body_len_10_bytes", outerMD, cat(fBytes(nil, 1, kid), []byte{0x12}, overlongN(uint64(len(body)), 10), body, fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
 		{"signature_len_64_as_c0_00", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), []byte{0x1a, 0xc0, 0x00}, sig), wirescan.ErrNonCanonical},
+		// R13 (j) in the outer SignedEnvelope (AC8): an explicit empty bytes
+		// field, including one whose zero length is itself overlong.
+		{"key_id_explicit_empty", outerMD, cat(fBytes(nil, 1, nil), fBytes(nil, 2, body), fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
+		{"body_explicit_empty", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, nil), fBytes(nil, 3, sig)), wirescan.ErrNonCanonical},
+		{"signature_explicit_empty", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"signature_explicit_empty_len_80_00", outerMD, cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), []byte{0x1a, 0x80, 0x00}), wirescan.ErrNonCanonical},
+		{"key_id_left_out", outerMD, cat(fBytes(nil, 2, body), fBytes(nil, 3, sig)), nil},
 	})
 	// The outer scan treats body as opaque bytes: a non-canonical encoding
 	// inside body is for the body scan (check 5), not the outer one.
@@ -562,6 +606,21 @@ func TestCanonicalNestedKinds(t *testing.T) {
 			scanCase{"depth" + d + "_tag_overlong", kindsMD, nest(depth, fOverlongTagVarint(nil, 6, 1)), wirescan.ErrNonCanonical},
 			scanCase{"depth" + d + "_child_len_overlong", kindsMD, nest(depth, fBytesOverlongLen(nil, 12, nil)), wirescan.ErrNonCanonical},
 			scanCase{"depth" + d + "_in_repeated_child", kindsMD, nest(depth, inList(fVarint(nil, 3, 1<<32))), wirescan.ErrNonCanonical},
+			// R13 (g): sint32 ZigZag varint 2^32-1 is the largest accepted.
+			scanCase{"depth" + d + "_sint32_2^32-1", kindsMD, nest(depth, fVarint(nil, 2, math.MaxUint32)), nil},
+			// R13 (j): explicit defaults at this depth (AC8 "at any depth").
+			scanCase{"depth" + d + "_uint32_explicit_0", kindsMD, nest(depth, fVarint(nil, 3, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_int64_explicit_0", kindsMD, nest(depth, fVarint(nil, 6, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_enum_explicit_0", kindsMD, nest(depth, fVarint(nil, 5, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_bool_explicit_false", kindsMD, nest(depth, fVarint(nil, 4, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_string_explicit_empty", kindsMD, nest(depth, fBytes(nil, 11, nil)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_fixed32_explicit_0", kindsMD, nest(depth, fFixed32(nil, 9, 0)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_explicit_0_in_repeated_child", kindsMD, nest(depth, inList(fVarint(nil, 3, 0))), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_left_out", kindsMD, nest(depth, nil), nil},
+			// R13 (i): split and empty packed records at this depth.
+			scanCase{"depth" + d + "_packed_split", kindsMD, nest(depth, cat(fBytes(nil, 15, packedVarints(1)), fBytes(nil, 15, packedVarints(2, 3)))), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_packed_empty", kindsMD, nest(depth, fBytes(nil, 17, nil)), wirescan.ErrNonCanonical},
+			scanCase{"depth" + d + "_packed_element_0", kindsMD, nest(depth, fBytes(nil, 15, packedVarints(0))), nil},
 		)
 	}
 	runCanonCases(t, cases)
@@ -652,6 +711,16 @@ func TestCanonicalCheckOrder(t *testing.T) {
 		{"wire_type+len_overlong", bodyMD, fBytesOverlongLen(app(noCreated), 10, []byte{1}), wirescan.ErrWireType},
 		{"wire_type_varint_for_string+value_overlong", bodyMD, fVarintOverlong(without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, 1), wirescan.ErrWireType},
 		{"non_repeated_packed+len_overlong", dbTermMD, fBytesOverlongLen(nil, 1, packedVarints(1)), wirescan.ErrWireType},
+
+		// R13 (j) runs on the value, after the field-level checks above.
+		{"explicit_default+value_overlong_80_00", bodyMD, app(noFV, []byte{0x08, 0x80, 0x00}), wirescan.ErrNonCanonical},
+		{"explicit_default+len_overlong_80_00", bodyMD, app(without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), []byte{0x12, 0x80, 0x00}), wirescan.ErrNonCanonical},
+		{"explicit_default+tag_overlong", bodyMD, app(noFV, overlong(rawTag(1, protowire.VarintType)), []byte{0x00}), wirescan.ErrNonCanonical},
+		{"unknown+explicit_default", bodyMD, fVarint(app(base), 99, 0), wirescan.ErrUnknownField},
+		{"duplicate+explicit_default", bodyMD, fVarint(app(base), 1, 0), wirescan.ErrDuplicateField},
+		{"duplicate_string+explicit_empty", bodyMD, fBytes(app(base), 2, nil), wirescan.ErrDuplicateField},
+		{"wire_type+empty_payload", bodyMD, fBytes(app(noCreated), 10, nil), wirescan.ErrWireType},
+		{"wire_type_varint_0_for_string", bodyMD, fVarint(without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, 0), wirescan.ErrWireType},
 
 		// Not decodable at all stays ErrMalformed.
 		{"overlong_then_truncated", bodyMD, app(noFV, []byte{0x08, 0x81, 0x80}), wirescan.ErrMalformed},

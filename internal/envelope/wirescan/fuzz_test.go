@@ -151,6 +151,8 @@ func FuzzCheck(f *testing.F) {
 	}
 	seeds = append(seeds, nonCanonicalSeeds(f)...)
 	seeds = append(seeds, unpackedSeeds(f)...)
+	seeds = append(seeds, packedRecordSeeds(f)...)
+	seeds = append(seeds, explicitDefaultSeeds(f)...)
 	for _, s := range seeds {
 		f.Add(s)
 	}
@@ -168,16 +170,15 @@ func FuzzCheck(f *testing.F) {
 			if checkErr == nil && !clean {
 				t.Fatalf("Check accepted input the strict oracle rejects (%s): %x", md.FullName(), b)
 			}
-			// Two packed records for one field, and an empty packed record,
-			// are not decided by the spec yet: no completeness assertion.
-			undecided := packedUndecided(b, md, 0)
 
 			var m proto.Message = new(wardenv1.EnvelopeBody)
 			if md == outerMD {
 				m = new(wardenv1.SignedEnvelope)
 			}
 			protoErr := proto.Unmarshal(b, proto.Clone(m))
-			if clean && !undecided && protoErr == nil && checkErr != nil {
+			// Completeness, now including split and empty packed records
+			// and explicit defaults (R13 (i), (j)): the oracle decides them.
+			if clean && protoErr == nil && checkErr != nil {
 				t.Fatalf("Check rejected input that is strictly clean and decodes: %v (%x)", checkErr, b)
 			}
 
@@ -263,12 +264,15 @@ func varintKind(k protoreflect.Kind) bool {
 
 // canonicalOK is true if every tag, length prefix, varint value and packed
 // element in b (recursively, by md) is minimally encoded, every int32/enum,
-// uint32/sint32 and bool value is in range, and every repeated numeric or
-// enum field is packed (no record with a varint, I32 or I64 wire type for a
-// repeated field, R13 (i)). It returns false for anything it cannot parse
-// or does not know, so it is only meaningful as "Check accepted =>
-// canonicalOK".
+// uint32/sint32 and bool value is in range, every repeated numeric or enum
+// field is exactly one non-empty packed record per message (no record with
+// a varint, I32 or I64 wire type for a repeated field, no second packed
+// record, no empty one, R13 (i)), and no non-repeated, non-message field
+// with implicit presence holds its explicitly encoded proto3 default (R13
+// (j)). It returns false for anything it cannot parse or does not know, so
+// it is only meaningful as "Check accepted => canonicalOK".
 func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
+	packedSeen := map[protowire.Number]bool{}
 	for len(b) > 0 {
 		tag, n := readVarint(b)
 		if n < 0 || n != minimalLen(tag) {
@@ -285,20 +289,22 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			// An unpacked element of a repeated numeric or enum field.
 			return false
 		}
+		// R13 (j): a zero value here would be the proto3 default written out.
+		implicit := !fd.IsList() && fd.Kind() != protoreflect.MessageKind && !fd.HasPresence()
 		switch typ {
 		case protowire.VarintType:
 			v, k := readVarint(b)
-			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) {
+			if k < 0 || k != minimalLen(v) || !inRange(fd.Kind(), v) || (implicit && v == 0) {
 				return false
 			}
 			b = b[k:]
 		case protowire.Fixed32Type:
-			if len(b) < 4 {
+			if len(b) < 4 || (implicit && allZero(b[:4])) {
 				return false
 			}
 			b = b[4:]
 		case protowire.Fixed64Type:
-			if len(b) < 8 {
+			if len(b) < 8 || (implicit && allZero(b[:8])) {
 				return false
 			}
 			b = b[8:]
@@ -313,6 +319,16 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			end := k + int(l)
 			payload := b[k:end]
 			b = b[end:]
+			if implicit && l == 0 {
+				return false
+			}
+			if fd.IsList() && nativeWireType(fd) != protowire.BytesType {
+				// R13 (i): one non-empty packed record per field per message.
+				if packedSeen[num] || l == 0 {
+					return false
+				}
+				packedSeen[num] = true
+			}
 			switch {
 			case fd.Kind() == protoreflect.MessageKind:
 				if !canonicalOK(payload, fd.Message()) {
@@ -334,47 +350,99 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 	return true
 }
 
-// packedUndecided reports whether b holds, in any message it can parse
-// (recursively, by md), a repeated numeric or enum field with more than one
-// packed record or with an empty packed record. The spec does not decide
-// these yet, so the fuzz targets make no claim about them either way.
-func packedUndecided(b []byte, md protoreflect.MessageDescriptor, depth int) bool {
-	if depth > 64 {
-		return false
-	}
-	records := map[protowire.Number]int{}
-	for len(b) > 0 {
-		num, typ, n := protowire.ConsumeTag(b)
-		if n < 0 {
+// allZero reports whether every byte of b is 0: a fixed-width proto3
+// default (0, or +0.0 for float and double; -0.0 has its sign bit set).
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
 			return false
-		}
-		m := protowire.ConsumeFieldValue(num, typ, b[n:])
-		if m < 0 {
-			return false
-		}
-		val := b[n : n+m]
-		b = b[n+m:]
-		fd := md.Fields().ByNumber(num)
-		if fd == nil || typ != protowire.BytesType {
-			continue
-		}
-		payload, k := protowire.ConsumeBytes(val)
-		if k < 0 {
-			return false
-		}
-		switch {
-		case fd.Kind() == protoreflect.MessageKind:
-			if packedUndecided(payload, fd.Message(), depth+1) {
-				return true
-			}
-		case fd.IsList() && nativeWireType(fd) != protowire.BytesType:
-			records[num]++
-			if len(payload) == 0 || records[num] > 1 {
-				return true
-			}
 		}
 	}
-	return false
+	return true
+}
+
+// packedRecordSeeds is one input for each rejected R13 (i) record layout
+// (split list, empty record alone, before or after a valid one, mixed with
+// an unpacked record) on the contract's P22 fields, directly and through a
+// body, and on the test-only descriptors.
+func packedRecordSeeds(tb testing.TB) [][]byte {
+	noParams := func() []byte { b := validBody(); b.Params = nil; return marshalDet(tb, b) }()
+	withReq := func(req []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 22, req)) }
+	rec := func(num protowire.Number, vals ...uint64) []byte { return fBytes(nil, num, packedVarints(vals...)) }
+	var out [][]byte
+	for _, num := range []protowire.Number{3, 4} {
+		for _, req := range [][]byte{
+			cat(rec(num, 1), rec(num, 2, 3)),
+			fBytes(nil, num, nil),
+			cat(fBytes(nil, num, nil), rec(num, 1, 2, 3)),
+			cat(rec(num, 1, 2, 3), fBytes(nil, num, nil)),
+			cat(rec(num, 1), fVarint(nil, num, 2)),
+			cat(rec(num, 1), fBytes(nil, num, []byte{0x80})),
+			rec(num, 0, 0, 0),
+		} {
+			out = append(out, req, withReq(req))
+		}
+	}
+	return append(out,
+		// kindsMD: repeated enum (17) and uint32 (15), and per-child records.
+		cat(rec(17, 1), rec(17, 1, 0)),
+		fBytes(nil, 17, nil),
+		cat(rec(15, 1), rec(15, 2)),
+		cat(fBytes(nil, 22, rec(15, 1)), fBytes(nil, 22, rec(15, 2))),
+		fBytes(nil, 12, cat(rec(15, 1), rec(15, 2))),
+		// fixedKindsMD: repeated fixed32 (1) split.
+		cat(fBytes(nil, 1, protowire.AppendFixed32(nil, 1)), fBytes(nil, 1, protowire.AppendFixed32(nil, 2))),
+		// presenceMD: repeated uint32 (24) split and empty.
+		cat(rec(pRU32, 1), rec(pRU32, 2)),
+		fBytes(nil, pREnum, nil),
+	)
+}
+
+// explicitDefaultSeeds is one input for each R13 (j) case: explicit
+// defaults in implicit-presence fields at depths 0-2 and in the outer
+// envelope, and their exempt counterparts (oneof member, optional field,
+// empty message, repeated element).
+func explicitDefaultSeeds(tb testing.TB) [][]byte {
+	without := func(m func(b *wardenv1.EnvelopeBody)) []byte { b := validBody(); m(b); return marshalDet(tb, b) }
+	noFV := without(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 })
+	noCreated := without(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 })
+	noPD := without(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision = nil })
+	noParams := without(func(b *wardenv1.EnvelopeBody) { b.Params = nil })
+	body := marshalDet(tb, validBody())
+	pd := marshalDet(tb, validBody().PolicyDecision)
+	withReq := func(member protowire.Number, req []byte) []byte {
+		return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, member, req))
+	}
+	kid, sig := make([]byte, 32), make([]byte, 64)
+	return [][]byte{
+		fVarint(append([]byte(nil), noFV...), 1, 0),
+		cat([]byte{0x08, 0x80, 0x00}, noFV),
+		fVarint(append([]byte(nil), noCreated...), 10, 0),
+		fBytes(append([]byte(nil), noPD...), 9, fBytes(append([]byte(nil), pd...), 4, nil)),
+		fBytes(append([]byte(nil), noPD...), 9, cat(pd, fVarint(nil, 2, 0))),
+		withReq(11, fBytes(nil, 1, nil)),
+		withReq(17, fVarint(nil, 5, 0)),
+		withReq(22, fVarint(nil, 1, 0)),
+		withReq(22, fVarint(nil, 5, 0)),
+		withReq(7, nil),
+		cat(fBytes(nil, 1, nil), fBytes(nil, 2, body), fBytes(nil, 3, sig)),
+		cat(fBytes(nil, 1, kid), fBytes(nil, 2, nil), fBytes(nil, 3, sig)),
+		cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, nil)),
+		// test-only descriptors
+		fVarint(nil, pU32, 0),
+		fBytes(nil, pByt, nil),
+		fFixed64(nil, pDbl, 0),
+		fFixed64(nil, pDbl, 1<<63), // -0.0: not the default
+		fVarint(nil, pOI32, 0),     // oneof member: exempt
+		fBytes(nil, pOStr, nil),    // oneof member: exempt
+		fVarint(nil, pOptU32, 0),   // optional: exempt
+		fBytes(nil, pOptByt, nil),  // optional: exempt
+		fBytes(nil, pChild, fVarint(nil, pBool, 0)),
+		fBytes(nil, pChildren, fBytes(nil, pStr, nil)),
+		fBytes(nil, 12, fVarint(nil, 3, 0)), // kindsMD child.u32 = 0
+		fBytes(nil, 11, nil),                // kindsMD str = ""
+		fVarint(nil, 1, 0),                  // wrapper value = 0
+	}
 }
 
 // unpackedSeeds is one input for each unpacked form of a repeated numeric
@@ -447,15 +515,23 @@ func nonCanonicalSeeds(tb testing.TB) [][]byte {
 }
 
 // FuzzCanonical: whenever Check accepts, every varint is minimal, every
-// 32-bit and bool value is in range and every repeated numeric or enum
-// field is packed; whenever the input is strictly clean,
-// canonical and decodes, Check accepts. It runs over the contract and over
-// descriptors that have int32, sint32, bool and packed 32-bit fields.
+// 32-bit and bool value is in range, every repeated numeric or enum field
+// is one non-empty packed record and no implicit-presence field holds an
+// explicit default; whenever the input is strictly clean, canonical and
+// decodes, Check accepts. It runs over the contract and over descriptors
+// that have int32, sint32, bool, packed 32-bit and 64-bit fields, scalar
+// oneof members and proto3 optional fields.
 func FuzzCanonical(f *testing.F) {
 	for _, s := range nonCanonicalSeeds(f) {
 		f.Add(s)
 	}
 	for _, s := range unpackedSeeds(f) {
+		f.Add(s)
+	}
+	for _, s := range packedRecordSeeds(f) {
+		f.Add(s)
+	}
+	for _, s := range explicitDefaultSeeds(f) {
 		f.Add(s)
 	}
 	f.Add(marshalDet(f, validBody()))
@@ -469,7 +545,7 @@ func FuzzCanonical(f *testing.F) {
 	f.Add(fBytes(nil, 12, fBytes(nil, 12, fVarintOverlong(nil, 1, 1))))
 	f.Add(fBytes(nil, 22, fVarint(nil, 5, 1<<32+1)))
 	mds := []protoreflect.MessageDescriptor{
-		bodyMD, outerMD, dbTermMD, kindsMD, fixedKindsMD, locationMD,
+		bodyMD, outerMD, dbTermMD, kindsMD, fixedKindsMD, locationMD, presenceMD,
 		(&wrapperspb.Int32Value{}).ProtoReflect().Descriptor(),
 		(&wrapperspb.UInt32Value{}).ProtoReflect().Descriptor(),
 		(&wrapperspb.BoolValue{}).ProtoReflect().Descriptor(),
@@ -483,10 +559,6 @@ func FuzzCanonical(f *testing.F) {
 			canon := canonicalOK(b, md)
 			if checkErr == nil && !canon {
 				t.Fatalf("Check accepted a non-canonical encoding (%s): %x", md.FullName(), b)
-			}
-			if packedUndecided(b, md, 0) {
-				// Not decided by the spec yet: no claim beyond soundness.
-				continue
 			}
 			if checkErr != nil && errors.Is(checkErr, wirescan.ErrNonCanonical) && canon && strictClean(b, md, 0) {
 				t.Fatalf("ErrNonCanonical for an input the oracle finds canonical and clean (%s): %x", md.FullName(), b)

@@ -1,19 +1,27 @@
 package wirescan_test
 
 // Tests for action-envelope.md R13 (i) (Nofal 2026-10-16, signing-and-updates
-// OQ37): a repeated field of a numeric scalar or enum type MUST use the
-// packed encoding (wire type 2). The unpacked encoding (one record per
-// element, using the element's own varint, I32 or I64 wire type) is
-// ErrNonCanonical: proto.Unmarshal reads both forms as the same list, so
-// without this rule two different signed byte strings decode to one value.
-// Repeated string, bytes and message fields cannot be packed and are not
-// affected.
+// OQ37; one non-empty record, Nofal 2026-10-18): a repeated field of a
+// numeric scalar or enum type MUST be exactly one non-empty packed record
+// (wire type 2) per field per message. The unpacked encoding (one record
+// per element, using the element's own varint, I32 or I64 wire type), a
+// list split over two or more packed records, and an empty packed record
+// (length 0, alone or next to a valid one) are each ErrNonCanonical:
+// proto.Unmarshal reads all of them as the same list as the one-record
+// form, so without this rule different signed byte strings decode to one
+// value. An empty list is the field left out. Repeated string, bytes and
+// message fields cannot be packed and are not affected.
 //
-// Not decided by the spec yet, so deliberately NOT asserted here either
-// way: two or more packed records for the same field, and an empty packed
-// record (length 0).
+// Check order pinned here (the spec orders none of these; the codes are
+// the same either way): a record with a wire type that is neither the
+// element's own nor 2 stays ErrWireType and a group stays ErrGroup, even
+// after a valid packed record; a second packed record is ErrNonCanonical
+// before its payload is parsed (like a duplicate non-repeated field today),
+// so a second record holding a truncated element is ErrNonCanonical, not
+// ErrMalformed.
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -185,6 +193,30 @@ func TestUnpackedRepeatedEveryField(t *testing.T) {
 				scanCase{p + "tag_overlong+unpacked", md, cat(overlong(rawTag(num, typ)), elem(typ, 1)), wirescan.ErrNonCanonical},
 				scanCase{p + "group_on_repeated_number", md, fGroup(nil, num, nil), wirescan.ErrGroup},
 				scanCase{p + "packed_then_group", md, cat(packedRec(num, typ, 1), fGroup(nil, num, nil)), wirescan.ErrGroup},
+				// The empty record is complete and checked before the group.
+				scanCase{p + "empty_packed_then_group", md, cat(fBytes(nil, num, nil), fGroup(nil, num, nil)), wirescan.ErrNonCanonical},
+			)
+			// R13 (i), 2026-10-18: exactly one non-empty packed record.
+			truncated := []byte{0x80} // a varint cut short
+			if typ != protowire.VarintType {
+				truncated = []byte{0x01, 0x02, 0x03} // shorter than one fixed element
+			}
+			cases = append(cases,
+				scanCase{p + "split_one_then_two", md, cat(packedRec(num, typ, 1), packedRec(num, typ, 0, 1)), wirescan.ErrNonCanonical},
+				scanCase{p + "split_two_then_one", md, cat(packedRec(num, typ, 1, 0), packedRec(num, typ, 1)), wirescan.ErrNonCanonical},
+				scanCase{p + "split_same_record_twice", md, cat(packedRec(num, typ, 1), packedRec(num, typ, 1)), wirescan.ErrNonCanonical},
+				scanCase{p + "split_three_records", md, cat(packedRec(num, typ, 1), packedRec(num, typ, 0), packedRec(num, typ, 1)), wirescan.ErrNonCanonical},
+				scanCase{p + "split_zero_elements", md, cat(packedRec(num, typ, 0), packedRec(num, typ, 0)), wirescan.ErrNonCanonical},
+				scanCase{p + "empty_alone", md, fBytes(nil, num, nil), wirescan.ErrNonCanonical},
+				scanCase{p + "empty_twice", md, cat(fBytes(nil, num, nil), fBytes(nil, num, nil)), wirescan.ErrNonCanonical},
+				scanCase{p + "empty_before_valid", md, cat(fBytes(nil, num, nil), packedRec(num, typ, 1, 0, 1)), wirescan.ErrNonCanonical},
+				scanCase{p + "empty_after_valid", md, cat(packedRec(num, typ, 1, 0, 1), fBytes(nil, num, nil)), wirescan.ErrNonCanonical},
+				scanCase{p + "empty_then_unpacked", md, cat(fBytes(nil, num, nil), unpackedRec(num, typ, 1)), wirescan.ErrNonCanonical},
+				// Check order: the second record is rejected before its
+				// payload is parsed.
+				scanCase{p + "second_record_truncated_element", md, cat(packedRec(num, typ, 1), fBytes(nil, num, truncated)), wirescan.ErrNonCanonical},
+				// A truncated element in the only record stays ErrMalformed.
+				scanCase{p + "only_record_truncated_element", md, fBytes(nil, num, truncated), wirescan.ErrMalformed},
 			)
 			runCanonCases(t, cases)
 		}
@@ -218,7 +250,30 @@ func TestUnpackedRepeatedContract(t *testing.T) {
 		{"full_deterministic", dbTermMD, full, nil},
 		{"ids_packed_starts_packed", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(1, 2)), fBytes(nil, 4, packedVarints(minus1, 5))), nil},
 		{"digests_three_records", dbTermMD, app(noLists, fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},
+		// session_owner_digests is repeated bytes: several records and
+		// empty records stay valid (R13 (i) and (j) do not reach it).
 		{"digests_empty_records", dbTermMD, app(noLists, fBytes(nil, 6, nil), fBytes(nil, 6, nil)), nil},
+		// MySQL P22: every session_started_at element is 0, as packed
+		// elements (R13 (j) does not apply to repeated elements).
+		{"starts_packed_zeros_mysql", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 4, packedVarints(0, 0, 0))), nil},
+		{"ids_packed_with_zero_element", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(0))), nil},
+
+		// R13 (i), 2026-10-18: one non-empty packed record per field.
+		{"ids_split_one_then_two", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101)), fBytes(nil, 3, packedVarints(202, 303))), wirescan.ErrNonCanonical},
+		{"ids_split_far_apart", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101)), fBytes(nil, 4, packedVarints(0, 0)), fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
+		{"ids_split_across_head", dbTermMD, cat(fBytes(nil, 3, packedVarints(101)), noLists, fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
+		{"ids_split_after_full", dbTermMD, app(full, fBytes(nil, 3, packedVarints(303))), wirescan.ErrNonCanonical},
+		{"ids_empty_alone", dbTermMD, app(noLists, fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"ids_empty_before_valid", dbTermMD, app(noLists, fBytes(nil, 3, nil), fBytes(nil, 3, packedVarints(101, 202, 303))), wirescan.ErrNonCanonical},
+		{"ids_empty_after_valid", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"ids_empty_then_unpacked", dbTermMD, app(noLists, fBytes(nil, 3, nil), fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
+		{"starts_split_one_then_two", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(0)), fBytes(nil, 4, packedVarints(0, 0))), wirescan.ErrNonCanonical},
+		{"starts_split_negative", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(minus1)), fBytes(nil, 4, packedVarints(minus1, 5))), wirescan.ErrNonCanonical},
+		{"starts_split_after_full", dbTermMD, app(full, fBytes(nil, 4, packedVarints(0))), wirescan.ErrNonCanonical},
+		{"starts_empty_alone", dbTermMD, app(noLists, fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
+		{"starts_empty_before_valid", dbTermMD, app(noLists, fBytes(nil, 4, nil), fBytes(nil, 4, packedVarints(0, 0, 0))), wirescan.ErrNonCanonical},
+		{"starts_empty_after_valid", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(0, 0, 0)), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
+		{"both_empty", dbTermMD, app(noLists, fBytes(nil, 3, nil), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
 
 		{"ids_unpacked_single", dbTermMD, app(noLists, fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
 		{"ids_unpacked_single_zero", dbTermMD, app(noLists, fVarint(nil, 3, 0)), wirescan.ErrNonCanonical},
@@ -251,20 +306,26 @@ func TestUnpackedRepeatedContract(t *testing.T) {
 	runCanonCases(t, body)
 }
 
-// Thousands of unpacked records are rejected (not slowly accepted), and the
-// same count packed is accepted.
+// Thousands of unpacked or split records are rejected (not slowly
+// accepted), and the same count in one packed record is accepted.
 func TestUnpackedRepeatedMany(t *testing.T) {
 	const n = 10_000
-	var unpacked []byte
+	var unpacked, onePerRecord []byte
 	vals := make([]uint64, n)
 	for i := range vals {
 		vals[i] = uint64(i)
 		unpacked = fVarint(unpacked, 3, uint64(i))
+		onePerRecord = fBytes(onePerRecord, 3, packedVarints(uint64(i)))
 	}
 	runCanonCases(t, []scanCase{
 		{"packed_10000", dbTermMD, fBytes(nil, 3, packedVarints(vals...)), nil},
 		{"unpacked_10000", dbTermMD, unpacked, wirescan.ErrNonCanonical},
 		{"packed_10000_then_one_unpacked", dbTermMD, cat(fBytes(nil, 3, packedVarints(vals...)), fVarint(nil, 3, 1)), wirescan.ErrNonCanonical},
+		// R13 (i): the same list split in two, one packed record per
+		// element, and thousands of empty packed records are rejected too.
+		{"packed_10000_split_in_two", dbTermMD, cat(fBytes(nil, 3, packedVarints(vals[:n/2]...)), fBytes(nil, 3, packedVarints(vals[n/2:]...))), wirescan.ErrNonCanonical},
+		{"one_packed_record_per_element_10000", dbTermMD, onePerRecord, wirescan.ErrNonCanonical},
+		{"empty_packed_10000", dbTermMD, bytes.Repeat(fBytes(nil, 3, nil), n), wirescan.ErrNonCanonical},
 	})
 }
 
@@ -291,6 +352,14 @@ func TestRepeatedNonPackableUnaffected(t *testing.T) {
 		{"fixed_kinds_children", fixedKindsMD, cat(fBytes(nil, 9, nil), fBytes(nil, 9, packedRec(4, protowire.Fixed64Type, 1))), nil},
 		// The rule still applies inside a repeated message element.
 		{"fixed_kinds_child_unpacked", fixedKindsMD, cat(fBytes(nil, 9, nil), fBytes(nil, 9, fFixed64(nil, 4, 1))), wirescan.ErrNonCanonical},
+		// R13 (i) counts records per field per message: one packed record in
+		// each of two repeated children, and one in a child plus one in its
+		// parent, are each one record per message.
+		{"one_packed_record_in_each_child", kindsMD, cat(fBytes(nil, 22, fBytes(nil, 15, packedVarints(1, 2))), fBytes(nil, 22, fBytes(nil, 15, packedVarints(3)))), nil},
+		{"one_packed_record_parent_and_child", kindsMD, cat(fBytes(nil, 15, packedVarints(1)), fBytes(nil, 12, fBytes(nil, 15, packedVarints(2)))), nil},
+		{"fixed_one_packed_record_in_each_child", fixedKindsMD, cat(fBytes(nil, 9, packedRec(4, protowire.Fixed64Type, 1)), fBytes(nil, 9, packedRec(4, protowire.Fixed64Type, 2))), nil},
+		{"split_inside_one_child", kindsMD, cat(fBytes(nil, 22, fBytes(nil, 15, packedVarints(1))), fBytes(nil, 22, cat(fBytes(nil, 15, packedVarints(2)), fBytes(nil, 15, packedVarints(3))))), wirescan.ErrNonCanonical},
+		{"empty_packed_inside_child", kindsMD, fBytes(nil, 12, fBytes(nil, 17, nil)), wirescan.ErrNonCanonical},
 		{"listvalue_nested_ok", listValueMD, fBytes(nil, 1, fBytes(nil, 6, fBytes(nil, 1, fVarint(nil, 4, 1)))), nil},
 	})
 }

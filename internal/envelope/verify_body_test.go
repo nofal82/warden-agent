@@ -370,6 +370,16 @@ func TestCheck6FormatVersion(t *testing.T) {
 		}
 		expectBodyReject(t, v, bb, CodeUnsupportedFormatVersion, 6)
 	})
+	// R14, R13 (j): format_version explicitly encoded as 0 is a
+	// non-canonical proto3 default and fails the strict scan first, so it is
+	// BODY_INVALID at check 5, never UNSUPPORTED_FORMAT_VERSION; 2 written
+	// the same way stays check 6.
+	t.Run("explicit_zero_is_check5_not_check6", func(t *testing.T) {
+		bb := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 }))
+		expectBodyReject(t, v, fVarint(append([]byte(nil), bb...), 1, 0), CodeBodyInvalid, 5)
+		expectBodyReject(t, v, cat(fVarint(nil, 1, 0), bb), CodeBodyInvalid, 5)
+		expectBodyReject(t, v, cat(fVarint(nil, 1, 2), bb), CodeUnsupportedFormatVersion, 6)
+	})
 }
 
 // --- check 7: created_at inside the signing key's validity -------------------
