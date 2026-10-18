@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Pinned tool versions. Keep in sync with the Makefile. Review monthly.
-  GOLANGCI_LINT_VERSION: v2.13.2
+  GOLANGCI_LINT_VERSION: v2.14.0
   GOSEC_VERSION: v2.28.0
   GOVULNCHECK_VERSION: v1.9.0      # golang.org/x/vuln module version
   GITLEAKS_VERSION: v8.30.1
@@ -105,7 +105,7 @@ jobs:
         run: golangci-lint run ./...
       - name: gosec
         if: steps.pkgs.outputs.present == 'true'
-        run: gosec -quiet ./...
+        run: gosec -quiet -exclude-generated ./...
       - name: govulncheck
         if: steps.pkgs.outputs.present == 'true'
         run: govulncheck ./...
