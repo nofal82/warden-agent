@@ -503,8 +503,9 @@ func TestExplicitDefaultWellKnown(t *testing.T) {
 // map entry's key and value even when they are zero. The contract has no
 // map. Read literally, R13 (j) rejects a zero key written explicitly inside
 // an entry; this test pins that literal reading so a change is deliberate.
-// Flagged for Nofal: it means a Go-marshalled map with an empty key would
-// not pass the scan.
+// A Go-marshalled map with an empty key so fails the scan. Nofal decided
+// (2026-10-18) that the contract never contains maps (TestContractHasNoMaps
+// in api/proto/warden/v1) and that the scanner stays as it is.
 func TestExplicitDefaultMapEntryLiteral(t *testing.T) {
 	structMD := (&structpb.Struct{}).ProtoReflect().Descriptor()
 	trueValue := fVarint(nil, 4, 1) // Value.bool_value = true (a oneof member)

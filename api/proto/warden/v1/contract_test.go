@@ -3,7 +3,11 @@ package wardenv1_test
 import (
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 )
@@ -87,5 +91,101 @@ func TestEnumsStartUnspecified(t *testing.T) {
 				t.Errorf("enum %s: value 0 is not *_UNSPECIFIED", ed.Name())
 			}
 		}
+	}
+}
+
+// contractFiles is every registered file of package warden.v1, so a contract
+// file added later is covered without editing these tests.
+func contractFiles(t *testing.T) []protoreflect.FileDescriptor {
+	t.Helper()
+	var files []protoreflect.FileDescriptor
+	protoregistry.GlobalFiles.RangeFilesByPackage("warden.v1", func(f protoreflect.FileDescriptor) bool {
+		files = append(files, f)
+		return true
+	})
+	if len(files) < 2 {
+		t.Fatalf("found %d warden.v1 files, want at least envelope.proto and typed_request.proto", len(files))
+	}
+	return files
+}
+
+// mapFields returns every map field declared in f, nested messages included.
+func mapFields(f protoreflect.FileDescriptor) []protoreflect.FullName {
+	var out []protoreflect.FullName
+	var walk func(protoreflect.MessageDescriptors)
+	walk = func(mds protoreflect.MessageDescriptors) {
+		for i := 0; i < mds.Len(); i++ {
+			md := mds.Get(i)
+			for j := 0; j < md.Fields().Len(); j++ {
+				if fd := md.Fields().Get(j); fd.IsMap() {
+					out = append(out, fd.FullName())
+				}
+			}
+			walk(md.Messages())
+		}
+	}
+	walk(f.Messages())
+	return out
+}
+
+// TestContractHasNoMaps: map fields are never allowed in the contract. Go
+// always writes a map entry's key and value, even when zero, which the
+// strict scanner's R13 (j) rule rejects, and duplicate keys silently keep
+// the last entry (Nofal, 2026-10-18).
+func TestContractHasNoMaps(t *testing.T) {
+	for _, f := range contractFiles(t) {
+		for _, name := range mapFields(f) {
+			t.Errorf("%s: map field %s; the contract must never contain map fields", f.Path(), name)
+		}
+	}
+}
+
+// TestContractIsProto3: every contract file is proto3. The R13 (i) and (j)
+// rules assume proto3: repeated scalars packed by default and implicit
+// presence for plain scalars (Nofal, 2026-10-18).
+func TestContractIsProto3(t *testing.T) {
+	for _, f := range contractFiles(t) {
+		if f.Syntax() != protoreflect.Proto3 {
+			t.Errorf("%s has syntax %v, want proto3", f.Path(), f.Syntax())
+		}
+	}
+}
+
+// The two checks above would catch a violation: a proto2 file with a map
+// nested one level deep fails both.
+func TestContractChecksDetectViolations(t *testing.T) {
+	rep := descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+	opt := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	str := descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum()
+	msg := descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum()
+	entry := &descriptorpb.DescriptorProto{
+		Name: proto.String("LabelsEntry"),
+		Field: []*descriptorpb.FieldDescriptorProto{
+			{Name: proto.String("key"), Number: proto.Int32(1), Label: opt, Type: str},
+			{Name: proto.String("value"), Number: proto.Int32(2), Label: opt, Type: str},
+		},
+		Options: &descriptorpb.MessageOptions{MapEntry: proto.Bool(true)},
+	}
+	f, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("wardentest/bad_contract.proto"),
+		Package: proto.String("wardentest"),
+		Syntax:  proto.String("proto2"),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("Outer"),
+			NestedType: []*descriptorpb.DescriptorProto{{
+				Name:       proto.String("Inner"),
+				Field:      []*descriptorpb.FieldDescriptorProto{{Name: proto.String("labels"), Number: proto.Int32(1), Label: rep, Type: msg, TypeName: proto.String(".wardentest.Outer.Inner.LabelsEntry")}},
+				NestedType: []*descriptorpb.DescriptorProto{entry},
+			}},
+		}},
+	}, new(protoregistry.Files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mapFields(f); len(got) != 1 || got[0] != "wardentest.Outer.Inner.labels" {
+		t.Errorf("mapFields = %v, want [wardentest.Outer.Inner.labels]", got)
+	}
+	if f.Syntax() == protoreflect.Proto3 {
+		t.Error("test file should be proto2")
 	}
 }
