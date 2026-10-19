@@ -12,16 +12,25 @@
 // 64 bits, out-of-range 32-bit and bool values, repeated numbers or enums
 // that are not one non-empty packed record, explicitly encoded proto3
 // defaults, and fields that are not in strictly ascending number order.
-// With these rules the scan accepts exactly the bytes deterministic Go
-// marshalling of the generated contract types produces (AC8a). Go's
-// reflection-based marshaller (dynamicpb) may write oneof members after
-// higher-numbered fields, so bytes it produces can be rejected (open
-// question action-envelope OQ28).
 //
-// Untrusted input must go through Unmarshal (which the envelope verifier
-// uses), never through Check alone. Check looks only at the wire structure;
-// it does not validate that string fields hold UTF-8. That check, and the
-// final decode, happen in proto.Unmarshal, which Unmarshal runs after
-// Check. Accepting bytes on the strength of Check alone would let invalid
+// # Signers
+//
+// Signers MUST marshal the generated contract types with
+// proto.MarshalOptions{Deterministic: true} (action-envelope R3). Rule (k),
+// strictly ascending field order, depends on it: for that encoding of the
+// generated types the scan accepts exactly the bytes the signer produced,
+// byte for byte (AC8a). It also depends on how the contract is declared.
+// protobuf-go writes a field numbered between two members of a oneof out
+// of order, with or without Deterministic, so every contract message
+// declares its fields in ascending number order and keeps each oneof's
+// members together (OQ28 ruling, enforced by TestContractFieldOrder in
+// api/proto/warden/v1).
+//
+// # Entry point
+//
+// Unmarshal is the only entry point. It runs the wire scan, then
+// proto.Unmarshal (which rejects string fields that are not valid UTF-8),
+// then a check that no message kept unknown fields. The scan alone is not
+// exported: accepting bytes on the strength of the scan would let invalid
 // UTF-8 through.
 package wirescan
