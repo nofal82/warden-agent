@@ -482,7 +482,9 @@ func TestAC3ReorderedBody(t *testing.T) {
 	}
 	// Original signature over the reordered bytes: rejected.
 	expectReject(t, v, wrap(keyIDBytes(keyA), re, signBody(keyA, orig)), CodeBadSignature, 4)
-	// The verifier signs-what-it-receives: the reordered bytes signed by the
-	// trusted key are accepted (R4, OQ12: no canonical re-encoding check).
-	expectAccept(t, v, sealBytes(keyA, re), body, keyA)
+	// The verifier still never re-encodes the body (R4, OQ12), but the
+	// strict scan accepts only ascending field order (R13 (k), 2026-10-19),
+	// so the reordered bytes are BODY_INVALID even when the trusted key
+	// signed them.
+	expectBodyReject(t, v, re, CodeBodyInvalid, 5)
 }

@@ -271,7 +271,8 @@ func TestCheck5WireAttacks(t *testing.T) {
 	pdBytes := marshalDet(t, base.PolicyDecision)
 	restartInner := marshalDet(t, &wardenv1.ServiceRestartRequest{Unit: "nginx.service"})
 	memInner := []byte{}
-	paramsWith := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
+	paramsWith := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	pdWith := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
 
 	clear := func(m func(b *wardenv1.EnvelopeBody)) []byte { return marshalDet(t, bodyWith(m)) }
 
@@ -297,12 +298,12 @@ func TestCheck5WireAttacks(t *testing.T) {
 		"duplicate_idempotency_key":   fBytes(append([]byte(nil), baseBytes...), 12, []byte("other")),
 		"duplicate_playbook_digest":   fBytes(append([]byte(nil), baseBytes...), 6, digest("x")),
 		"repeated_policy_decision":    fBytes(append([]byte(nil), baseBytes...), 9, pdBytes),
-		"repeated_policy_decision_mx": fBytes(fBytes(append([]byte(nil), noPD...), 9, []byte{}), 9, pdBytes),
+		"repeated_policy_decision_mx": fBytes(pdWith([]byte{}), 9, pdBytes),
 		"duplicate_decision_id_in_pd": fBytes(append([]byte(nil), noPD...), 9,
 			fBytes(append([]byte(nil), pdBytes...), 1, []byte(validDecisionID))),
 		"two_members_one_params":   paramsWith(cat(fBytes(nil, 11, restartInner), fBytes(nil, 7, memInner))),
 		"same_member_twice":        paramsWith(cat(fBytes(nil, 11, restartInner), fBytes(nil, 11, restartInner))),
-		"two_params_fields_differ": fBytes(fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 11, restartInner)), 8, fBytes(nil, 7, memInner)),
+		"two_params_fields_differ": fBytes(paramsWith(fBytes(nil, 11, restartInner)), 8, fBytes(nil, 7, memInner)),
 		"two_params_fields_same":   fBytes(append([]byte(nil), baseBytes...), 8, fBytes(nil, 11, restartInner)),
 		"duplicate_unit_in_request": paramsWith(fBytes(nil, 11,
 			fBytes(append([]byte(nil), restartInner...), 1, []byte("sshd.service")))),
@@ -327,10 +328,10 @@ func TestCheck5WireAttacks(t *testing.T) {
 			fBytes(marshalDet(t, &wardenv1.PolicyDecision{DecisionId: validDecisionID, PolicyBundleDigest: digest("policy-bundle")}), 2, []byte{3})),
 		"request_member_as_varint": paramsWith(fVarint(nil, 11, 1)),
 
-		"invalid_utf8_action_id": fBytes(clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2,
-			[]byte("01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e\xff\xfe")),
+		"invalid_utf8_action_id": withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), fBytes(nil, 2,
+			[]byte("01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e\xff\xfe"))),
 		"invalid_utf8_idem": fBytes(clear(func(b *wardenv1.EnvelopeBody) { b.IdempotencyKey = "" }), 12, []byte{0xc0, 0x80}),
-		"invalid_utf8_decision_id": fBytes(append([]byte(nil), noPD...), 9,
+		"invalid_utf8_decision_id": pdWith(
 			cat(fBytes(nil, 1, []byte("\xed\xa0\x80")), fVarint(nil, 2, 3), fBytes(nil, 3, digest("policy-bundle")))),
 		"invalid_utf8_in_request": paramsWith(fBytes(nil, 11, fBytes(nil, 1, []byte("nginx\xff.service")))),
 

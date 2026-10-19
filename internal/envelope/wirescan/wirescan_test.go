@@ -131,8 +131,10 @@ func TestBodyCases(t *testing.T) {
 	app := func(b []byte, more ...[]byte) []byte {
 		return cat(append([][]byte{append([]byte(nil), b...)}, more...)...)
 	}
-	withParams := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
-	withPD := func(p []byte) []byte { return fBytes(append([]byte(nil), noPD...), 9, p) }
+	// Insert at the field's ascending position so only the rule under
+	// test is broken (R13 (k)).
+	withParams := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	withPD := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
 
 	// Field number beyond 2^29-1, encoded as a raw tag varint.
 	tooBig := protowire.AppendVarint(nil, uint64(protowire.MaxValidNumber+1)<<3)
@@ -142,7 +144,7 @@ func TestBodyCases(t *testing.T) {
 
 	runScanCases(t, []scanCase{
 		{"valid", bodyMD, base, nil},
-		{"valid_params_last_out_of_order", bodyMD, withParams(fBytes(nil, 11, restart)), nil},
+		{"valid_params_rebuilt", bodyMD, withParams(fBytes(nil, 11, restart)), nil},
 		{"valid_empty_pd", bodyMD, withPD(nil), nil},
 		{"valid_field_less_member", bodyMD, withParams(fBytes(nil, 7, nil)), nil},
 
@@ -231,7 +233,8 @@ func TestOuterCases(t *testing.T) {
 	good := cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, sig))
 	runScanCases(t, []scanCase{
 		{"valid", outerMD, good, nil},
-		{"valid_reordered", outerMD, cat(fBytes(nil, 3, sig), fBytes(nil, 1, kid), fBytes(nil, 2, body)), nil},
+		// R13 (k): field order is part of the canonical encoding.
+		{"reordered_k", outerMD, cat(fBytes(nil, 3, sig), fBytes(nil, 1, kid), fBytes(nil, 2, body)), wirescan.ErrNonCanonical},
 		// The outer scan does not check R12 lengths (check 2 does that
 		// after the scan), so short non-empty fields pass it.
 		{"valid_short_fields", outerMD, cat(fBytes(nil, 1, []byte{1}), fBytes(nil, 2, []byte{1}), fBytes(nil, 3, []byte{1})), nil},

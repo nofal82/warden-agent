@@ -370,7 +370,7 @@ func TestExplicitDefaultPresenceCases(t *testing.T) {
 		{"optional_fixed32_0", md, fFixed32(nil, pOptF32, 0), nil},
 		{"all_optionals_zero_together", md, cat(fVarint(nil, pOptU32, 0), fVarint(nil, pOptI64, 0), fVarint(nil, pOptBool, 0),
 			fVarint(nil, pOptEnum, 0), fBytes(nil, pOptStr, nil), fBytes(nil, pOptByt, nil), fFixed64(nil, pOptDbl, 0), fFixed32(nil, pOptF32, 0)), nil},
-		{"optional_zero_and_oneof_zero", md, cat(fVarint(nil, pOptU32, 0), fVarint(nil, pOEnum, 0)), nil},
+		{"optional_zero_and_oneof_zero", md, cat(fVarint(nil, pOEnum, 0), fVarint(nil, pOptU32, 0)), nil},
 		{"optional_zero_twice", md, cat(fVarint(nil, pOptU32, 0), fVarint(nil, pOptU32, 0)), wirescan.ErrDuplicateField},
 		{"optional_zero_overlong", md, append(protowire.AppendTag(nil, pOptU32, protowire.VarintType), 0x80, 0x00), wirescan.ErrNonCanonical},
 
@@ -439,12 +439,22 @@ func TestExplicitDefaultFromGoMarshal(t *testing.T) {
 	zeros := dynamicpb.NewMessage(presenceMD)
 	set(zeros, pOptU32, protoreflect.ValueOfUint32(0))
 	set(zeros, pOptStr, protoreflect.ValueOfString(""))
-	set(zeros, pOBool, protoreflect.ValueOfBool(false))
 	b := marshalDet(t, zeros)
 	if len(b) == 0 {
-		t.Fatalf("Go did not write the zero optional and oneof fields")
+		t.Fatalf("Go did not write the zero optional fields")
 	}
 	assertSentinel(t, wirescan.Check(b, presenceMD), nil)
+	// The oneof member gets its own message: Go's reflection marshaller
+	// writes oneof members after the other fields, which R13 (k) rejects
+	// when a lower-numbered member follows them
+	// (TestOrderReflectionMarshalOneofLast).
+	oneofZero := dynamicpb.NewMessage(presenceMD)
+	set(oneofZero, pOBool, protoreflect.ValueOfBool(false))
+	ob := marshalDet(t, oneofZero)
+	if len(ob) == 0 {
+		t.Fatalf("Go did not write the zero oneof member")
+	}
+	assertSentinel(t, wirescan.Check(ob, presenceMD), nil)
 
 	negZero := dynamicpb.NewMessage(presenceMD)
 	set(negZero, pFlt, protoreflect.ValueOfFloat32(float32(math.Copysign(0, -1))))

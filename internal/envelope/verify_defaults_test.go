@@ -48,11 +48,11 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 	pdWith := func(mut func(p *wardenv1.PolicyDecision), more ...[]byte) []byte {
 		p := proto.Clone(validBody().PolicyDecision).(*wardenv1.PolicyDecision)
 		mut(p)
-		return fBytes(app(noPD), 9, app(marshalDet(t, p), more...))
+		return withField(t, noPD, fBytes(nil, 9, app(marshalDet(t, p), more...)))
 	}
 	keepPD := func(*wardenv1.PolicyDecision) {}
 	withReq := func(member protowire.Number, req []byte) []byte {
-		return fBytes(app(noParams), 8, fBytes(nil, member, req))
+		return withField(t, noParams, fBytes(nil, 8, fBytes(nil, member, req)))
 	}
 	fileDelete := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1), MinAgeDays: 7, MaxFiles: 10, MaxBytes: 1 << 30})
 	fileDeleteNoAge := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1), MaxFiles: 10, MaxBytes: 1 << 30})

@@ -242,60 +242,63 @@ func TestUnpackedRepeatedContract(t *testing.T) {
 	app := func(b []byte, more ...[]byte) []byte {
 		return cat(append([][]byte{append([]byte(nil), b...)}, more...)...)
 	}
+	// ins places records at their ascending position in noLists, so each
+	// case breaks only the rule under test, not R13 (k).
+	ins := func(recs ...[]byte) []byte { return withField(t, noLists, cat(recs...)) }
 	noParams := func() []byte { b := validBody(); b.Params = nil; return marshalDet(t, b) }()
-	inBody := func(req []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 22, req)) }
+	inBody := func(req []byte) []byte { return withField(t, noParams, fBytes(nil, 8, fBytes(nil, 22, req))) }
 	minus1 := uint64(math.MaxUint64)
 
 	direct := []scanCase{
 		{"full_deterministic", dbTermMD, full, nil},
-		{"ids_packed_starts_packed", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(1, 2)), fBytes(nil, 4, packedVarints(minus1, 5))), nil},
-		{"digests_three_records", dbTermMD, app(noLists, fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},
+		{"ids_packed_starts_packed", dbTermMD, ins(fBytes(nil, 3, packedVarints(1, 2)), fBytes(nil, 4, packedVarints(minus1, 5))), nil},
+		{"digests_three_records", dbTermMD, ins(fBytes(nil, 6, digest), fBytes(nil, 6, digest), fBytes(nil, 6, digest)), nil},
 		// session_owner_digests is repeated bytes: several records and
 		// empty records stay valid (R13 (i) and (j) do not reach it).
-		{"digests_empty_records", dbTermMD, app(noLists, fBytes(nil, 6, nil), fBytes(nil, 6, nil)), nil},
+		{"digests_empty_records", dbTermMD, ins(fBytes(nil, 6, nil), fBytes(nil, 6, nil)), nil},
 		// MySQL P22: every session_started_at element is 0, as packed
 		// elements (R13 (j) does not apply to repeated elements).
-		{"starts_packed_zeros_mysql", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 4, packedVarints(0, 0, 0))), nil},
-		{"ids_packed_with_zero_element", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(0))), nil},
+		{"starts_packed_zeros_mysql", dbTermMD, ins(fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 4, packedVarints(0, 0, 0))), nil},
+		{"ids_packed_with_zero_element", dbTermMD, ins(fBytes(nil, 3, packedVarints(0))), nil},
 
 		// R13 (i), 2026-10-18: one non-empty packed record per field.
-		{"ids_split_one_then_two", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101)), fBytes(nil, 3, packedVarints(202, 303))), wirescan.ErrNonCanonical},
-		{"ids_split_far_apart", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101)), fBytes(nil, 4, packedVarints(0, 0)), fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
-		{"ids_split_across_head", dbTermMD, cat(fBytes(nil, 3, packedVarints(101)), noLists, fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
+		{"ids_split_one_then_two", dbTermMD, ins(fBytes(nil, 3, packedVarints(101)), fBytes(nil, 3, packedVarints(202, 303))), wirescan.ErrNonCanonical},
+		{"ids_split_far_apart", dbTermMD, ins(fBytes(nil, 3, packedVarints(101)), fBytes(nil, 4, packedVarints(0, 0)), fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
+		{"ids_split_across_head", dbTermMD, app(ins(fBytes(nil, 3, packedVarints(101))), fBytes(nil, 3, packedVarints(202))), wirescan.ErrNonCanonical},
 		{"ids_split_after_full", dbTermMD, app(full, fBytes(nil, 3, packedVarints(303))), wirescan.ErrNonCanonical},
-		{"ids_empty_alone", dbTermMD, app(noLists, fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
-		{"ids_empty_before_valid", dbTermMD, app(noLists, fBytes(nil, 3, nil), fBytes(nil, 3, packedVarints(101, 202, 303))), wirescan.ErrNonCanonical},
-		{"ids_empty_after_valid", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
-		{"ids_empty_then_unpacked", dbTermMD, app(noLists, fBytes(nil, 3, nil), fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
-		{"starts_split_one_then_two", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(0)), fBytes(nil, 4, packedVarints(0, 0))), wirescan.ErrNonCanonical},
-		{"starts_split_negative", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(minus1)), fBytes(nil, 4, packedVarints(minus1, 5))), wirescan.ErrNonCanonical},
+		{"ids_empty_alone", dbTermMD, ins(fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"ids_empty_before_valid", dbTermMD, ins(fBytes(nil, 3, nil), fBytes(nil, 3, packedVarints(101, 202, 303))), wirescan.ErrNonCanonical},
+		{"ids_empty_after_valid", dbTermMD, ins(fBytes(nil, 3, packedVarints(101, 202, 303)), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"ids_empty_then_unpacked", dbTermMD, ins(fBytes(nil, 3, nil), fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
+		{"starts_split_one_then_two", dbTermMD, ins(fBytes(nil, 4, packedVarints(0)), fBytes(nil, 4, packedVarints(0, 0))), wirescan.ErrNonCanonical},
+		{"starts_split_negative", dbTermMD, ins(fBytes(nil, 4, packedVarints(minus1)), fBytes(nil, 4, packedVarints(minus1, 5))), wirescan.ErrNonCanonical},
 		{"starts_split_after_full", dbTermMD, app(full, fBytes(nil, 4, packedVarints(0))), wirescan.ErrNonCanonical},
-		{"starts_empty_alone", dbTermMD, app(noLists, fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
-		{"starts_empty_before_valid", dbTermMD, app(noLists, fBytes(nil, 4, nil), fBytes(nil, 4, packedVarints(0, 0, 0))), wirescan.ErrNonCanonical},
-		{"starts_empty_after_valid", dbTermMD, app(noLists, fBytes(nil, 4, packedVarints(0, 0, 0)), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
-		{"both_empty", dbTermMD, app(noLists, fBytes(nil, 3, nil), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
+		{"starts_empty_alone", dbTermMD, ins(fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
+		{"starts_empty_before_valid", dbTermMD, ins(fBytes(nil, 4, nil), fBytes(nil, 4, packedVarints(0, 0, 0))), wirescan.ErrNonCanonical},
+		{"starts_empty_after_valid", dbTermMD, ins(fBytes(nil, 4, packedVarints(0, 0, 0)), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
+		{"both_empty", dbTermMD, ins(fBytes(nil, 3, nil), fBytes(nil, 4, nil)), wirescan.ErrNonCanonical},
 
-		{"ids_unpacked_single", dbTermMD, app(noLists, fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
-		{"ids_unpacked_single_zero", dbTermMD, app(noLists, fVarint(nil, 3, 0)), wirescan.ErrNonCanonical},
-		{"ids_unpacked_max", dbTermMD, app(noLists, fVarint(nil, 3, math.MaxUint64)), wirescan.ErrNonCanonical},
+		{"ids_unpacked_single", dbTermMD, ins(fVarint(nil, 3, 101)), wirescan.ErrNonCanonical},
+		{"ids_unpacked_single_zero", dbTermMD, ins(fVarint(nil, 3, 0)), wirescan.ErrNonCanonical},
+		{"ids_unpacked_max", dbTermMD, ins(fVarint(nil, 3, math.MaxUint64)), wirescan.ErrNonCanonical},
 		{"ids_unpacked_first", dbTermMD, cat(fVarint(nil, 3, 101), noLists), wirescan.ErrNonCanonical},
 		{"ids_unpacked_after_full", dbTermMD, app(full, fVarint(nil, 3, 303)), wirescan.ErrNonCanonical},
-		{"ids_unpacked_then_packed", dbTermMD, app(noLists, fVarint(nil, 3, 1), fBytes(nil, 3, packedVarints(2))), wirescan.ErrNonCanonical},
-		{"starts_unpacked_single", dbTermMD, app(noLists, fVarint(nil, 4, 1_700_000_000_000_000)), wirescan.ErrNonCanonical},
-		{"starts_unpacked_minus1", dbTermMD, app(noLists, fVarint(nil, 4, minus1)), wirescan.ErrNonCanonical},
-		{"starts_unpacked_min_int64", dbTermMD, app(noLists, fVarint(nil, 4, 1<<63)), wirescan.ErrNonCanonical},
+		{"ids_unpacked_then_packed", dbTermMD, ins(fVarint(nil, 3, 1), fBytes(nil, 3, packedVarints(2))), wirescan.ErrNonCanonical},
+		{"starts_unpacked_single", dbTermMD, ins(fVarint(nil, 4, 1_700_000_000_000_000)), wirescan.ErrNonCanonical},
+		{"starts_unpacked_minus1", dbTermMD, ins(fVarint(nil, 4, minus1)), wirescan.ErrNonCanonical},
+		{"starts_unpacked_min_int64", dbTermMD, ins(fVarint(nil, 4, 1<<63)), wirescan.ErrNonCanonical},
 		{"starts_unpacked_after_full", dbTermMD, app(full, fVarint(nil, 4, 0)), wirescan.ErrNonCanonical},
-		{"ids_packed_starts_unpacked", dbTermMD, app(noLists, fBytes(nil, 3, packedVarints(1)), fVarint(nil, 4, 0)), wirescan.ErrNonCanonical},
-		{"ids_unpacked_starts_packed", dbTermMD, app(noLists, fVarint(nil, 3, 1), fBytes(nil, 4, packedVarints(0))), wirescan.ErrNonCanonical},
+		{"ids_packed_starts_unpacked", dbTermMD, ins(fBytes(nil, 3, packedVarints(1)), fVarint(nil, 4, 0)), wirescan.ErrNonCanonical},
+		{"ids_unpacked_starts_packed", dbTermMD, ins(fVarint(nil, 3, 1), fBytes(nil, 4, packedVarints(0))), wirescan.ErrNonCanonical},
 
 		// Check order: wire-type mismatch before unpacked (as today).
-		{"ids_i32", dbTermMD, app(noLists, fFixed32(nil, 3, 1)), wirescan.ErrWireType},
-		{"ids_i64", dbTermMD, app(noLists, fFixed64(nil, 3, 1)), wirescan.ErrWireType},
-		{"starts_i32", dbTermMD, app(noLists, fFixed32(nil, 4, 1)), wirescan.ErrWireType},
-		{"starts_i64", dbTermMD, app(noLists, fFixed64(nil, 4, 1)), wirescan.ErrWireType},
+		{"ids_i32", dbTermMD, ins(fFixed32(nil, 3, 1)), wirescan.ErrWireType},
+		{"ids_i64", dbTermMD, ins(fFixed64(nil, 3, 1)), wirescan.ErrWireType},
+		{"starts_i32", dbTermMD, ins(fFixed32(nil, 4, 1)), wirescan.ErrWireType},
+		{"starts_i64", dbTermMD, ins(fFixed64(nil, 4, 1)), wirescan.ErrWireType},
 		// Check order: unpacked before value minimality.
-		{"ids_unpacked+value_overlong", dbTermMD, app(noLists, fVarintOverlong(nil, 3, 1)), wirescan.ErrNonCanonical},
-		{"ids_unpacked+tag_overlong", dbTermMD, app(noLists, fOverlongTagVarint(nil, 3, 1)), wirescan.ErrNonCanonical},
+		{"ids_unpacked+value_overlong", dbTermMD, ins(fVarintOverlong(nil, 3, 1)), wirescan.ErrNonCanonical},
+		{"ids_unpacked+tag_overlong", dbTermMD, ins(fOverlongTagVarint(nil, 3, 1)), wirescan.ErrNonCanonical},
 	}
 	runCanonCases(t, direct)
 
@@ -356,7 +359,7 @@ func TestRepeatedNonPackableUnaffected(t *testing.T) {
 		// each of two repeated children, and one in a child plus one in its
 		// parent, are each one record per message.
 		{"one_packed_record_in_each_child", kindsMD, cat(fBytes(nil, 22, fBytes(nil, 15, packedVarints(1, 2))), fBytes(nil, 22, fBytes(nil, 15, packedVarints(3)))), nil},
-		{"one_packed_record_parent_and_child", kindsMD, cat(fBytes(nil, 15, packedVarints(1)), fBytes(nil, 12, fBytes(nil, 15, packedVarints(2)))), nil},
+		{"one_packed_record_parent_and_child", kindsMD, cat(fBytes(nil, 12, fBytes(nil, 15, packedVarints(2))), fBytes(nil, 15, packedVarints(1))), nil},
 		{"fixed_one_packed_record_in_each_child", fixedKindsMD, cat(fBytes(nil, 9, packedRec(4, protowire.Fixed64Type, 1)), fBytes(nil, 9, packedRec(4, protowire.Fixed64Type, 2))), nil},
 		{"split_inside_one_child", kindsMD, cat(fBytes(nil, 22, fBytes(nil, 15, packedVarints(1))), fBytes(nil, 22, cat(fBytes(nil, 15, packedVarints(2)), fBytes(nil, 15, packedVarints(3))))), wirescan.ErrNonCanonical},
 		{"empty_packed_inside_child", kindsMD, fBytes(nil, 12, fBytes(nil, 17, nil)), wirescan.ErrNonCanonical},

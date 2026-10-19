@@ -77,7 +77,7 @@ func TestCheck5NonCanonicalInEveryParamsMember(t *testing.T) {
 			}
 			wrapParams := func(req []byte) []byte {
 				noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
-				return fBytes(noParams, 8, fBytes(nil, member.Number(), req))
+				return withField(t, noParams, fBytes(nil, 8, fBytes(nil, member.Number(), req)))
 			}
 			name := string(member.Name()) + "." + string(fd.Name())
 			t.Run(name+"/minimal_accepted", func(t *testing.T) {
@@ -229,10 +229,10 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 	// BODY_INVALID at check 5. dry_run=false left out is accepted.
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
 	head := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1)})
-	if res, err := v.Verify(sealBytes(keyA, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, head)))); err != nil || res == nil {
+	if res, err := v.Verify(sealBytes(keyA, withField(t, noParams, fBytes(nil, 8, fBytes(nil, 17, head))))); err != nil || res == nil {
 		t.Fatalf("dry_run=false left out rejected: %v", err)
 	}
-	expectBodyReject(t, v, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, fVarint(append([]byte(nil), head...), 5, 0))), CodeBodyInvalid, 5)
+	expectBodyReject(t, v, withField(t, noParams, fBytes(nil, 8, fBytes(nil, 17, fVarint(append([]byte(nil), head...), 5, 0)))), CodeBodyInvalid, 5)
 }
 
 // R13 (i): a correctly signed body whose DbTerminateSessionRequest carries
@@ -251,11 +251,17 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 func TestCheck5UnpackedRepeated(t *testing.T) {
 	v := defaultVerifier(t)
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
-	withReq := func(req []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 22, req)) }
+	withReq := func(req []byte) []byte { return withField(t, noParams, fBytes(nil, 8, fBytes(nil, 22, req))) }
 	head := marshalDet(t, &wardenv1.DbTerminateSessionRequest{
 		Engine: wardenv1.Engine(1), Instance: "mysql.service", ServerStartedAt: 1_700_000_000, MinIdleSeconds: 600,
 	})
-	app := func(more ...[]byte) []byte { return cat(append([][]byte{append([]byte(nil), head...)}, more...)...) }
+	// app puts the records under test (fields 3 and 4) between head's
+	// fields 1-2 and 5-7, so only the rule under test is broken, not
+	// R13 (k).
+	headLo := marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service"})
+	headStarted := fVarint(nil, 5, 1_700_000_000)
+	headIdle := fVarint(nil, 7, 600)
+	app := func(more ...[]byte) []byte { return cat(headLo, cat(more...), headStarted, headIdle) }
 	packed := func(num protowire.Number, vals ...uint64) []byte {
 		var p []byte
 		for _, x := range vals {
@@ -269,7 +275,7 @@ func TestCheck5UnpackedRepeated(t *testing.T) {
 	accepted := map[string][]byte{
 		"ids_and_starts_packed":       app(packed(3, 101, 202), packed(4, 0, 0)),
 		"starts_packed_negative":      app(packed(3, 101), packed(4, minus1)),
-		"digests_two_records":         app(packed(3, 101, 202), packed(4, 0, 0), digests),
+		"digests_two_records":         cat(headLo, packed(3, 101, 202), packed(4, 0, 0), headStarted, digests, headIdle),
 		"deterministic_marshal_order": marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service", SessionIds: []uint64{101, 202}, SessionStartedAt: []int64{0, 0}, ServerStartedAt: 1_700_000_000, SessionOwnerDigests: [][]byte{digest("owner-1"), digest("owner-2")}, MinIdleSeconds: 600}),
 		"three_ids_one_record_each":   app(packed(3, 101, 202, 303), packed(4, 0, 0, 0)),
 	}

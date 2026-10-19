@@ -386,17 +386,21 @@ func TestCanonicalBodyCases(t *testing.T) {
 	app := func(b []byte, more ...[]byte) []byte {
 		return cat(append([][]byte{append([]byte(nil), b...)}, more...)...)
 	}
-	withParams := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
-	withPD := func(p []byte) []byte { return fBytes(append([]byte(nil), noPD...), 9, p) }
-	withLevel := func(v uint64) []byte { return withPD(fVarint(app(pdNoLevel), 2, v)) }
+	// Insert at the field's ascending position so only the rule under
+	// test is broken (R13 (k)).
+	withParams := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	withPD := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
+	withLevel := func(v uint64) []byte { return withPD(withField(t, pdNoLevel, fVarint(nil, 2, v))) }
 	fileDelete := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{
 		Root: wardenv1.FileDeleteRoot(1), MinAgeDays: 7, MaxFiles: 10, MaxBytes: 1 << 30,
 	})
-	withDryRun := func(v uint64) []byte { return withParams(fBytes(nil, 17, fVarint(app(fileDelete), 5, v))) }
+	withDryRun := func(v uint64) []byte {
+		return withParams(fBytes(nil, 17, withField(t, fileDelete, fVarint(nil, 5, v))))
+	}
 
 	runCanonCases(t, []scanCase{
 		{"valid", bodyMD, base, nil},
-		{"format_version_maxuint32", bodyMD, fVarint(app(noFV), 1, math.MaxUint32), nil},
+		{"format_version_maxuint32", bodyMD, withField(t, noFV, fVarint(nil, 1, math.MaxUint32)), nil},
 		{"autonomy_minus1_ten_bytes", bodyMD, withLevel(math.MaxUint64), nil},
 		{"autonomy_minInt32_ten_bytes", bodyMD, withLevel(i64(math.MinInt32)), nil},
 		{"autonomy_maxInt32", bodyMD, withLevel(math.MaxInt32), nil},
@@ -669,12 +673,17 @@ func TestCanonicalValidExtremesKinds(t *testing.T) {
 	if !proto.Equal(out, m) {
 		t.Fatalf("round trip differs")
 	}
-	// Non-deterministic marshal of the same message is canonical too.
+	// A non-deterministic marshal may order fields differently; R13 (k)
+	// accepts it only when it is byte for byte the deterministic encoding.
 	nb, err := proto.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSentinel(t, wirescan.Check(nb, kindsMD), nil)
+	if bytes.Equal(nb, b) {
+		assertSentinel(t, wirescan.Check(nb, kindsMD), nil)
+	} else {
+		assertSentinel(t, wirescan.Check(nb, kindsMD), wirescan.ErrNonCanonical)
+	}
 }
 
 // Check order inside one field: tag minimality, group, known field,
