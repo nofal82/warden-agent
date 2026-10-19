@@ -13,7 +13,9 @@ import (
 // Sentinel errors. Every error returned by this package wraps exactly one.
 var (
 	// ErrMalformed: the bytes are not a valid encoding (truncated, bad
-	// varint or length, invalid field number or wire type, invalid UTF-8).
+	// varint or length, a 10-byte varint above 2^64 - 1, invalid field
+	// number or wire type). Unmarshal also reports invalid UTF-8 in a
+	// string field with it; Check does not look at string contents.
 	ErrMalformed = errors.New("wirescan: malformed encoding")
 	// ErrUnknownField: a field number the schema does not define.
 	ErrUnknownField = errors.New("wirescan: unknown field")
@@ -30,8 +32,8 @@ var (
 	// ErrNonCanonical: a varint (tag, length or value) that is not minimally
 	// encoded, a value outside the range of its field's type, a repeated
 	// numeric or enum field that is not exactly one non-empty packed
-	// record, or an explicitly encoded default in a field with implicit
-	// presence. Generated decoders silently truncate or normalise such
+	// record, an explicitly encoded default in a field with implicit
+	// presence, or fields out of ascending number order. Generated decoders silently truncate or normalise such
 	// encodings (2^32+1 in a uint32 reads as 1), and decoders in other
 	// languages may not, so the same signed bytes could be read two ways,
 	// or two different signed byte strings could decode to one value.
@@ -42,6 +44,9 @@ var (
 // most a few levels, so this only guards against a future schema mistake.
 const maxDepth = 16
 
+// maxVarintLen is the longest valid varint: 64 bits in 7-bit groups.
+const maxVarintLen = 10
+
 // Check scans b as the encoding of a message described by md, recursing into
 // known message-typed fields. It rejects what generated proto.Unmarshal
 // silently accepts: unknown fields, repeated non-repeated fields (where the
@@ -49,7 +54,11 @@ const maxDepth = 16
 // wire-type mismatches (action-envelope R13), and non-canonical encodings:
 // overlong varints, int32, enum, uint32, sint32 or bool values outside
 // their type's range, repeated numeric or enum fields that are not exactly
-// one non-empty packed record, and explicitly encoded proto3 defaults.
+// one non-empty packed record, explicitly encoded proto3 defaults, and
+// fields out of strictly ascending number order.
+//
+// Check does not validate string contents (UTF-8), so it must not be the
+// only check on untrusted bytes; use Unmarshal.
 func Check(b []byte, md protoreflect.MessageDescriptor) error {
 	return check(b, md, 0)
 }
@@ -76,7 +85,11 @@ func check(b []byte, md protoreflect.MessageDescriptor, depth int) error {
 	fields := md.Fields()
 	seen := make(map[protowire.Number]bool)
 	seenOneof := make(map[int]bool)
+	var prev protoreflect.FieldDescriptor
 	for len(b) > 0 {
+		if err := checkVarintEnd(b); err != nil {
+			return fmt.Errorf("tag: %w", err)
+		}
 		num, typ, n := protowire.ConsumeTag(b)
 		if n < 0 {
 			return fmt.Errorf("%w: tag: %w", ErrMalformed, protowire.ParseError(n))
@@ -98,6 +111,12 @@ func check(b []byte, md protoreflect.MessageDescriptor, depth int) error {
 		if err := markSeen(fd, typ, seen, seenOneof); err != nil {
 			return err
 		}
+		if typ == protowire.VarintType || typ == protowire.BytesType {
+			// A varint value or a length prefix (R13 (l)).
+			if err := checkVarintEnd(b); err != nil {
+				return fmt.Errorf("field %d: %w", num, err)
+			}
+		}
 		n = protowire.ConsumeFieldValue(num, typ, b)
 		if n < 0 {
 			return fmt.Errorf("%w: field %d: %w", ErrMalformed, num, protowire.ParseError(n))
@@ -105,9 +124,51 @@ func check(b []byte, md protoreflect.MessageDescriptor, depth int) error {
 		if err := checkValue(fd, typ, b[:n], depth); err != nil {
 			return err
 		}
+		if !inOrder(prev, fd) {
+			return fmt.Errorf("field %d after field %d: %w", num, prev.Number(), ErrNonCanonical)
+		}
+		prev = fd
 		b = b[n:]
 	}
 	return nil
+}
+
+// inOrder reports whether a record of fd may follow a record of prev
+// (R13 (k)): field numbers strictly ascend, except that the records of one
+// repeated string, bytes or message field, which cannot be packed, form one
+// consecutive run. Deterministic Go marshalling writes this order, so with
+// it the scan accepts one encoding per message, byte for byte. Two records
+// of any other field never reach here (markSeen and checkValue reject
+// them).
+func inOrder(prev, fd protoreflect.FieldDescriptor) bool {
+	switch {
+	case prev == nil || fd.Number() > prev.Number():
+		return true
+	case fd.Number() == prev.Number():
+		return fd.IsList() && !isPackable(scalarWireType(fd.Kind()))
+	default:
+		return false
+	}
+}
+
+// checkVarintEnd rejects a varint at the start of b that is 10 bytes long
+// and does not end in 0x01 (R13 (l)): a larger last byte encodes 2^64 or
+// more, and longer varints are never valid. protowire refuses these today;
+// the rule is checked here so it does not depend on library internals. A
+// last byte of 0x00 is left to the minimal-encoding check (R13 (e)).
+func checkVarintEnd(b []byte) error {
+	for i := 0; i < len(b) && i < maxVarintLen; i++ {
+		if b[i] < 0x80 {
+			if i == maxVarintLen-1 && b[i] > 0x01 {
+				return fmt.Errorf("%w: 10-byte varint above 2^64 - 1", ErrMalformed)
+			}
+			return nil
+		}
+	}
+	if len(b) >= maxVarintLen {
+		return fmt.Errorf("%w: varint longer than 10 bytes", ErrMalformed)
+	}
+	return nil // truncated: protowire reports it
 }
 
 func markSeen(fd protoreflect.FieldDescriptor, typ protowire.Type, seen map[protowire.Number]bool, seenOneof map[int]bool) error {
@@ -227,6 +288,9 @@ func checkPacked(fd protoreflect.FieldDescriptor, want protowire.Type, b []byte)
 // and returns it and its length. The value must be minimally encoded and
 // within the range of the field's type.
 func consumeVarintValue(fd protoreflect.FieldDescriptor, b []byte) (uint64, int, error) {
+	if err := checkVarintEnd(b); err != nil {
+		return 0, 0, fmt.Errorf("field %d: %w", fd.Number(), err)
+	}
 	x, n := protowire.ConsumeVarint(b)
 	if n < 0 {
 		return 0, 0, fmt.Errorf("%w: field %d: %w", ErrMalformed, fd.Number(), protowire.ParseError(n))
@@ -241,8 +305,11 @@ func consumeVarintValue(fd protoreflect.FieldDescriptor, b []byte) (uint64, int,
 // negative int32 is sign-extended to 64 bits on the wire.
 const minNegInt32 = 1<<64 - 1<<31
 
-// inRange reports whether the varint x is a value of kind k without
-// truncation. 64-bit kinds take any value.
+// inRange reports whether the varint x, decoded as a uint64, is a value of
+// kind k without truncation (R13 (f)–(h)). 64-bit kinds take any value.
+// For int32 and enum a negative value is sign-extended to 64 bits, so it is
+// at least 2^64 - 2^31 and, minimally encoded, exactly 10 bytes long; the
+// 5-byte FF FF FF FF 0F is 4,294,967,295, not -1, and is rejected.
 func inRange(k protoreflect.Kind, x uint64) bool {
 	switch k {
 	case protoreflect.BoolKind:

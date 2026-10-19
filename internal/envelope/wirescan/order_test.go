@@ -53,7 +53,7 @@ func runOrderCases(t *testing.T, cases []scanCase) {
 		t.Run(c.name, func(t *testing.T) {
 			checkErr := wirescan.Check(c.b, c.md)
 			unErr := wirescan.Unmarshal(c.b, newMessage(c.md))
-			if c.want != errRejected {
+			if !errors.Is(c.want, errRejected) {
 				assertSentinel(t, checkErr, c.want)
 				assertSentinel(t, unErr, c.want)
 				return
