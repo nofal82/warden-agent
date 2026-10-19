@@ -56,15 +56,15 @@ func TestValidEveryMessageType(t *testing.T) {
 			m := mt.New()
 			populate(m)
 			b := marshalDet(t, m.Interface())
-			assertSentinel(t, wirescan.Check(b, md), nil)
+			assertSentinel(t, wirescan.CheckForTest(b, md), nil)
 			out := mt.New().Interface()
 			assertSentinel(t, wirescan.Unmarshal(b, out), nil)
 			if !proto.Equal(out, m.Interface()) {
 				t.Fatalf("Unmarshal result differs")
 			}
 			// Empty encoding is a valid (empty) message.
-			assertSentinel(t, wirescan.Check(nil, md), nil)
-			assertSentinel(t, wirescan.Check([]byte{}, md), nil)
+			assertSentinel(t, wirescan.CheckForTest(nil, md), nil)
+			assertSentinel(t, wirescan.CheckForTest([]byte{}, md), nil)
 		})
 	}
 }
@@ -82,7 +82,7 @@ func TestValidEveryParamsMember(t *testing.T) {
 			body := validBody()
 			body.Params = tr.Interface().(*wardenv1.TypedRequest)
 			b := marshalDet(t, body)
-			assertSentinel(t, wirescan.Check(b, bodyMD), nil)
+			assertSentinel(t, wirescan.CheckForTest(b, bodyMD), nil)
 			var out wardenv1.EnvelopeBody
 			assertSentinel(t, wirescan.Unmarshal(b, &out), nil)
 			if !proto.Equal(&out, body) {
@@ -103,7 +103,7 @@ func runScanCases(t *testing.T, cases []scanCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assertSentinel(t, wirescan.Check(c.b, c.md), c.want)
+			assertSentinel(t, wirescan.CheckForTest(c.b, c.md), c.want)
 			mt, err := protoregistry.GlobalTypes.FindMessageByName(c.md.FullName())
 			if err != nil {
 				t.Fatal(err)
@@ -258,7 +258,7 @@ func TestOuterCases(t *testing.T) {
 	// The outer scanner must not descend into body (it is opaque bytes):
 	// a body that is not a valid EnvelopeBody still passes the outer scan.
 	opaque := cat(fBytes(nil, 1, kid), fBytes(nil, 2, []byte{0xff, 0xff, 0x0c, 0x00}), fBytes(nil, 3, sig))
-	assertSentinel(t, wirescan.Check(opaque, outerMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(opaque, outerMD), nil)
 }
 
 func TestRepeatedFields(t *testing.T) {
@@ -393,15 +393,15 @@ func TestTooDeep(t *testing.T) {
 		}
 		return v
 	}
-	assertSentinel(t, wirescan.Check(nest(1), valueMD), nil)
-	assertSentinel(t, wirescan.Check(nest(5000), valueMD), wirescan.ErrTooDeep)
+	assertSentinel(t, wirescan.CheckForTest(nest(1), valueMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(nest(5000), valueMD), wirescan.ErrTooDeep)
 	assertSentinel(t, wirescan.Unmarshal(nest(5000), &structpb.Value{}), wirescan.ErrTooDeep)
 	// Deep group nesting is a group error, not a stack overflow.
 	deep := []byte{}
 	for i := 0; i < 100000; i++ {
 		deep = protowire.AppendTag(deep, 1, protowire.StartGroupType)
 	}
-	if err := wirescan.Check(deep, bodyMD); err == nil {
+	if err := wirescan.CheckForTest(deep, bodyMD); err == nil {
 		t.Fatalf("deep group nesting accepted")
 	}
 }
@@ -424,7 +424,7 @@ func TestUnmarshalIntoEveryRequestType(t *testing.T) {
 	od := paramsMD.Oneofs().ByName("request")
 	for i := 0; i < od.Fields().Len(); i++ {
 		md := od.Fields().Get(i).Message()
-		assertSentinel(t, wirescan.Check(fVarint(nil, 99, 1), md), wirescan.ErrUnknownField)
-		assertSentinel(t, wirescan.Check(fGroup(nil, 1, nil), md), wirescan.ErrGroup)
+		assertSentinel(t, wirescan.CheckForTest(fVarint(nil, 99, 1), md), wirescan.ErrUnknownField)
+		assertSentinel(t, wirescan.CheckForTest(fGroup(nil, 1, nil), md), wirescan.ErrGroup)
 	}
 }

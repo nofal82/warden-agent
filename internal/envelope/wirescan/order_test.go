@@ -40,6 +40,7 @@ import (
 
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 	"github.com/nofal82/warden-agent/internal/envelope/wirescan"
+	"github.com/nofal82/warden-agent/internal/testproto/ordertest"
 )
 
 // errRejected marks a case that breaks more than one rule: the test asserts
@@ -51,7 +52,7 @@ func runOrderCases(t *testing.T, cases []scanCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			checkErr := wirescan.Check(c.b, c.md)
+			checkErr := wirescan.CheckForTest(c.b, c.md)
 			unErr := wirescan.Unmarshal(c.b, newMessage(c.md))
 			if !errors.Is(c.want, errRejected) {
 				assertSentinel(t, checkErr, c.want)
@@ -452,8 +453,8 @@ func TestOrderReflectionMarshalOneofLast(t *testing.T) {
 	b := marshalDet(t, m)
 	want := cat(fVarint(nil, pOptU32, 1), fVarint(nil, pOI32, 1))
 	asc := cat(fVarint(nil, pOI32, 1), fVarint(nil, pOptU32, 1))
-	assertSentinel(t, wirescan.Check(asc, presenceMD), nil)
-	assertSentinel(t, wirescan.Check(want, presenceMD), wirescan.ErrNonCanonical)
+	assertSentinel(t, wirescan.CheckForTest(asc, presenceMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(want, presenceMD), wirescan.ErrNonCanonical)
 	if !bytes.Equal(b, want) {
 		t.Fatalf("protobuf-go's reflection marshaller changed its oneof order (got %x, want %x); review this pin and action-envelope OQ28", b, want)
 	}
@@ -775,7 +776,7 @@ func TestAC8aEveryMessageEveryOneofMember(t *testing.T) {
 				if !ascendingOK(b, md) {
 					t.Fatalf("deterministic encoding is not in ascending field order: %x", b)
 				}
-				assertSentinel(t, wirescan.Check(b, md), nil)
+				assertSentinel(t, wirescan.CheckForTest(b, md), nil)
 				out := mt.New().Interface()
 				assertSentinel(t, wirescan.Unmarshal(b, out), nil)
 				if !proto.Equal(out, m.Interface()) {
@@ -792,6 +793,33 @@ func TestAC8aEveryMessageEveryOneofMember(t *testing.T) {
 	od := paramsMD.Oneofs().ByName("request")
 	if withOneof < 2 || total < len(mds)-2+2*od.Fields().Len() {
 		t.Fatalf("too few variants: %d total, %d message types with a oneof", total, withOneof)
+	}
+}
+
+// OQ28 ruling: a message declared against the contract's field-order rule
+// (a field numbered between two members of a oneof) marshals out of order,
+// and the scanner rejects it. SplitOneof lives in a test-only package
+// outside the contract; TestContractFieldOrder keeps every contract message
+// from looking like it. Marshalled without Deterministic on purpose: the
+// scan accepts only ascending bytes, whatever the signer's options.
+func TestOutOfOrderMarshalRejected(t *testing.T) {
+	m := &ordertest.SplitOneof{Choice: &ordertest.SplitOneof_First{First: "a"}, Second: "b"}
+	b, err := proto.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ascendingOK(b, m.ProtoReflect().Descriptor()) {
+		t.Fatalf("protobuf-go wrote %x in ascending order; this test no longer shows an out-of-order marshal", b)
+	}
+	assertSentinel(t, wirescan.Unmarshal(b, new(ordertest.SplitOneof)), wirescan.ErrNonCanonical)
+
+	// The same value written in ascending order is accepted, so the order
+	// alone caused the rejection.
+	asc := fBytes(fBytes(nil, 1, []byte("a")), 2, []byte("b"))
+	out := new(ordertest.SplitOneof)
+	assertSentinel(t, wirescan.Unmarshal(asc, out), nil)
+	if !proto.Equal(out, m) {
+		t.Fatalf("ascending bytes decode to %v, want %v", out, m)
 	}
 }
 

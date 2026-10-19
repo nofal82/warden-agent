@@ -443,7 +443,7 @@ func TestExplicitDefaultFromGoMarshal(t *testing.T) {
 	if len(b) == 0 {
 		t.Fatalf("Go did not write the zero optional fields")
 	}
-	assertSentinel(t, wirescan.Check(b, presenceMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(b, presenceMD), nil)
 	// The oneof member gets its own message: Go's reflection marshaller
 	// writes oneof members after the other fields, which R13 (k) rejects
 	// when a lower-numbered member follows them
@@ -454,7 +454,7 @@ func TestExplicitDefaultFromGoMarshal(t *testing.T) {
 	if len(ob) == 0 {
 		t.Fatalf("Go did not write the zero oneof member")
 	}
-	assertSentinel(t, wirescan.Check(ob, presenceMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(ob, presenceMD), nil)
 
 	negZero := dynamicpb.NewMessage(presenceMD)
 	set(negZero, pFlt, protoreflect.ValueOfFloat32(float32(math.Copysign(0, -1))))
@@ -463,7 +463,7 @@ func TestExplicitDefaultFromGoMarshal(t *testing.T) {
 	if len(nb) != 5+9 {
 		t.Fatalf("Go wrote %d bytes for -0.0 float and double, want 14", len(nb))
 	}
-	assertSentinel(t, wirescan.Check(nb, presenceMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(nb, presenceMD), nil)
 	out := dynamicpb.NewMessage(presenceMD)
 	assertSentinel(t, wirescan.Unmarshal(nb, out), nil)
 	if !proto.Equal(out, negZero) {

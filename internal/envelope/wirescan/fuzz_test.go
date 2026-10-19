@@ -161,7 +161,7 @@ func FuzzCheck(f *testing.F) {
 	mds := []protoreflect.MessageDescriptor{bodyMD, outerMD}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		for _, md := range mds {
-			checkErr := wirescan.Check(b, md)
+			checkErr := wirescan.CheckForTest(b, md)
 			if checkErr != nil && countSentinels(checkErr) != 1 {
 				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
 			}
@@ -211,7 +211,7 @@ func FuzzCheck(f *testing.F) {
 			if !bytes.Equal(re, b) {
 				t.Fatalf("accepted input is not its deterministic encoding:\n in  %x\n out %x", b, re)
 			}
-			if err := wirescan.Check(re, md); err != nil {
+			if err := wirescan.CheckForTest(re, md); err != nil {
 				t.Fatalf("re-marshalled message fails Check: %v", err)
 			}
 			m2 := proto.Clone(m)
@@ -572,7 +572,7 @@ func FuzzCanonical(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		for _, md := range mds {
-			checkErr := wirescan.Check(b, md)
+			checkErr := wirescan.CheckForTest(b, md)
 			if checkErr != nil && countSentinels(checkErr) != 1 {
 				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
 			}

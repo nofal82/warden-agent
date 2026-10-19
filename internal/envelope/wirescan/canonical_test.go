@@ -137,7 +137,7 @@ func runCanonCases(t *testing.T, cases []scanCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assertSentinel(t, wirescan.Check(c.b, c.md), c.want)
+			assertSentinel(t, wirescan.CheckForTest(c.b, c.md), c.want)
 			assertSentinel(t, wirescan.Unmarshal(c.b, newMessage(c.md)), c.want)
 		})
 	}
@@ -509,7 +509,7 @@ func TestCanonicalOuterCases(t *testing.T) {
 	// The outer scan treats body as opaque bytes: a non-canonical encoding
 	// inside body is for the body scan (check 5), not the outer one.
 	inner := []byte{0x08, 0x81, 0x00}
-	assertSentinel(t, wirescan.Check(cat(fBytes(nil, 1, kid), fBytes(nil, 2, inner), fBytes(nil, 3, sig)), outerMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(cat(fBytes(nil, 1, kid), fBytes(nil, 2, inner), fBytes(nil, 3, sig)), outerMD), nil)
 }
 
 // Repeated 64-bit fields: only minimality applies, inside and outside packed
@@ -669,7 +669,7 @@ func TestCanonicalValidExtremesKinds(t *testing.T) {
 	m.Mutable(kindsMD.Fields().ByName("children")).List().Append(protoreflect.ValueOfMessage(proto.Clone(child).(*dynamicpb.Message)))
 
 	b := marshalDet(t, m)
-	assertSentinel(t, wirescan.Check(b, kindsMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(b, kindsMD), nil)
 	out := dynamicpb.NewMessage(kindsMD)
 	assertSentinel(t, wirescan.Unmarshal(b, out), nil)
 	if !proto.Equal(out, m) {
@@ -682,9 +682,9 @@ func TestCanonicalValidExtremesKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Equal(nb, b) {
-		assertSentinel(t, wirescan.Check(nb, kindsMD), nil)
+		assertSentinel(t, wirescan.CheckForTest(nb, kindsMD), nil)
 	} else {
-		assertSentinel(t, wirescan.Check(nb, kindsMD), wirescan.ErrNonCanonical)
+		assertSentinel(t, wirescan.CheckForTest(nb, kindsMD), wirescan.ErrNonCanonical)
 	}
 }
 

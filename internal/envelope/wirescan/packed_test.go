@@ -372,7 +372,7 @@ func TestRepeatedNonPackableUnaffected(t *testing.T) {
 // element, and R13 (i) rejects that, whatever the schema says.
 func TestUnpackedFromGoMarshal(t *testing.T) {
 	m := dynamicKindsWithLists()
-	assertSentinel(t, wirescan.Check(marshalDet(t, m), kindsMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(marshalDet(t, m), kindsMD), nil)
 
 	opts := &descriptorpb.FieldOptions{Targets: []descriptorpb.FieldOptions_OptionTargetType{
 		descriptorpb.FieldOptions_TARGET_TYPE_FILE, descriptorpb.FieldOptions_TARGET_TYPE_FIELD,
@@ -382,7 +382,7 @@ func TestUnpackedFromGoMarshal(t *testing.T) {
 		t.Fatalf("descriptorpb.FieldOptions.targets is no longer an unpacked repeated enum; pick another proto2 field")
 	}
 	unpacked := marshalDet(t, opts)
-	assertSentinel(t, wirescan.Check(unpacked, fieldOptionsMD), wirescan.ErrNonCanonical)
+	assertSentinel(t, wirescan.CheckForTest(unpacked, fieldOptionsMD), wirescan.ErrNonCanonical)
 	assertSentinel(t, wirescan.Unmarshal(unpacked, new(descriptorpb.FieldOptions)), wirescan.ErrNonCanonical)
 	packed := packedRec(targets.Number(), protowire.VarintType,
 		uint64(descriptorpb.FieldOptions_TARGET_TYPE_FILE), uint64(descriptorpb.FieldOptions_TARGET_TYPE_FIELD))

@@ -1,6 +1,9 @@
 package wardenv1_test
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -10,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
+	"github.com/nofal82/warden-agent/internal/testproto/ordertest"
 )
 
 // primitiveNumbers pins every params member to its catalog number
@@ -187,5 +191,141 @@ func TestContractChecksDetectViolations(t *testing.T) {
 	}
 	if f.Syntax() == protoreflect.Proto3 {
 		t.Error("test file should be proto2")
+	}
+}
+
+// orderViolations lists every message in mds, nested ones included, that
+// breaks the contract's field-order rule (action-envelope R13 (k), OQ28
+// ruling): fields declared in strictly ascending number order, and the
+// members of each oneof declared next to each other with no other field's
+// number between them. protobuf-go marshals a message in ascending order
+// only when it is declared this way; otherwise even deterministic
+// marshalling can write a lower number after a higher one, and the strict
+// scanner rejects the bytes.
+func orderViolations(mds protoreflect.MessageDescriptors) []string {
+	var out []string
+	for i := 0; i < mds.Len(); i++ {
+		md := mds.Get(i)
+		fields := md.Fields()
+		for j := 1; j < fields.Len(); j++ {
+			if prev, fd := fields.Get(j-1), fields.Get(j); fd.Number() <= prev.Number() {
+				out = append(out, fmt.Sprintf("%s: field %s (%d) declared after %s (%d)",
+					md.FullName(), fd.Name(), fd.Number(), prev.Name(), prev.Number()))
+			}
+		}
+		for j := 0; j < md.Oneofs().Len(); j++ {
+			if od := md.Oneofs().Get(j); !od.IsSynthetic() {
+				out = append(out, oneofOrderViolations(md, od)...)
+			}
+		}
+		out = append(out, orderViolations(md.Messages())...)
+	}
+	return out
+}
+
+// oneofOrderViolations checks that the members of od are declared in
+// ascending order and that no field outside od has a number between the
+// lowest and highest member. protobuf-go itself refuses a oneof whose
+// members are not declared next to each other.
+func oneofOrderViolations(md protoreflect.MessageDescriptor, od protoreflect.OneofDescriptor) []string {
+	var out []string
+	members := od.Fields()
+	for k := 1; k < members.Len(); k++ {
+		if prev, fd := members.Get(k-1), members.Get(k); fd.Number() <= prev.Number() {
+			out = append(out, fmt.Sprintf("%s: oneof %s member %s (%d) declared after %s (%d)",
+				md.FullName(), od.Name(), fd.Name(), fd.Number(), prev.Name(), prev.Number()))
+		}
+	}
+	if members.Len() == 0 {
+		return out
+	}
+	lo, hi := members.Get(0).Number(), members.Get(0).Number()
+	for k := 1; k < members.Len(); k++ {
+		lo, hi = min(lo, members.Get(k).Number()), max(hi, members.Get(k).Number())
+	}
+	for k := 0; k < md.Fields().Len(); k++ {
+		fd := md.Fields().Get(k)
+		if fd.ContainingOneof() != od && fd.Number() > lo && fd.Number() < hi {
+			out = append(out, fmt.Sprintf("%s: field %s (%d) lies between members of oneof %s",
+				md.FullName(), fd.Name(), fd.Number(), od.Name()))
+		}
+	}
+	return out
+}
+
+// TestContractFieldOrder: every contract message is declared so that
+// marshalling writes its fields in ascending order (R13 (k), OQ28 ruling).
+// Signers must still marshal with proto.MarshalOptions{Deterministic: true}
+// (R3).
+func TestContractFieldOrder(t *testing.T) {
+	for _, f := range contractFiles(t) {
+		for _, v := range orderViolations(f.Messages()) {
+			t.Errorf("%s: %s", f.Path(), v)
+		}
+	}
+}
+
+// TestContractFieldOrderDetectsViolations: the check above catches both
+// shapes it forbids, using the test-only messages in internal/testproto,
+// which are outside the contract.
+func TestContractFieldOrderDetectsViolations(t *testing.T) {
+	cases := []struct {
+		md   protoreflect.MessageDescriptor
+		want []string
+	}{
+		// In .proto source a oneof is one block, so a field numbered
+		// between its members is also declared out of order.
+		{(&ordertest.SplitOneof{}).ProtoReflect().Descriptor(), []string{
+			"wardentest.ordertest.SplitOneof: field second (2) declared after third (3)",
+			"wardentest.ordertest.SplitOneof: field second (2) lies between members of oneof choice",
+		}},
+		{(&ordertest.DescendingDeclaration{}).ProtoReflect().Descriptor(), []string{
+			"wardentest.ordertest.DescendingDeclaration: field first (1) declared after second (2)",
+		}},
+	}
+	for _, c := range cases {
+		got := orderViolations(c.md.ParentFile().Messages())
+		var mine []string
+		for _, v := range got {
+			if strings.HasPrefix(v, string(c.md.FullName())+":") {
+				mine = append(mine, v)
+			}
+		}
+		if !slices.Equal(mine, c.want) {
+			t.Errorf("%s: violations = %q, want %q", c.md.FullName(), mine, c.want)
+		}
+	}
+}
+
+// TestOneofOrderDetectsViolations covers a oneof declared in descending
+// order, nested one level deep.
+func TestOneofOrderDetectsViolations(t *testing.T) {
+	opt := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	str := descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum()
+	field := func(name string, num int32) *descriptorpb.FieldDescriptorProto {
+		return &descriptorpb.FieldDescriptorProto{Name: proto.String(name), Number: proto.Int32(num), Label: opt, Type: str, OneofIndex: proto.Int32(0)}
+	}
+	f, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("wardentest/bad_oneof.proto"),
+		Package: proto.String("wardentest"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("Outer"),
+			NestedType: []*descriptorpb.DescriptorProto{{
+				Name:      proto.String("Descending"),
+				Field:     []*descriptorpb.FieldDescriptorProto{field("z", 3), field("y", 2)},
+				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("d")}},
+			}},
+		}},
+	}, new(protoregistry.Files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"wardentest.Outer.Descending: field y (2) declared after z (3)",
+		"wardentest.Outer.Descending: oneof d member y (2) declared after z (3)",
+	}
+	if got := orderViolations(f.Messages()); !slices.Equal(got, want) {
+		t.Errorf("violations = %q, want %q", got, want)
 	}
 }
