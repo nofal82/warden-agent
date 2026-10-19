@@ -15,9 +15,13 @@ package wardentest.ordertest;
 
 option go_package = "github.com/nofal82/warden-agent/internal/testproto/ordertest";
 
+// In a message with a oneof, protobuf-go v1.36.12 writes the fields outside
+// any oneof first, by number, then each oneof in declaration order
+// (internal/impl/codec_message.go, "marshal oneofs last"), with or without
+// Deterministic. TestOutOfOrderMarshalRejected pins this.
+
 // SplitOneof has a field whose number lies between two members of a oneof.
-// protobuf-go writes a oneof at the position of its first-declared member,
-// so with third and second set it writes field 3 before field 2.
+// With first and second set it is written as field 2, then field 1.
 message SplitOneof {
   oneof choice {
     string first = 1;
@@ -30,4 +34,15 @@ message SplitOneof {
 message DescendingDeclaration {
   string second = 2;
   string first = 1;
+}
+
+// OneofBelowField passes the contract's field-order check (ascending
+// declaration, no number between oneof members), yet with first and third
+// set it is written as field 3, then field 1.
+message OneofBelowField {
+  oneof choice {
+    string first = 1;
+    string second = 2;
+  }
+  string third = 3;
 }

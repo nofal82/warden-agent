@@ -33,8 +33,7 @@ const (
 )
 
 // SplitOneof has a field whose number lies between two members of a oneof.
-// protobuf-go writes a oneof at the position of its first-declared member,
-// so with third and second set it writes field 3 before field 2.
+// With first and second set it is written as field 2, then field 1.
 type SplitOneof struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Choice:
@@ -178,6 +177,99 @@ func (x *DescendingDeclaration) GetFirst() string {
 	return ""
 }
 
+// OneofBelowField passes the contract's field-order check (ascending
+// declaration, no number between oneof members), yet with first and third
+// set it is written as field 3, then field 1.
+type OneofBelowField struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Choice:
+	//
+	//	*OneofBelowField_First
+	//	*OneofBelowField_Second
+	Choice        isOneofBelowField_Choice `protobuf_oneof:"choice"`
+	Third         string                   `protobuf:"bytes,3,opt,name=third,proto3" json:"third,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OneofBelowField) Reset() {
+	*x = OneofBelowField{}
+	mi := &file_ordertest_ordertest_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OneofBelowField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OneofBelowField) ProtoMessage() {}
+
+func (x *OneofBelowField) ProtoReflect() protoreflect.Message {
+	mi := &file_ordertest_ordertest_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OneofBelowField.ProtoReflect.Descriptor instead.
+func (*OneofBelowField) Descriptor() ([]byte, []int) {
+	return file_ordertest_ordertest_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *OneofBelowField) GetChoice() isOneofBelowField_Choice {
+	if x != nil {
+		return x.Choice
+	}
+	return nil
+}
+
+func (x *OneofBelowField) GetFirst() string {
+	if x != nil {
+		if x, ok := x.Choice.(*OneofBelowField_First); ok {
+			return x.First
+		}
+	}
+	return ""
+}
+
+func (x *OneofBelowField) GetSecond() string {
+	if x != nil {
+		if x, ok := x.Choice.(*OneofBelowField_Second); ok {
+			return x.Second
+		}
+	}
+	return ""
+}
+
+func (x *OneofBelowField) GetThird() string {
+	if x != nil {
+		return x.Third
+	}
+	return ""
+}
+
+type isOneofBelowField_Choice interface {
+	isOneofBelowField_Choice()
+}
+
+type OneofBelowField_First struct {
+	First string `protobuf:"bytes,1,opt,name=first,proto3,oneof"`
+}
+
+type OneofBelowField_Second struct {
+	Second string `protobuf:"bytes,2,opt,name=second,proto3,oneof"`
+}
+
+func (*OneofBelowField_First) isOneofBelowField_Choice() {}
+
+func (*OneofBelowField_Second) isOneofBelowField_Choice() {}
+
 var File_ordertest_ordertest_proto protoreflect.FileDescriptor
 
 const file_ordertest_ordertest_proto_rawDesc = "" +
@@ -191,7 +283,12 @@ const file_ordertest_ordertest_proto_rawDesc = "" +
 	"\x06choice\"E\n" +
 	"\x15DescendingDeclaration\x12\x16\n" +
 	"\x06second\x18\x02 \x01(\tR\x06second\x12\x14\n" +
-	"\x05first\x18\x01 \x01(\tR\x05firstB>Z<github.com/nofal82/warden-agent/internal/testproto/ordertestb\x06proto3"
+	"\x05first\x18\x01 \x01(\tR\x05first\"c\n" +
+	"\x0fOneofBelowField\x12\x16\n" +
+	"\x05first\x18\x01 \x01(\tH\x00R\x05first\x12\x18\n" +
+	"\x06second\x18\x02 \x01(\tH\x00R\x06second\x12\x14\n" +
+	"\x05third\x18\x03 \x01(\tR\x05thirdB\b\n" +
+	"\x06choiceB>Z<github.com/nofal82/warden-agent/internal/testproto/ordertestb\x06proto3"
 
 var (
 	file_ordertest_ordertest_proto_rawDescOnce sync.Once
@@ -205,10 +302,11 @@ func file_ordertest_ordertest_proto_rawDescGZIP() []byte {
 	return file_ordertest_ordertest_proto_rawDescData
 }
 
-var file_ordertest_ordertest_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_ordertest_ordertest_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_ordertest_ordertest_proto_goTypes = []any{
 	(*SplitOneof)(nil),            // 0: wardentest.ordertest.SplitOneof
 	(*DescendingDeclaration)(nil), // 1: wardentest.ordertest.DescendingDeclaration
+	(*OneofBelowField)(nil),       // 2: wardentest.ordertest.OneofBelowField
 }
 var file_ordertest_ordertest_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -227,13 +325,17 @@ func file_ordertest_ordertest_proto_init() {
 		(*SplitOneof_First)(nil),
 		(*SplitOneof_Third)(nil),
 	}
+	file_ordertest_ordertest_proto_msgTypes[2].OneofWrappers = []any{
+		(*OneofBelowField_First)(nil),
+		(*OneofBelowField_Second)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ordertest_ordertest_proto_rawDesc), len(file_ordertest_ordertest_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

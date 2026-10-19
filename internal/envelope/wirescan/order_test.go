@@ -438,12 +438,11 @@ func TestOrderEveryPairSwapped(t *testing.T) {
 }
 
 // Literal reading of (k) for reflection-based marshalling. protobuf-go's
-// slow path (dynamicpb, or any message without generated fast-path code)
-// in Deterministic mode uses LegacyFieldOrder: fields outside a real oneof
-// first, then oneof members, so a oneof member numbered below another set
-// field is written after it. Generated code is not affected for today's
-// contract (AC8a), whose only oneof is a whole message; oneof placement in
-// generated code for future contracts is action-envelope OQ28. This pins
+// slow path (dynamicpb) in Deterministic mode uses LegacyFieldOrder: fields
+// outside a real oneof first, then oneof members, so a oneof member
+// numbered below another set field is written after it. Generated code
+// sorts the same way (TestOutOfOrderMarshalRejected); today's contract is
+// not affected (AC8a) because its only oneof is a whole message. This pins
 // that the scanner follows the encoding rule, not one particular
 // marshaller, so a change in either is deliberate.
 func TestOrderReflectionMarshalOneofLast(t *testing.T) {
@@ -796,30 +795,43 @@ func TestAC8aEveryMessageEveryOneofMember(t *testing.T) {
 	}
 }
 
-// OQ28 ruling: a message declared against the contract's field-order rule
-// (a field numbered between two members of a oneof) marshals out of order,
-// and the scanner rejects it. SplitOneof lives in a test-only package
-// outside the contract; TestContractFieldOrder keeps every contract message
-// from looking like it. Marshalled without Deterministic on purpose: the
-// scan accepts only ascending bytes, whatever the signer's options.
+// OQ28: protobuf-go writes the fields outside any oneof first, then the
+// oneof, with or without Deterministic. A message whose oneof member is
+// numbered below another set field therefore marshals out of order, and
+// the scanner rejects it. SplitOneof breaks the contract's declaration rule
+// (TestContractFieldOrder); OneofBelowField satisfies it and is still
+// written out of order. Both live in a test-only package outside the
+// contract. The same values written in ascending order are accepted, so
+// the order alone causes the rejection.
 func TestOutOfOrderMarshalRejected(t *testing.T) {
-	m := &ordertest.SplitOneof{Choice: &ordertest.SplitOneof_First{First: "a"}, Second: "b"}
-	b, err := proto.Marshal(m)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		m, n proto.Message // n is an empty message of the same type
+		asc  []byte
+	}{
+		{"split_oneof", &ordertest.SplitOneof{Choice: &ordertest.SplitOneof_First{First: "a"}, Second: "b"}, new(ordertest.SplitOneof),
+			fBytes(fBytes(nil, 1, []byte("a")), 2, []byte("b"))},
+		{"oneof_below_field", &ordertest.OneofBelowField{Choice: &ordertest.OneofBelowField_First{First: "a"}, Third: "c"}, new(ordertest.OneofBelowField),
+			fBytes(fBytes(nil, 1, []byte("a")), 3, []byte("c"))},
 	}
-	if ascendingOK(b, m.ProtoReflect().Descriptor()) {
-		t.Fatalf("protobuf-go wrote %x in ascending order; this test no longer shows an out-of-order marshal", b)
-	}
-	assertSentinel(t, wirescan.Unmarshal(b, new(ordertest.SplitOneof)), wirescan.ErrNonCanonical)
-
-	// The same value written in ascending order is accepted, so the order
-	// alone caused the rejection.
-	asc := fBytes(fBytes(nil, 1, []byte("a")), 2, []byte("b"))
-	out := new(ordertest.SplitOneof)
-	assertSentinel(t, wirescan.Unmarshal(asc, out), nil)
-	if !proto.Equal(out, m) {
-		t.Fatalf("ascending bytes decode to %v, want %v", out, m)
+	for _, c := range cases {
+		for _, opts := range []proto.MarshalOptions{{}, {Deterministic: true}} {
+			t.Run(fmt.Sprintf("%s/deterministic=%t", c.name, opts.Deterministic), func(t *testing.T) {
+				b, err := opts.Marshal(c.m)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ascendingOK(b, c.m.ProtoReflect().Descriptor()) {
+					t.Fatalf("protobuf-go wrote %x in ascending order; review this test and action-envelope OQ28", b)
+				}
+				assertSentinel(t, wirescan.Unmarshal(b, proto.Clone(c.n)), wirescan.ErrNonCanonical)
+				out := proto.Clone(c.n)
+				assertSentinel(t, wirescan.Unmarshal(c.asc, out), nil)
+				if !proto.Equal(out, c.m) {
+					t.Fatalf("ascending bytes decode to %v, want %v", out, c.m)
+				}
+			})
+		}
 	}
 }
 
