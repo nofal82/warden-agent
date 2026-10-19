@@ -7,5 +7,5 @@ import "google.golang.org/protobuf/reflect/protoreflect"
 // descriptors. It exists only in test builds; production code reaches the
 // scan through Unmarshal.
 func CheckForTest(b []byte, md protoreflect.MessageDescriptor) error {
-	return Check(b, md)
+	return check(b, md, 0)
 }

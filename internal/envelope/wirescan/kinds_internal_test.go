@@ -49,7 +49,7 @@ func TestFixedWidthKinds(t *testing.T) {
 	}
 	// FloatValue.value as varint: wrong wire type.
 	b := protowire.AppendVarint(protowire.AppendTag(nil, 1, protowire.VarintType), 1)
-	if err := Check(b, wrapperspb.Float(0).ProtoReflect().Descriptor()); err == nil {
+	if err := check(b, wrapperspb.Float(0).ProtoReflect().Descriptor(), 0); err == nil {
 		t.Error("float encoded as varint accepted")
 	}
 }

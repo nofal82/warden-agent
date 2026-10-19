@@ -14,8 +14,7 @@ import (
 var (
 	// ErrMalformed: the bytes are not a valid encoding (truncated, bad
 	// varint or length, a 10-byte varint above 2^64 - 1, invalid field
-	// number or wire type). Unmarshal also reports invalid UTF-8 in a
-	// string field with it; Check does not look at string contents.
+	// number or wire type), or a string field that is not valid UTF-8.
 	ErrMalformed = errors.New("wirescan: malformed encoding")
 	// ErrUnknownField: a field number the schema does not define.
 	ErrUnknownField = errors.New("wirescan: unknown field")
@@ -48,26 +47,25 @@ const maxDepth = 16
 // maxVarintLen is the longest valid varint: 64 bits in 7-bit groups.
 const maxVarintLen = 10
 
-// Check scans b as the encoding of a message described by md, recursing into
-// known message-typed fields. It rejects what generated proto.Unmarshal
-// silently accepts: unknown fields, repeated non-repeated fields (where the
-// last one wins or messages merge), two members of one oneof, groups and
-// wire-type mismatches (action-envelope R13), and non-canonical encodings:
-// overlong varints, int32, enum, uint32, sint32 or bool values outside
-// their type's range, repeated numeric or enum fields that are not exactly
-// one non-empty packed record, explicitly encoded proto3 defaults, and
-// fields out of strictly ascending number order.
+// Unmarshal decodes b into m under the strict R13 rules. It is the only
+// entry point: the wire scan, the decode and the unknown-field check are
+// one step, so no caller can accept bytes on the strength of the scan
+// alone.
 //
-// Check does not validate string contents (UTF-8), so it must not be the
-// only check on untrusted bytes; use Unmarshal.
-func Check(b []byte, md protoreflect.MessageDescriptor) error {
-	return check(b, md, 0)
-}
-
-// Unmarshal runs Check on b, then decodes it into m and confirms that no
-// message, nested ones included, kept unknown fields.
+// First it scans b against m's schema, recursing into known message-typed
+// fields. The scan rejects what generated proto.Unmarshal silently
+// accepts: unknown fields, repeated non-repeated fields (where the last one
+// wins or messages merge), two members of one oneof, groups and wire-type
+// mismatches (action-envelope R13), and non-canonical encodings: overlong
+// varints, int32, enum, uint32, sint32 or bool values outside their type's
+// range, repeated numeric or enum fields that are not exactly one
+// non-empty packed record, explicitly encoded proto3 defaults, and fields
+// out of strictly ascending number order. The scan does not look at string
+// contents; proto.Unmarshal, which runs next, rejects invalid UTF-8.
+// Finally it confirms that no message, nested ones included, kept unknown
+// fields.
 func Unmarshal(b []byte, m proto.Message) error {
-	if err := Check(b, m.ProtoReflect().Descriptor()); err != nil {
+	if err := check(b, m.ProtoReflect().Descriptor(), 0); err != nil {
 		return err
 	}
 	if err := proto.Unmarshal(b, m); err != nil {

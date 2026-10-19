@@ -2,11 +2,10 @@ package wirescan_test
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -15,18 +14,19 @@ import (
 // and the unknown-field check together. A scan-only entry point would let
 // a caller accept bytes that are not valid UTF-8 (PR #7 decision 1).
 func TestUnmarshalIsTheOnlyEntryPoint(t *testing.T) {
-	notTest := func(fi fs.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }
-	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", notTest, 0)
+	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var exported []string
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, decl := range f.Decls {
-				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.IsExported() {
-					exported = append(exported, fn.Name.Name)
-				}
+	for _, name := range pkg.GoFiles {
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.IsExported() {
+				exported = append(exported, fn.Name.Name)
 			}
 		}
 	}
