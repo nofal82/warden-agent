@@ -143,16 +143,18 @@ func runCanonCases(t *testing.T, cases []scanCase) {
 	}
 }
 
-// contractMessages is every message type in the warden contract.
+// contractMessages is every message type in the warden contract: every
+// registered file of the contract's package, so a new .proto file is
+// covered without a test change (AC8a).
 func contractMessages() []protoreflect.MessageDescriptor {
+	pkg := wardenv1.File_warden_v1_envelope_proto.Package()
 	var mds []protoreflect.MessageDescriptor
-	for _, file := range []protoreflect.FileDescriptor{
-		wardenv1.File_warden_v1_envelope_proto, wardenv1.File_warden_v1_typed_request_proto,
-	} {
+	protoregistry.GlobalFiles.RangeFilesByPackage(pkg, func(file protoreflect.FileDescriptor) bool {
 		for i := 0; i < file.Messages().Len(); i++ {
 			mds = append(mds, file.Messages().Get(i))
 		}
-	}
+		return true
+	})
 	return mds
 }
 

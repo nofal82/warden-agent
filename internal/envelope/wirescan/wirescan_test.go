@@ -43,14 +43,7 @@ func validBody() *wardenv1.EnvelopeBody {
 // Every message type in the contract, fully populated and deterministically
 // marshalled, passes Check and Unmarshal.
 func TestValidEveryMessageType(t *testing.T) {
-	var mds []protoreflect.MessageDescriptor
-	for _, file := range []protoreflect.FileDescriptor{
-		wardenv1.File_warden_v1_envelope_proto, wardenv1.File_warden_v1_typed_request_proto,
-	} {
-		for i := 0; i < file.Messages().Len(); i++ {
-			mds = append(mds, file.Messages().Get(i))
-		}
-	}
+	mds := contractMessages()
 	if len(mds) < 25 {
 		t.Fatalf("found only %d message types", len(mds))
 	}

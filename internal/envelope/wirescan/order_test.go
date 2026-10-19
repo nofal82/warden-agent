@@ -440,21 +440,23 @@ func TestOrderEveryPairSwapped(t *testing.T) {
 // slow path (dynamicpb, or any message without generated fast-path code)
 // in Deterministic mode uses LegacyFieldOrder: fields outside a real oneof
 // first, then oneof members, so a oneof member numbered below another set
-// field is written after it. Generated contract code sorts by field number
-// and is not affected (AC8a). This pins that the scanner follows the
-// encoding rule, not one particular marshaller, so a change is deliberate.
+// field is written after it. Generated code is not affected for today's
+// contract (AC8a), whose only oneof is a whole message; oneof placement in
+// generated code for future contracts is action-envelope OQ28. This pins
+// that the scanner follows the encoding rule, not one particular
+// marshaller, so a change in either is deliberate.
 func TestOrderReflectionMarshalOneofLast(t *testing.T) {
 	m := dynamicpb.NewMessage(presenceMD)
 	m.Set(presenceMD.Fields().ByNumber(pOI32), protoreflect.ValueOfInt32(1))
 	m.Set(presenceMD.Fields().ByNumber(pOptU32), protoreflect.ValueOfUint32(1))
 	b := marshalDet(t, m)
 	want := cat(fVarint(nil, pOptU32, 1), fVarint(nil, pOI32, 1))
-	if !bytes.Equal(b, want) {
-		t.Skipf("protobuf-go no longer writes oneof members last on the slow path (%x); this pin is obsolete", b)
-	}
-	assertSentinel(t, wirescan.Check(b, presenceMD), wirescan.ErrNonCanonical)
 	asc := cat(fVarint(nil, pOI32, 1), fVarint(nil, pOptU32, 1))
 	assertSentinel(t, wirescan.Check(asc, presenceMD), nil)
+	assertSentinel(t, wirescan.Check(want, presenceMD), wirescan.ErrNonCanonical)
+	if !bytes.Equal(b, want) {
+		t.Fatalf("protobuf-go's reflection marshaller changed its oneof order (got %x, want %x); review this pin and action-envelope OQ28", b, want)
+	}
 }
 
 // ten is a 10-byte varint: nine continuation bytes (first) and the last byte.

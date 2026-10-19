@@ -13,7 +13,10 @@
 // that are not one non-empty packed record, explicitly encoded proto3
 // defaults, and fields that are not in strictly ascending number order.
 // With these rules the scan accepts exactly the bytes deterministic Go
-// marshalling produces.
+// marshalling of the generated contract types produces (AC8a). Go's
+// reflection-based marshaller (dynamicpb) may write oneof members after
+// higher-numbered fields, so bytes it produces can be rejected (open
+// question action-envelope OQ28).
 //
 // Untrusted input must go through Unmarshal (which the envelope verifier
 // uses), never through Check alone. Check looks only at the wire structure;

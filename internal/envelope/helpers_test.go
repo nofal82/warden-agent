@@ -216,6 +216,16 @@ func withField(tb testing.TB, b, recs []byte) []byte {
 	return out
 }
 
+// withFields applies withField for each of recs in turn.
+func withFields(tb testing.TB, b []byte, recs ...[]byte) []byte {
+	tb.Helper()
+	out := append([]byte(nil), b...)
+	for _, r := range recs {
+		out = withField(tb, out, r)
+	}
+	return out
+}
+
 // Keys and verifiers -------------------------------------------------------
 
 func trusted(k ed25519.PrivateKey, notBefore, notAfter int64) TrustedKey {

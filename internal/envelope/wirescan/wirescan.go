@@ -33,10 +33,11 @@ var (
 	// encoded, a value outside the range of its field's type, a repeated
 	// numeric or enum field that is not exactly one non-empty packed
 	// record, an explicitly encoded default in a field with implicit
-	// presence, or fields out of ascending number order. Generated decoders silently truncate or normalise such
-	// encodings (2^32+1 in a uint32 reads as 1), and decoders in other
-	// languages may not, so the same signed bytes could be read two ways,
-	// or two different signed byte strings could decode to one value.
+	// presence, or fields out of ascending number order. Generated
+	// decoders silently truncate or normalise such encodings (2^32+1 in a
+	// uint32 reads as 1), and decoders in other languages may not, so the
+	// same signed bytes could be read two ways, or two different signed
+	// byte strings could decode to one value.
 	ErrNonCanonical = errors.New("wirescan: non-canonical encoding")
 )
 
@@ -136,8 +137,9 @@ func check(b []byte, md protoreflect.MessageDescriptor, depth int) error {
 // inOrder reports whether a record of fd may follow a record of prev
 // (R13 (k)): field numbers strictly ascend, except that the records of one
 // repeated string, bytes or message field, which cannot be packed, form one
-// consecutive run. Deterministic Go marshalling writes this order, so with
-// it the scan accepts one encoding per message, byte for byte. Two records
+// consecutive run. Deterministic marshalling of generated Go types writes
+// this order (AC8a), so with it the scan accepts one encoding per message,
+// byte for byte. Two records
 // of any other field never reach here (markSeen and checkValue reject
 // them).
 func inOrder(prev, fd protoreflect.FieldDescriptor) bool {

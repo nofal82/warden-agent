@@ -10,6 +10,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 )
 
 // Warden's contract uses only varint and length-delimited kinds. The
@@ -127,5 +129,19 @@ func TestCheckVarintEnd(t *testing.T) {
 				t.Fatalf("error %v does not wrap ErrMalformed", err)
 			}
 		})
+	}
+}
+
+// Every split packed record also breaks R13 (k), so this pins the (i)
+// check in markSeen on its own: it stays as defence in depth.
+func TestMarkSeenSplitPackedRecord(t *testing.T) {
+	fd := (&wardenv1.DbTerminateSessionRequest{}).ProtoReflect().Descriptor().Fields().ByName("session_ids")
+	seen, seenOneof := map[protowire.Number]bool{}, map[int]bool{}
+	if err := markSeen(fd, protowire.BytesType, seen, seenOneof); err != nil {
+		t.Fatalf("first packed record: %v", err)
+	}
+	err := markSeen(fd, protowire.BytesType, seen, seenOneof)
+	if !errors.Is(err, ErrNonCanonical) {
+		t.Fatalf("second packed record: got %v, want ErrNonCanonical", err)
 	}
 }
