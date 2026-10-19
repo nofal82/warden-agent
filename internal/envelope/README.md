@@ -23,10 +23,12 @@ Only the three steps together are the R13 decode. The scan alone is
 unexported, so no caller can accept bytes because the scan passed.
 
 Signers must marshal the generated types with
-`proto.MarshalOptions{Deterministic: true}` (R3). The field-order rule
-R13 (k) depends on it, and on the contract declaring every message's
-fields in ascending number order with each oneof's members kept together;
-`TestContractFieldOrder` in `api/proto/warden/v1` enforces the second part.
+`proto.MarshalOptions{Deterministic: true}` (R3); AC8a proves rule R13 (k)
+for that encoding. Field order itself comes from protobuf-go, which writes
+the fields outside any oneof first, then each oneof, so the contract's
+declaration rule (`TestContractFieldOrder` in `api/proto/warden/v1`) and
+AC8a together keep marshalled bytes in ascending order. See the `wirescan`
+package documentation.
 
 Store keys and idempotency keys are taken only from verified, decoded body
 fields, never from the outer `SignedEnvelope` bytes (R13 notes).

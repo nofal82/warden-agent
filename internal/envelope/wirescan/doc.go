@@ -17,14 +17,19 @@
 //
 // Signers MUST marshal the generated contract types with
 // proto.MarshalOptions{Deterministic: true} (action-envelope R3). Rule (k),
-// strictly ascending field order, depends on it: for that encoding of the
-// generated types the scan accepts exactly the bytes the signer produced,
-// byte for byte (AC8a). It also depends on how the contract is declared.
-// protobuf-go writes a field numbered between two members of a oneof out
-// of order, with or without Deterministic, so every contract message
-// declares its fields in ascending number order and keeps each oneof's
-// members together (OQ28 ruling, enforced by TestContractFieldOrder in
-// api/proto/warden/v1).
+// strictly ascending field order, is proven only for that encoding: AC8a
+// marshals every contract message that way and requires the scan to accept
+// the bytes unchanged. Deterministic itself fixes map order (the contract
+// has no maps); field order comes from protobuf-go. In a message with a
+// oneof, protobuf-go writes the fields outside any oneof first, then each
+// oneof in declaration order, with or without Deterministic, and its
+// reflection-based marshaller (dynamicpb) does the same
+// (TestOrderReflectionMarshalOneofLast). A contract message whose oneof
+// members are numbered below another field would therefore marshal out of
+// order and be rejected. Today's only oneof (TypedRequest.request) is the
+// whole message. TestContractFieldOrder in api/proto/warden/v1 enforces
+// the declaration rule the human reviewer ruled for OQ28; AC8a is the
+// backstop for the oneof-last order.
 //
 // # Entry point
 //

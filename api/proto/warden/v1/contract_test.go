@@ -198,10 +198,11 @@ func TestContractChecksDetectViolations(t *testing.T) {
 // breaks the contract's field-order rule (action-envelope R13 (k), OQ28
 // ruling): fields declared in strictly ascending number order, and the
 // members of each oneof declared next to each other with no other field's
-// number between them. protobuf-go marshals a message in ascending order
-// only when it is declared this way; otherwise even deterministic
-// marshalling can write a lower number after a higher one, and the strict
-// scanner rejects the bytes.
+// number between them. This is necessary for protobuf-go to marshal in
+// ascending order but not sufficient: it writes oneof members after every
+// other field, so a oneof numbered below another field is still written
+// out of order. TestAC8aEveryMessageEveryOneofMember in wirescan catches
+// that case.
 func orderViolations(mds protoreflect.MessageDescriptors) []string {
 	var out []string
 	for i := 0; i < mds.Len(); i++ {

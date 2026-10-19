@@ -22,11 +22,16 @@ name (as `TypedRequest` does for P20).
 ## Fields are declared in ascending number order
 
 Within every message, declare fields in strictly ascending number order, and
-give no other field a number between the members of a `oneof`. protobuf-go
-otherwise writes some fields out of order, even with
-`proto.MarshalOptions{Deterministic: true}`, and the strict scanner rejects
-the bytes (action-envelope R13 (k), OQ28 ruling). `TestContractFieldOrder`
-enforces this.
+give no other field a number between the members of a `oneof`
+(action-envelope R13 (k), OQ28 ruling). `TestContractFieldOrder` enforces
+this.
+
+In a message with a `oneof`, protobuf-go writes the fields outside any oneof
+first, then the oneof, even with `proto.MarshalOptions{Deterministic: true}`.
+If a oneof member is numbered below another field, the bytes come out of
+order and the strict scanner rejects them. Keep every oneof member numbered
+above the message's other fields (today `TypedRequest` is only its oneof).
+The AC8a test in `internal/envelope/wirescan` catches a violation.
 
 ## Regenerating
 
