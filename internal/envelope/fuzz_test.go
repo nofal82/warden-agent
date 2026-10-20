@@ -171,11 +171,14 @@ func inRange(k protoreflect.Kind, v uint64) bool {
 // tag, length prefix, varint value and packed element in b (recursively, by
 // md) is minimal, every int32/enum, uint32/sint32 and bool value is in
 // range, every repeated numeric or enum field is exactly one non-empty
-// packed record per message (R13 (i)), and no non-repeated, non-message
+// packed record per message (R13 (i)), no non-repeated, non-message
 // field with implicit presence holds its explicitly encoded default (R13
-// (j)). Anything it cannot parse is "not OK".
+// (j)), and field numbers ascend, with only the records of one repeated
+// string, bytes or message field sharing a number (R13 (k)). Anything it
+// cannot parse is "not OK".
 func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 	packedSeen := map[protowire.Number]bool{}
+	var prev protowire.Number
 	for len(b) > 0 {
 		tag, n := readVarint(b)
 		if n < 0 || n != minimalLen(tag) {
@@ -187,6 +190,12 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 		if fd == nil {
 			return false
 		}
+		unpackable := fd.IsList() && (fd.Kind() == protoreflect.MessageKind ||
+			fd.Kind() == protoreflect.StringKind || fd.Kind() == protoreflect.BytesKind)
+		if num < prev || (num == prev && !unpackable) {
+			return false
+		}
+		prev = num
 		// R13 (j): a zero value here would be the proto3 default written out.
 		implicit := !fd.IsList() && fd.Kind() != protoreflect.MessageKind && !fd.HasPresence()
 		switch protowire.Type(tag & 7) {
@@ -474,6 +483,10 @@ func FuzzVerifyBody(f *testing.F) {
 		var fresh wardenv1.EnvelopeBody
 		if uerr := proto.Unmarshal(body, &fresh); uerr != nil || !proto.Equal(&fresh, res.Body) {
 			t.Fatalf("returned body differs from the signed bytes: %v", uerr)
+		}
+		// R13 (k): the scan accepts exactly the deterministic encoding.
+		if re := marshalDet(t, res.Body); !bytes.Equal(re, body) {
+			t.Fatalf("accepted body is not the deterministic encoding:\n got %x\nwant %x", body, re)
 		}
 	})
 }

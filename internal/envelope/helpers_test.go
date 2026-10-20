@@ -184,6 +184,48 @@ func cat(parts ...[]byte) []byte {
 	return out
 }
 
+// withField returns b with recs (records of one field number, or of
+// ascending numbers that all fit before the next field of b) inserted at
+// their ascending position, replacing any record of b with recs' first
+// field number. Tests use it so an input breaks only the rule under test,
+// not R13 (k).
+func withField(tb testing.TB, b, recs []byte) []byte {
+	tb.Helper()
+	num, _, n := protowire.ConsumeTag(recs)
+	if n < 0 {
+		tb.Fatalf("withField: bad record tag")
+	}
+	var out []byte
+	placed := false
+	for len(b) > 0 {
+		rnum, _, rn := protowire.ConsumeField(b)
+		if rn < 0 {
+			tb.Fatalf("withField: bad base record")
+		}
+		if rnum != num {
+			if !placed && rnum > num {
+				out, placed = append(out, recs...), true
+			}
+			out = append(out, b[:rn]...)
+		}
+		b = b[rn:]
+	}
+	if !placed {
+		out = append(out, recs...)
+	}
+	return out
+}
+
+// withFields applies withField for each of recs in turn.
+func withFields(tb testing.TB, b []byte, recs ...[]byte) []byte {
+	tb.Helper()
+	out := append([]byte(nil), b...)
+	for _, r := range recs {
+		out = withField(tb, out, r)
+	}
+	return out
+}
+
 // Keys and verifiers -------------------------------------------------------
 
 func trusted(k ed25519.PrivateKey, notBefore, notAfter int64) TrustedKey {

@@ -271,19 +271,19 @@ func TestCheck5WireAttacks(t *testing.T) {
 	pdBytes := marshalDet(t, base.PolicyDecision)
 	restartInner := marshalDet(t, &wardenv1.ServiceRestartRequest{Unit: "nginx.service"})
 	memInner := []byte{}
-	paramsWith := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
+	paramsWith := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	pdWith := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
 
 	clear := func(m func(b *wardenv1.EnvelopeBody)) []byte { return marshalDet(t, bodyWith(m)) }
 
 	cases := map[string][]byte{
-		"unknown_field_99_varint":  fVarint(append([]byte(nil), baseBytes...), 99, 1),
-		"unknown_field_99_bytes":   fBytes(append([]byte(nil), baseBytes...), 99, []byte("x")),
-		"unknown_field_13":         fVarint(append([]byte(nil), baseBytes...), 13, 0),
-		"unknown_field_max_number": fVarint(append([]byte(nil), baseBytes...), 536870911, 0),
-		"unknown_in_policy_decision": fBytes(append([]byte(nil), noPD...), 9,
-			fVarint(append([]byte(nil), pdBytes...), 99, 1)),
-		"unknown_in_params":     paramsWith(cat(fBytes(nil, 11, restartInner), fVarint(nil, 99, 1))),
-		"reserved_20_in_params": paramsWith(fBytes(nil, 20, nil)),
+		"unknown_field_99_varint":    fVarint(append([]byte(nil), baseBytes...), 99, 1),
+		"unknown_field_99_bytes":     fBytes(append([]byte(nil), baseBytes...), 99, []byte("x")),
+		"unknown_field_13":           fVarint(append([]byte(nil), baseBytes...), 13, 0),
+		"unknown_field_max_number":   fVarint(append([]byte(nil), baseBytes...), 536870911, 0),
+		"unknown_in_policy_decision": pdWith(fVarint(append([]byte(nil), pdBytes...), 99, 1)),
+		"unknown_in_params":          paramsWith(cat(fBytes(nil, 11, restartInner), fVarint(nil, 99, 1))),
+		"reserved_20_in_params":      paramsWith(fBytes(nil, 20, nil)),
 		"unknown_in_request": paramsWith(fBytes(nil, 11,
 			fVarint(append([]byte(nil), restartInner...), 99, 1))),
 		"unknown_in_field_less_request": paramsWith(fBytes(nil, 7, fVarint(nil, 1, 1))),
@@ -297,40 +297,40 @@ func TestCheck5WireAttacks(t *testing.T) {
 		"duplicate_idempotency_key":   fBytes(append([]byte(nil), baseBytes...), 12, []byte("other")),
 		"duplicate_playbook_digest":   fBytes(append([]byte(nil), baseBytes...), 6, digest("x")),
 		"repeated_policy_decision":    fBytes(append([]byte(nil), baseBytes...), 9, pdBytes),
-		"repeated_policy_decision_mx": fBytes(fBytes(append([]byte(nil), noPD...), 9, []byte{}), 9, pdBytes),
-		"duplicate_decision_id_in_pd": fBytes(append([]byte(nil), noPD...), 9,
-			fBytes(append([]byte(nil), pdBytes...), 1, []byte(validDecisionID))),
-		"two_members_one_params":   paramsWith(cat(fBytes(nil, 11, restartInner), fBytes(nil, 7, memInner))),
+		"repeated_policy_decision_mx": fBytes(pdWith([]byte{}), 9, pdBytes),
+		"duplicate_decision_id_in_pd": pdWith(fBytes(append([]byte(nil), pdBytes...), 1, []byte(validDecisionID))),
+		"two_members_one_params":      paramsWith(cat(fBytes(nil, 11, restartInner), fBytes(nil, 7, memInner))),
+		// Ascending members break only the oneof rule, not R13 (k).
+		"two_members_ascending":    paramsWith(cat(fBytes(nil, 7, memInner), fBytes(nil, 11, restartInner))),
 		"same_member_twice":        paramsWith(cat(fBytes(nil, 11, restartInner), fBytes(nil, 11, restartInner))),
-		"two_params_fields_differ": fBytes(fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 11, restartInner)), 8, fBytes(nil, 7, memInner)),
+		"two_params_fields_differ": fBytes(paramsWith(fBytes(nil, 11, restartInner)), 8, fBytes(nil, 7, memInner)),
 		"two_params_fields_same":   fBytes(append([]byte(nil), baseBytes...), 8, fBytes(nil, 11, restartInner)),
 		"duplicate_unit_in_request": paramsWith(fBytes(nil, 11,
 			fBytes(append([]byte(nil), restartInner...), 1, []byte("sshd.service")))),
 
 		"group_depth0_unknown": fGroup(append([]byte(nil), baseBytes...), 99, nil),
-		"group_depth0_known":   fGroup(clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, nil),
+		"group_depth0_known":   withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), fGroup(nil, 2, nil)),
 		"lone_end_group":       append(append([]byte(nil), baseBytes...), 0x0c),
-		"group_depth1_pd": fBytes(append([]byte(nil), noPD...), 9,
-			fGroup(append([]byte(nil), pdBytes...), 5, nil)),
-		"group_depth1_params": paramsWith(cat(fBytes(nil, 11, restartInner), fGroup(nil, 2, nil))),
+		"group_depth1_pd":      pdWith(fGroup(append([]byte(nil), pdBytes...), 5, nil)),
+		"group_depth1_params":  paramsWith(cat(fBytes(nil, 11, restartInner), fGroup(nil, 2, nil))),
 		"group_depth2_request": paramsWith(fBytes(nil, 11,
 			fGroup(append([]byte(nil), restartInner...), 2, fVarint(nil, 1, 1)))),
 
-		"created_at_as_bytes": fBytes(clear(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 }), 10, []byte{1, 2, 3}),
-		"created_at_as_fixed64": fFixed64(clear(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 }), 10,
-			uint64(fakeNow-10)),
-		"action_id_as_varint": fVarint(clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2, 7),
-		"format_as_fixed32":   fFixed32(clear(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 }), 1, 1),
-		"params_as_varint":    fVarint(append([]byte(nil), noParams...), 8, 11),
-		"pd_as_fixed64":       fFixed64(append([]byte(nil), noPD...), 9, 0),
-		"autonomy_as_bytes": fBytes(append([]byte(nil), noPD...), 9,
-			fBytes(marshalDet(t, &wardenv1.PolicyDecision{DecisionId: validDecisionID, PolicyBundleDigest: digest("policy-bundle")}), 2, []byte{3})),
+		"created_at_as_bytes": withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 }), fBytes(nil, 10, []byte{1, 2, 3})),
+		"created_at_as_fixed64": withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 }), fFixed64(nil, 10,
+			uint64(fakeNow-10))),
+		"action_id_as_varint": withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), fVarint(nil, 2, 7)),
+		"format_as_fixed32":   withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.FormatVersion = 0 }), fFixed32(nil, 1, 1)),
+		"params_as_varint":    withField(t, noParams, fVarint(nil, 8, 11)),
+		"pd_as_fixed64":       withField(t, noPD, fFixed64(nil, 9, 0)),
+		"autonomy_as_bytes": pdWith(withField(t,
+			marshalDet(t, &wardenv1.PolicyDecision{DecisionId: validDecisionID, PolicyBundleDigest: digest("policy-bundle")}), fBytes(nil, 2, []byte{3}))),
 		"request_member_as_varint": paramsWith(fVarint(nil, 11, 1)),
 
-		"invalid_utf8_action_id": fBytes(clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), 2,
-			[]byte("01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e\xff\xfe")),
+		"invalid_utf8_action_id": withField(t, clear(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" }), fBytes(nil, 2,
+			[]byte("01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e\xff\xfe"))),
 		"invalid_utf8_idem": fBytes(clear(func(b *wardenv1.EnvelopeBody) { b.IdempotencyKey = "" }), 12, []byte{0xc0, 0x80}),
-		"invalid_utf8_decision_id": fBytes(append([]byte(nil), noPD...), 9,
+		"invalid_utf8_decision_id": pdWith(
 			cat(fBytes(nil, 1, []byte("\xed\xa0\x80")), fVarint(nil, 2, 3), fBytes(nil, 3, digest("policy-bundle")))),
 		"invalid_utf8_in_request": paramsWith(fBytes(nil, 11, fBytes(nil, 1, []byte("nginx\xff.service")))),
 

@@ -48,11 +48,11 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 	pdWith := func(mut func(p *wardenv1.PolicyDecision), more ...[]byte) []byte {
 		p := proto.Clone(validBody().PolicyDecision).(*wardenv1.PolicyDecision)
 		mut(p)
-		return fBytes(app(noPD), 9, app(marshalDet(t, p), more...))
+		return withField(t, noPD, fBytes(nil, 9, withFields(t, marshalDet(t, p), more...)))
 	}
 	keepPD := func(*wardenv1.PolicyDecision) {}
 	withReq := func(member protowire.Number, req []byte) []byte {
-		return fBytes(app(noParams), 8, fBytes(nil, member, req))
+		return withField(t, noParams, fBytes(nil, 8, fBytes(nil, member, req)))
 	}
 	fileDelete := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1), MinAgeDays: 7, MaxFiles: 10, MaxBytes: 1 << 30})
 	fileDeleteNoAge := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1), MaxFiles: 10, MaxBytes: 1 << 30})
@@ -73,11 +73,11 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 		leftOutCheck      int
 	}{
 		// depth 0
-		{"format_version_0_uint32", fVarint(app(noFV), 1, 0), noFV, CodeUnsupportedFormatVersion, 6},
+		{"format_version_0_uint32", withField(t, noFV, fVarint(nil, 1, 0)), noFV, CodeUnsupportedFormatVersion, 6},
 		{"format_version_0_first", cat(fVarint(nil, 1, 0), noFV), noFV, CodeUnsupportedFormatVersion, 6},
-		{"created_at_0_int64", fVarint(app(noCreated), 10, 0), noCreated, CodeBodyInvalid, 5},
-		{"action_id_empty_string", fBytes(app(noAction), 2, nil), noAction, CodeBodyInvalid, 5},
-		{"playbook_digest_empty_bytes", fBytes(app(noDigest), 6, nil), noDigest, CodeBodyInvalid, 5},
+		{"created_at_0_int64", withField(t, noCreated, fVarint(nil, 10, 0)), noCreated, CodeBodyInvalid, 5},
+		{"action_id_empty_string", withField(t, noAction, fBytes(nil, 2, nil)), noAction, CodeBodyInvalid, 5},
+		{"playbook_digest_empty_bytes", withField(t, noDigest, fBytes(nil, 6, nil)), noDigest, CodeBodyInvalid, 5},
 		{"idempotency_key_empty_string", fBytes(app(noIdem), 12, nil), noIdem, CodeBodyInvalid, 5},
 		// depth 1: policy_decision
 		{"approval_id_empty_string", pdWith(keepPD, fBytes(nil, 4, nil)), pdWith(keepPD), accepted, 0},
@@ -88,9 +88,9 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 		// depth 2: inside params (the verifier does not validate member
 		// contents, so every left-out form here is accepted)
 		{"dry_run_false_bool", withReq(17, fVarint(app(fileDelete), 5, 0)), withReq(17, fileDelete), accepted, 0},
-		{"min_age_days_0_uint32", withReq(17, fVarint(app(fileDeleteNoAge), 2, 0)), withReq(17, fileDeleteNoAge), accepted, 0},
-		{"db_server_started_at_0_int64", withReq(22, fVarint(app(pg), 5, 0)), withReq(22, pg), accepted, 0},
-		{"db_engine_0_enum", withReq(22, fVarint(app(pgNoEngine), 1, 0)), withReq(22, pgNoEngine), accepted, 0},
+		{"min_age_days_0_uint32", withReq(17, withField(t, fileDeleteNoAge, fVarint(nil, 2, 0))), withReq(17, fileDeleteNoAge), accepted, 0},
+		{"db_server_started_at_0_int64", withReq(22, withField(t, pg, fVarint(nil, 5, 0))), withReq(22, pg), accepted, 0},
+		{"db_engine_0_enum", withReq(22, withField(t, pgNoEngine, fVarint(nil, 1, 0))), withReq(22, pgNoEngine), accepted, 0},
 		{"db_instance_empty_string", withReq(22, fBytes(nil, 2, nil)), withReq(22, nil), accepted, 0},
 		{"unit_empty_string", withReq(11, fBytes(nil, 1, nil)), withReq(11, nil), accepted, 0},
 	}
@@ -154,7 +154,7 @@ func TestCheck5ExplicitDefaultEveryField(t *testing.T) {
 	for _, fd := range scalarFields(bodyDescriptor) {
 		body := canonBody()
 		body.ProtoReflect().Clear(fd)
-		raw := cat(marshalDet(t, body), defaultRecord(fd))
+		raw := withField(t, marshalDet(t, body), defaultRecord(fd))
 		checked++
 		t.Run("body."+string(fd.Name()), func(t *testing.T) { expectBodyReject(t, v, raw, CodeBodyInvalid, 5) })
 	}
@@ -164,7 +164,7 @@ func TestCheck5ExplicitDefaultEveryField(t *testing.T) {
 	for _, fd := range scalarFields(pdMD) {
 		pd := proto.Clone(canonBody().PolicyDecision).(*wardenv1.PolicyDecision)
 		pd.ProtoReflect().Clear(fd)
-		raw := fBytes(append([]byte(nil), noPD...), 9, cat(marshalDet(t, pd), defaultRecord(fd)))
+		raw := withField(t, noPD, fBytes(nil, 9, withField(t, marshalDet(t, pd), defaultRecord(fd))))
 		checked++
 		t.Run("policy_decision."+string(fd.Name()), func(t *testing.T) { expectBodyReject(t, v, raw, CodeBodyInvalid, 5) })
 	}
@@ -174,7 +174,7 @@ func TestCheck5ExplicitDefaultEveryField(t *testing.T) {
 	for i := 0; i < oneof.Fields().Len(); i++ {
 		member := oneof.Fields().Get(i)
 		for _, fd := range scalarFields(member.Message()) {
-			raw := fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, member.Number(), defaultRecord(fd)))
+			raw := withField(t, noParams, fBytes(nil, 8, fBytes(nil, member.Number(), defaultRecord(fd))))
 			checked++
 			t.Run(string(member.Name())+"."+string(fd.Name()), func(t *testing.T) { expectBodyReject(t, v, raw, CodeBodyInvalid, 5) })
 		}

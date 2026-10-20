@@ -1,0 +1,49 @@
+// Test-only messages that break the contract's field-order rule on purpose
+// (action-envelope R13 (k), OQ28 option (a)). They are never part of the
+// contract and never imported by a binary; only tests use them.
+//
+// Regenerate from the repository root with the pinned tools listed in
+// api/proto/warden/v1/README.md:
+//
+//   protoc -I internal/testproto \
+//     --go_out=. --go_opt=module=github.com/nofal82/warden-agent \
+//     internal/testproto/ordertest/ordertest.proto
+
+syntax = "proto3";
+
+package wardentest.ordertest;
+
+option go_package = "github.com/nofal82/warden-agent/internal/testproto/ordertest";
+
+// In a message with a oneof, protobuf-go v1.36.12 writes the fields outside
+// any oneof first, by number, then each oneof in declaration order
+// (internal/impl/codec_message.go, "marshal oneofs last"), with or without
+// Deterministic. TestOutOfOrderMarshalRejected pins this.
+
+// SplitOneof has a field whose number lies between two members of a oneof.
+// With first and second set it is written as field 2, then field 1.
+message SplitOneof {
+  oneof choice {
+    string first = 1;
+    string third = 3;
+  }
+  string second = 2;
+}
+
+// DescendingDeclaration declares its fields in descending number order.
+message DescendingDeclaration {
+  string second = 2;
+  string first = 1;
+}
+
+// OneofBelowField is declared in ascending order, yet with first and third
+// set it is written as field 3, then field 1. The contract's field-order
+// check rejects it: a message with a oneof holds nothing but that oneof
+// (OQ28 option (a)).
+message OneofBelowField {
+  oneof choice {
+    string first = 1;
+    string second = 2;
+  }
+  string third = 3;
+}

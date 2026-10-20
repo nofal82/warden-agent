@@ -8,6 +8,7 @@ package envelope
 // outer SignedEnvelope with an overlong tag or length is MALFORMED at check 2.
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -77,7 +78,7 @@ func TestCheck5NonCanonicalInEveryParamsMember(t *testing.T) {
 			}
 			wrapParams := func(req []byte) []byte {
 				noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
-				return fBytes(noParams, 8, fBytes(nil, member.Number(), req))
+				return withField(t, noParams, fBytes(nil, 8, fBytes(nil, member.Number(), req)))
 			}
 			name := string(member.Name()) + "." + string(fd.Name())
 			t.Run(name+"/minimal_accepted", func(t *testing.T) {
@@ -117,10 +118,14 @@ func TestCheck5OutOfRangeValues(t *testing.T) {
 		}
 		return out
 	}
-	withFV := func(raw []byte) []byte { return app(noFV, []byte{0x08}, raw) }
-	withLevel := func(raw []byte) []byte { return fBytes(app(noPD), 9, app(pdNoLevel, []byte{0x10}, raw)) }
+	// Records go at their ascending position, so each case breaks only the
+	// rule under test, not R13 (k).
+	withFV := func(raw []byte) []byte { return withField(t, noFV, app([]byte{0x08}, raw)) }
+	withLevel := func(raw []byte) []byte {
+		return withField(t, noPD, fBytes(nil, 9, withField(t, pdNoLevel, app([]byte{0x10}, raw))))
+	}
 	withReq := func(member protowire.Number, req []byte) []byte {
-		return fBytes(app(noParams), 8, fBytes(nil, member, req))
+		return withField(t, noParams, fBytes(nil, 8, fBytes(nil, member, req)))
 	}
 	fileDelete := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{
 		Root: wardenv1.FileDeleteRoot(1), MinAgeDays: 7, MaxFiles: 10, MaxBytes: 1 << 30,
@@ -138,7 +143,7 @@ func TestCheck5OutOfRangeValues(t *testing.T) {
 		"format_version_2^63+1":                withFV(vi(1<<63 + 1)),
 		"format_version_1_overlong":            withFV([]byte{0x81, 0x00}),
 		"format_version_1_10_bytes":            withFV(overlongN(1, 10)),
-		"format_version_tag_88_00":             app(noFV, []byte{0x88, 0x00, 0x01}),
+		"format_version_tag_88_00":             withField(t, noFV, []byte{0x88, 0x00, 0x01}),
 
 		"autonomy_2^32+4_truncates_to_L3": withLevel(vi(1<<32 + 4)),
 		"autonomy_2^32+1_truncates_to_L0": withLevel(vi(1<<32 + 1)),
@@ -151,7 +156,7 @@ func TestCheck5OutOfRangeValues(t *testing.T) {
 		"autonomy_4_10_bytes":             withLevel(overlongN(4, 10)),
 
 		"created_at_overlong":    mutateAt(t, marshalDet(t, validBody()), []protowire.Number{10}, mutValue),
-		"created_at_10_bytes":    app(marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 })), []byte{0x50}, overlongN(uint64(fakeNow-10), 10)),
+		"created_at_10_bytes":    withField(t, marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 })), app([]byte{0x50}, overlongN(uint64(fakeNow-10), 10))),
 		"action_id_len_overlong": mutateAt(t, marshalDet(t, validBody()), []protowire.Number{2}, mutValue),
 
 		"dry_run_2":           withReq(17, fVarint(app(fileDelete), 5, 2)),
@@ -167,11 +172,11 @@ func TestCheck5OutOfRangeValues(t *testing.T) {
 		"keep_days_2^32+7":    withReq(18, fVarint(nil, 1, 1<<32+7)),
 		"cpu_quota_2^32+50":   withReq(15, fVarint(nil, 2, 1<<32+50)),
 		"db_engine_2^32+1":    withReq(22, fVarint(nil, 1, 1<<32+1)),
-		"db_ids_elem_overlong": withReq(22, fBytes(app(dbTerm), 3,
-			app(protowire.AppendVarint(nil, 7), overlong(300)))),
-		"db_ids_len_overlong": withReq(22, app(dbTerm, []byte{0x1a}, overlong(2), protowire.AppendVarint(nil, 7), protowire.AppendVarint(nil, 8))),
-		"db_starts_elem_overlong": withReq(22, fBytes(app(dbTerm), 4,
-			app(protowire.AppendVarint(nil, math.MaxUint64), overlong(1_700_000_000)))),
+		"db_ids_elem_overlong": withReq(22, withField(t, dbTerm, fBytes(nil, 3,
+			app(protowire.AppendVarint(nil, 7), overlong(300))))),
+		"db_ids_len_overlong": withReq(22, withField(t, dbTerm, app([]byte{0x1a}, overlong(2), protowire.AppendVarint(nil, 7), protowire.AppendVarint(nil, 8)))),
+		"db_starts_elem_overlong": withReq(22, withField(t, dbTerm, fBytes(nil, 4,
+			app(protowire.AppendVarint(nil, math.MaxUint64), overlong(1_700_000_000))))),
 		"db_min_idle_2^32+600": withReq(22, fVarint(nil, 7, 1<<32+600)),
 	}
 	for name, body := range cases {
@@ -229,10 +234,10 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 	// BODY_INVALID at check 5. dry_run=false left out is accepted.
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
 	head := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{Root: wardenv1.FileDeleteRoot(1)})
-	if res, err := v.Verify(sealBytes(keyA, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, head)))); err != nil || res == nil {
+	if res, err := v.Verify(sealBytes(keyA, withField(t, noParams, fBytes(nil, 8, fBytes(nil, 17, head))))); err != nil || res == nil {
 		t.Fatalf("dry_run=false left out rejected: %v", err)
 	}
-	expectBodyReject(t, v, fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 17, fVarint(append([]byte(nil), head...), 5, 0))), CodeBodyInvalid, 5)
+	expectBodyReject(t, v, withField(t, noParams, fBytes(nil, 8, fBytes(nil, 17, fVarint(append([]byte(nil), head...), 5, 0)))), CodeBodyInvalid, 5)
 }
 
 // R13 (i): a correctly signed body whose DbTerminateSessionRequest carries
@@ -251,11 +256,17 @@ func TestCanonicalValidValuesAccepted(t *testing.T) {
 func TestCheck5UnpackedRepeated(t *testing.T) {
 	v := defaultVerifier(t)
 	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
-	withReq := func(req []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, fBytes(nil, 22, req)) }
+	withReq := func(req []byte) []byte { return withField(t, noParams, fBytes(nil, 8, fBytes(nil, 22, req))) }
 	head := marshalDet(t, &wardenv1.DbTerminateSessionRequest{
 		Engine: wardenv1.Engine(1), Instance: "mysql.service", ServerStartedAt: 1_700_000_000, MinIdleSeconds: 600,
 	})
-	app := func(more ...[]byte) []byte { return cat(append([][]byte{append([]byte(nil), head...)}, more...)...) }
+	// app puts the records under test (fields 3 and 4) between head's
+	// fields 1-2 and 5-7, so only the rule under test is broken, not
+	// R13 (k).
+	headLo := marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service"})
+	headStarted := fVarint(nil, 5, 1_700_000_000)
+	headIdle := fVarint(nil, 7, 600)
+	app := func(more ...[]byte) []byte { return cat(headLo, cat(more...), headStarted, headIdle) }
 	packed := func(num protowire.Number, vals ...uint64) []byte {
 		var p []byte
 		for _, x := range vals {
@@ -269,7 +280,7 @@ func TestCheck5UnpackedRepeated(t *testing.T) {
 	accepted := map[string][]byte{
 		"ids_and_starts_packed":       app(packed(3, 101, 202), packed(4, 0, 0)),
 		"starts_packed_negative":      app(packed(3, 101), packed(4, minus1)),
-		"digests_two_records":         app(packed(3, 101, 202), packed(4, 0, 0), digests),
+		"digests_two_records":         cat(headLo, packed(3, 101, 202), packed(4, 0, 0), headStarted, digests, headIdle),
 		"deterministic_marshal_order": marshalDet(t, &wardenv1.DbTerminateSessionRequest{Engine: wardenv1.Engine(1), Instance: "mysql.service", SessionIds: []uint64{101, 202}, SessionStartedAt: []int64{0, 0}, ServerStartedAt: 1_700_000_000, SessionOwnerDigests: [][]byte{digest("owner-1"), digest("owner-2")}, MinIdleSeconds: 600}),
 		"three_ids_one_record_each":   app(packed(3, 101, 202, 303), packed(4, 0, 0, 0)),
 	}
@@ -358,4 +369,64 @@ func TestNonCanonicalOversizedIsCheck1(t *testing.T) {
 		fBytes(nil, 2, body), fBytes(nil, 3, signBody(keyA, body)))
 	raw = fBytes(raw, 4, make([]byte, MaxEnvelopeBytes))
 	expectReject(t, v, raw, CodeOversized, 1)
+}
+
+// R13 (k) and (l) through the verifier, in the outer SignedEnvelope and at
+// every body depth (AC8): fields out of order, a field repeated after a
+// higher one, and a 10-byte varint whose last byte is above 0x01 are
+// MALFORMED at check 2 outside the body (before any signature check or
+// decode) and BODY_INVALID at check 5 inside it.
+func TestCheck2And5OrderAndTenthByte(t *testing.T) {
+	v := defaultVerifier(t)
+	body := marshalDet(t, validBody())
+	kid, sig := keyIDBytes(keyA), signBody(keyA, body)
+	k1, b2, s3 := fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, sig)
+	tenBad := append(bytes.Repeat([]byte{0xff}, 9), 0x02)
+
+	outer := map[string][]byte{
+		"body_before_key_id":      cat(b2, k1, s3),
+		"signature_first":         cat(s3, k1, b2),
+		"key_id_again_after_body": cat(k1, b2, k1, s3),
+		"key_id_len_10_bytes_02":  cat([]byte{0x0a}, tenBad, kid, b2, s3),
+		"tag_10_bytes_02":         cat(k1, b2, tenBad, sig),
+	}
+	for name, raw := range outer {
+		t.Run("outer/"+name, func(t *testing.T) {
+			d0, s0 := counters()
+			expectReject(t, v, raw, CodeMalformed, 2)
+			if d1, s1 := counters(); d1 != d0 || s1 != s0 {
+				t.Fatalf("outer envelope breaking R13 (k)/(l) reached signature verify or body decode")
+			}
+		})
+	}
+
+	noPD := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision = nil }))
+	noParams := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = nil }))
+	noCreated := marshalDet(t, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 0 }))
+	pd := validBody().PolicyDecision
+	pdID, pdLevel, pdDigest := fBytes(nil, 1, []byte(pd.GetDecisionId())), fVarint(nil, 2, i64(int64(pd.GetAutonomyLevel()))), fBytes(nil, 3, pd.GetPolicyBundleDigest())
+	withPD := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
+	withCPU := func(req []byte) []byte { return withField(t, noParams, fBytes(nil, 8, fBytes(nil, 15, req))) }
+	unit, quota := fBytes(nil, 1, []byte("nginx.service")), fVarint(nil, 2, 50)
+
+	if res, err := v.Verify(sealBytes(keyA, withPD(cat(pdID, pdLevel, pdDigest)))); err != nil || res == nil {
+		t.Fatalf("ascending policy_decision rejected: %v", err)
+	}
+	if res, err := v.Verify(sealBytes(keyA, withCPU(cat(unit, quota)))); err != nil || res == nil {
+		t.Fatalf("ascending request rejected: %v", err)
+	}
+	inner := map[string][]byte{
+		"pd_descending":          withPD(cat(pdLevel, pdID, pdDigest)),
+		"pd_id_again_after_2":    withPD(cat(pdID, pdLevel, pdID, pdDigest)),
+		"request_descending":     withCPU(cat(quota, unit)),
+		"created_at_10_bytes_02": withField(t, noCreated, cat([]byte{0x50}, tenBad)),
+		"autonomy_10_bytes_7f":   withPD(cat(pdID, []byte{0x10}, bytes.Repeat([]byte{0xff}, 9), []byte{0x7f}, pdDigest)),
+		"request_len_10_bytes_02": withField(t, noParams, fBytes(nil, 8,
+			cat([]byte{0x7a}, tenBad, unit))),
+	}
+	for name, b := range inner {
+		t.Run("body/"+name, func(t *testing.T) {
+			expectBodyReject(t, v, b, CodeBodyInvalid, 5)
+		})
+	}
 }

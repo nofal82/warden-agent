@@ -1,6 +1,7 @@
 package wirescan_test
 
 import (
+	"bytes"
 	"errors"
 	"math"
 	"math/bits"
@@ -153,13 +154,14 @@ func FuzzCheck(f *testing.F) {
 	seeds = append(seeds, unpackedSeeds(f)...)
 	seeds = append(seeds, packedRecordSeeds(f)...)
 	seeds = append(seeds, explicitDefaultSeeds(f)...)
+	seeds = append(seeds, orderSeeds(f)...)
 	for _, s := range seeds {
 		f.Add(s)
 	}
 	mds := []protoreflect.MessageDescriptor{bodyMD, outerMD}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		for _, md := range mds {
-			checkErr := wirescan.Check(b, md)
+			checkErr := wirescan.CheckForTest(b, md)
 			if checkErr != nil && countSentinels(checkErr) != 1 {
 				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
 			}
@@ -202,14 +204,14 @@ func FuzzCheck(f *testing.F) {
 			if err != nil {
 				t.Fatalf("re-marshal: %v", err)
 			}
-			// Oracle that shares no predicate with the scanner: field order
-			// is the only freedom R13 leaves, so an accepted input has
-			// exactly the length of Go's deterministic encoding. Any other
-			// second encoding of the same value shows up as a length change.
-			if len(re) != len(b) {
-				t.Fatalf("accepted input is %d bytes, its deterministic encoding %d: %x", len(b), len(re), b)
+			// Oracle that shares no predicate with the scanner: with R13 (k)
+			// (field order, 2026-10-19) the scanner accepts exactly Go's
+			// deterministic encoding, byte for byte. Any second encoding of
+			// the same value, a reordering included, shows up here.
+			if !bytes.Equal(re, b) {
+				t.Fatalf("accepted input is not its deterministic encoding:\n in  %x\n out %x", b, re)
 			}
-			if err := wirescan.Check(re, md); err != nil {
+			if err := wirescan.CheckForTest(re, md); err != nil {
 				t.Fatalf("re-marshalled message fails Check: %v", err)
 			}
 			m2 := proto.Clone(m)
@@ -280,6 +282,7 @@ func varintKind(k protoreflect.Kind) bool {
 // it is only meaningful as "Check accepted => canonicalOK".
 func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 	packedSeen := map[protowire.Number]bool{}
+	var prevNum protowire.Number
 	for len(b) > 0 {
 		tag, n := readVarint(b)
 		if n < 0 || n != minimalLen(tag) {
@@ -292,6 +295,13 @@ func canonicalOK(b []byte, md protoreflect.MessageDescriptor) bool {
 			return false
 		}
 		typ := protowire.Type(tag & 7)
+		// R13 (k): ascending field numbers; an equal number only for the
+		// next record of a repeated string, bytes or message field.
+		sharesPosition := fd.IsList() && nativeWireType(fd) == protowire.BytesType
+		if num < prevNum || (num == prevNum && !sharesPosition) {
+			return false
+		}
+		prevNum = num
 		if fd.IsList() && typ != protowire.BytesType {
 			// An unpacked element of a repeated numeric or enum field.
 			return false
@@ -541,6 +551,9 @@ func FuzzCanonical(f *testing.F) {
 	for _, s := range explicitDefaultSeeds(f) {
 		f.Add(s)
 	}
+	for _, s := range orderSeeds(f) {
+		f.Add(s)
+	}
 	f.Add(marshalDet(f, validBody()))
 	f.Add(fVarint(nil, 1, 1<<31))
 	f.Add([]byte{0x08, 0xff, 0xff, 0xff, 0xff, 0x0f})
@@ -559,7 +572,7 @@ func FuzzCanonical(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		for _, md := range mds {
-			checkErr := wirescan.Check(b, md)
+			checkErr := wirescan.CheckForTest(b, md)
 			if checkErr != nil && countSentinels(checkErr) != 1 {
 				t.Fatalf("Check error %v wraps %d sentinels, want 1", checkErr, countSentinels(checkErr))
 			}

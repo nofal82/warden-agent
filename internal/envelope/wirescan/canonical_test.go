@@ -137,22 +137,24 @@ func runCanonCases(t *testing.T, cases []scanCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assertSentinel(t, wirescan.Check(c.b, c.md), c.want)
+			assertSentinel(t, wirescan.CheckForTest(c.b, c.md), c.want)
 			assertSentinel(t, wirescan.Unmarshal(c.b, newMessage(c.md)), c.want)
 		})
 	}
 }
 
-// contractMessages is every message type in the warden contract.
+// contractMessages is every message type in the warden contract: every
+// registered file of the contract's package, so a new .proto file is
+// covered without a test change (AC8a).
 func contractMessages() []protoreflect.MessageDescriptor {
+	pkg := wardenv1.File_warden_v1_envelope_proto.Package()
 	var mds []protoreflect.MessageDescriptor
-	for _, file := range []protoreflect.FileDescriptor{
-		wardenv1.File_warden_v1_envelope_proto, wardenv1.File_warden_v1_typed_request_proto,
-	} {
+	protoregistry.GlobalFiles.RangeFilesByPackage(pkg, func(file protoreflect.FileDescriptor) bool {
 		for i := 0; i < file.Messages().Len(); i++ {
 			mds = append(mds, file.Messages().Get(i))
 		}
-	}
+		return true
+	})
 	return mds
 }
 
@@ -386,17 +388,21 @@ func TestCanonicalBodyCases(t *testing.T) {
 	app := func(b []byte, more ...[]byte) []byte {
 		return cat(append([][]byte{append([]byte(nil), b...)}, more...)...)
 	}
-	withParams := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
-	withPD := func(p []byte) []byte { return fBytes(append([]byte(nil), noPD...), 9, p) }
-	withLevel := func(v uint64) []byte { return withPD(fVarint(app(pdNoLevel), 2, v)) }
+	// Insert at the field's ascending position so only the rule under
+	// test is broken (R13 (k)).
+	withParams := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	withPD := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
+	withLevel := func(v uint64) []byte { return withPD(withField(t, pdNoLevel, fVarint(nil, 2, v))) }
 	fileDelete := marshalDet(t, &wardenv1.FileDeleteByAgeRequest{
 		Root: wardenv1.FileDeleteRoot(1), MinAgeDays: 7, MaxFiles: 10, MaxBytes: 1 << 30,
 	})
-	withDryRun := func(v uint64) []byte { return withParams(fBytes(nil, 17, fVarint(app(fileDelete), 5, v))) }
+	withDryRun := func(v uint64) []byte {
+		return withParams(fBytes(nil, 17, withField(t, fileDelete, fVarint(nil, 5, v))))
+	}
 
 	runCanonCases(t, []scanCase{
 		{"valid", bodyMD, base, nil},
-		{"format_version_maxuint32", bodyMD, fVarint(app(noFV), 1, math.MaxUint32), nil},
+		{"format_version_maxuint32", bodyMD, withField(t, noFV, fVarint(nil, 1, math.MaxUint32)), nil},
 		{"autonomy_minus1_ten_bytes", bodyMD, withLevel(math.MaxUint64), nil},
 		{"autonomy_minInt32_ten_bytes", bodyMD, withLevel(i64(math.MinInt32)), nil},
 		{"autonomy_maxInt32", bodyMD, withLevel(math.MaxInt32), nil},
@@ -503,7 +509,7 @@ func TestCanonicalOuterCases(t *testing.T) {
 	// The outer scan treats body as opaque bytes: a non-canonical encoding
 	// inside body is for the body scan (check 5), not the outer one.
 	inner := []byte{0x08, 0x81, 0x00}
-	assertSentinel(t, wirescan.Check(cat(fBytes(nil, 1, kid), fBytes(nil, 2, inner), fBytes(nil, 3, sig)), outerMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(cat(fBytes(nil, 1, kid), fBytes(nil, 2, inner), fBytes(nil, 3, sig)), outerMD), nil)
 }
 
 // Repeated 64-bit fields: only minimality applies, inside and outside packed
@@ -663,18 +669,23 @@ func TestCanonicalValidExtremesKinds(t *testing.T) {
 	m.Mutable(kindsMD.Fields().ByName("children")).List().Append(protoreflect.ValueOfMessage(proto.Clone(child).(*dynamicpb.Message)))
 
 	b := marshalDet(t, m)
-	assertSentinel(t, wirescan.Check(b, kindsMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(b, kindsMD), nil)
 	out := dynamicpb.NewMessage(kindsMD)
 	assertSentinel(t, wirescan.Unmarshal(b, out), nil)
 	if !proto.Equal(out, m) {
 		t.Fatalf("round trip differs")
 	}
-	// Non-deterministic marshal of the same message is canonical too.
+	// A non-deterministic marshal may order fields differently; R13 (k)
+	// accepts it only when it is byte for byte the deterministic encoding.
 	nb, err := proto.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSentinel(t, wirescan.Check(nb, kindsMD), nil)
+	if bytes.Equal(nb, b) {
+		assertSentinel(t, wirescan.CheckForTest(nb, kindsMD), nil)
+	} else {
+		assertSentinel(t, wirescan.CheckForTest(nb, kindsMD), wirescan.ErrNonCanonical)
+	}
 }
 
 // Check order inside one field: tag minimality, group, known field,

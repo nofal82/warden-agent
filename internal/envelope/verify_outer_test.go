@@ -480,9 +480,16 @@ func TestAC3ReorderedBody(t *testing.T) {
 	if err := proto.Unmarshal(re, &decoded); err != nil || !proto.Equal(&decoded, body) {
 		t.Fatalf("reordered encoding is not the same message: %v", err)
 	}
-	// Original signature over the reordered bytes: rejected.
-	expectReject(t, v, wrap(keyIDBytes(keyA), re, signBody(keyA, orig)), CodeBadSignature, 4)
-	// The verifier signs-what-it-receives: the reordered bytes signed by the
-	// trusted key are accepted (R4, OQ12: no canonical re-encoding check).
-	expectAccept(t, v, sealBytes(keyA, re), body, keyA)
+	// The signature covers the received bytes only (R4), so the original
+	// signature does not cover the reordered ones.
+	t.Run("original_signature_BAD_SIGNATURE", func(t *testing.T) {
+		expectReject(t, v, wrap(keyIDBytes(keyA), re, signBody(keyA, orig)), CodeBadSignature, 4)
+	})
+	// The verifier still never re-encodes the body (R4, OQ12), but the
+	// strict scan accepts only ascending field order (R13 (k), 2026-10-19),
+	// so the reordered bytes are BODY_INVALID even when the trusted key
+	// signed them.
+	t.Run("resigned_reordered_body_BODY_INVALID", func(t *testing.T) {
+		expectBodyReject(t, v, re, CodeBodyInvalid, 5)
+	})
 }

@@ -19,6 +19,20 @@ Envelope and typed-request field numbers are part of the signed wire format.
 Never renumber or reuse one. Remove a field only by reserving its number and
 name (as `TypedRequest` does for P20).
 
+## Fields are declared in ascending number order
+
+Within every message, declare fields in strictly ascending number order. A
+message that contains a `oneof` contains nothing but that oneof: no other
+field, no proto3 `optional` field, no second oneof (action-envelope R13 (k),
+OQ28 option (a)). `TypedRequest` is the example. `TestContractFieldOrder`
+enforces both rules.
+
+The reason: in a message with a oneof, protobuf-go writes the fields outside
+any oneof first, then the oneof, even with
+`proto.MarshalOptions{Deterministic: true}`. A oneof member numbered below
+another field would come out of order, and the strict scanner would reject
+every envelope that used it.
+
 ## Regenerating
 
 Pinned tools (exact versions; the generated headers record them):

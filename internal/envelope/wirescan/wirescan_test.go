@@ -43,14 +43,7 @@ func validBody() *wardenv1.EnvelopeBody {
 // Every message type in the contract, fully populated and deterministically
 // marshalled, passes Check and Unmarshal.
 func TestValidEveryMessageType(t *testing.T) {
-	var mds []protoreflect.MessageDescriptor
-	for _, file := range []protoreflect.FileDescriptor{
-		wardenv1.File_warden_v1_envelope_proto, wardenv1.File_warden_v1_typed_request_proto,
-	} {
-		for i := 0; i < file.Messages().Len(); i++ {
-			mds = append(mds, file.Messages().Get(i))
-		}
-	}
+	mds := contractMessages()
 	if len(mds) < 25 {
 		t.Fatalf("found only %d message types", len(mds))
 	}
@@ -63,15 +56,15 @@ func TestValidEveryMessageType(t *testing.T) {
 			m := mt.New()
 			populate(m)
 			b := marshalDet(t, m.Interface())
-			assertSentinel(t, wirescan.Check(b, md), nil)
+			assertSentinel(t, wirescan.CheckForTest(b, md), nil)
 			out := mt.New().Interface()
 			assertSentinel(t, wirescan.Unmarshal(b, out), nil)
 			if !proto.Equal(out, m.Interface()) {
 				t.Fatalf("Unmarshal result differs")
 			}
 			// Empty encoding is a valid (empty) message.
-			assertSentinel(t, wirescan.Check(nil, md), nil)
-			assertSentinel(t, wirescan.Check([]byte{}, md), nil)
+			assertSentinel(t, wirescan.CheckForTest(nil, md), nil)
+			assertSentinel(t, wirescan.CheckForTest([]byte{}, md), nil)
 		})
 	}
 }
@@ -89,7 +82,7 @@ func TestValidEveryParamsMember(t *testing.T) {
 			body := validBody()
 			body.Params = tr.Interface().(*wardenv1.TypedRequest)
 			b := marshalDet(t, body)
-			assertSentinel(t, wirescan.Check(b, bodyMD), nil)
+			assertSentinel(t, wirescan.CheckForTest(b, bodyMD), nil)
 			var out wardenv1.EnvelopeBody
 			assertSentinel(t, wirescan.Unmarshal(b, &out), nil)
 			if !proto.Equal(&out, body) {
@@ -110,7 +103,7 @@ func runScanCases(t *testing.T, cases []scanCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assertSentinel(t, wirescan.Check(c.b, c.md), c.want)
+			assertSentinel(t, wirescan.CheckForTest(c.b, c.md), c.want)
 			mt, err := protoregistry.GlobalTypes.FindMessageByName(c.md.FullName())
 			if err != nil {
 				t.Fatal(err)
@@ -131,8 +124,10 @@ func TestBodyCases(t *testing.T) {
 	app := func(b []byte, more ...[]byte) []byte {
 		return cat(append([][]byte{append([]byte(nil), b...)}, more...)...)
 	}
-	withParams := func(tr []byte) []byte { return fBytes(append([]byte(nil), noParams...), 8, tr) }
-	withPD := func(p []byte) []byte { return fBytes(append([]byte(nil), noPD...), 9, p) }
+	// Insert at the field's ascending position so only the rule under
+	// test is broken (R13 (k)).
+	withParams := func(tr []byte) []byte { return withField(t, noParams, fBytes(nil, 8, tr)) }
+	withPD := func(p []byte) []byte { return withField(t, noPD, fBytes(nil, 9, p)) }
 
 	// Field number beyond 2^29-1, encoded as a raw tag varint.
 	tooBig := protowire.AppendVarint(nil, uint64(protowire.MaxValidNumber+1)<<3)
@@ -142,7 +137,7 @@ func TestBodyCases(t *testing.T) {
 
 	runScanCases(t, []scanCase{
 		{"valid", bodyMD, base, nil},
-		{"valid_params_last_out_of_order", bodyMD, withParams(fBytes(nil, 11, restart)), nil},
+		{"valid_params_rebuilt", bodyMD, withParams(fBytes(nil, 11, restart)), nil},
 		{"valid_empty_pd", bodyMD, withPD(nil), nil},
 		{"valid_field_less_member", bodyMD, withParams(fBytes(nil, 7, nil)), nil},
 
@@ -231,7 +226,8 @@ func TestOuterCases(t *testing.T) {
 	good := cat(fBytes(nil, 1, kid), fBytes(nil, 2, body), fBytes(nil, 3, sig))
 	runScanCases(t, []scanCase{
 		{"valid", outerMD, good, nil},
-		{"valid_reordered", outerMD, cat(fBytes(nil, 3, sig), fBytes(nil, 1, kid), fBytes(nil, 2, body)), nil},
+		// R13 (k): field order is part of the canonical encoding.
+		{"reordered_k", outerMD, cat(fBytes(nil, 3, sig), fBytes(nil, 1, kid), fBytes(nil, 2, body)), wirescan.ErrNonCanonical},
 		// The outer scan does not check R12 lengths (check 2 does that
 		// after the scan), so short non-empty fields pass it.
 		{"valid_short_fields", outerMD, cat(fBytes(nil, 1, []byte{1}), fBytes(nil, 2, []byte{1}), fBytes(nil, 3, []byte{1})), nil},
@@ -262,7 +258,7 @@ func TestOuterCases(t *testing.T) {
 	// The outer scanner must not descend into body (it is opaque bytes):
 	// a body that is not a valid EnvelopeBody still passes the outer scan.
 	opaque := cat(fBytes(nil, 1, kid), fBytes(nil, 2, []byte{0xff, 0xff, 0x0c, 0x00}), fBytes(nil, 3, sig))
-	assertSentinel(t, wirescan.Check(opaque, outerMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(opaque, outerMD), nil)
 }
 
 func TestRepeatedFields(t *testing.T) {
@@ -397,15 +393,15 @@ func TestTooDeep(t *testing.T) {
 		}
 		return v
 	}
-	assertSentinel(t, wirescan.Check(nest(1), valueMD), nil)
-	assertSentinel(t, wirescan.Check(nest(5000), valueMD), wirescan.ErrTooDeep)
+	assertSentinel(t, wirescan.CheckForTest(nest(1), valueMD), nil)
+	assertSentinel(t, wirescan.CheckForTest(nest(5000), valueMD), wirescan.ErrTooDeep)
 	assertSentinel(t, wirescan.Unmarshal(nest(5000), &structpb.Value{}), wirescan.ErrTooDeep)
 	// Deep group nesting is a group error, not a stack overflow.
 	deep := []byte{}
 	for i := 0; i < 100000; i++ {
 		deep = protowire.AppendTag(deep, 1, protowire.StartGroupType)
 	}
-	if err := wirescan.Check(deep, bodyMD); err == nil {
+	if err := wirescan.CheckForTest(deep, bodyMD); err == nil {
 		t.Fatalf("deep group nesting accepted")
 	}
 }
@@ -428,7 +424,7 @@ func TestUnmarshalIntoEveryRequestType(t *testing.T) {
 	od := paramsMD.Oneofs().ByName("request")
 	for i := 0; i < od.Fields().Len(); i++ {
 		md := od.Fields().Get(i).Message()
-		assertSentinel(t, wirescan.Check(fVarint(nil, 99, 1), md), wirescan.ErrUnknownField)
-		assertSentinel(t, wirescan.Check(fGroup(nil, 1, nil), md), wirescan.ErrGroup)
+		assertSentinel(t, wirescan.CheckForTest(fVarint(nil, 99, 1), md), wirescan.ErrUnknownField)
+		assertSentinel(t, wirescan.CheckForTest(fGroup(nil, 1, nil), md), wirescan.ErrGroup)
 	}
 }

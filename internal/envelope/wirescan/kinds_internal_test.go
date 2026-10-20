@@ -1,6 +1,8 @@
 package wirescan
 
 import (
+	"bytes"
+	"errors"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -8,6 +10,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 )
 
 // Warden's contract uses only varint and length-delimited kinds. The
@@ -45,7 +49,7 @@ func TestFixedWidthKinds(t *testing.T) {
 	}
 	// FloatValue.value as varint: wrong wire type.
 	b := protowire.AppendVarint(protowire.AppendTag(nil, 1, protowire.VarintType), 1)
-	if err := Check(b, wrapperspb.Float(0).ProtoReflect().Descriptor()); err == nil {
+	if err := check(b, wrapperspb.Float(0).ProtoReflect().Descriptor(), 0); err == nil {
 		t.Error("float encoded as varint accepted")
 	}
 }
@@ -90,5 +94,54 @@ func TestHasUnknownNested(t *testing.T) {
 	}
 	if hasUnknown(clean.ProtoReflect()) {
 		t.Error("clean message reported unknown fields")
+	}
+}
+
+// R13 (l) is checked by checkVarintEnd itself, not left to protowire, so
+// these cases pin it without going through protowire.ConsumeVarint.
+func TestCheckVarintEnd(t *testing.T) {
+	nine := bytes.Repeat([]byte{0xff}, 9)
+	ten := func(last byte) []byte { return append(append([]byte(nil), nine...), last) }
+	cases := []struct {
+		name string
+		b    []byte
+		bad  bool
+	}{
+		{"empty", nil, false},
+		{"one_byte", []byte{0x01}, false},
+		{"truncated", []byte{0x80}, false}, // left to protowire
+		{"nine_bytes", append(append([]byte(nil), nine[:8]...), 0x7f), false},
+		{"ten_last_00", ten(0x00), false}, // non-minimal: R13 (e)
+		{"ten_last_01", ten(0x01), false},
+		{"ten_last_01_then_more", append(ten(0x01), 0xff), false},
+		{"ten_last_02", ten(0x02), true},
+		{"ten_last_7f", ten(0x7f), true},
+		{"eleven_bytes", append(ten(0x80), 0x01), true},
+		{"ten_continuation_bytes_only", ten(0x80), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkVarintEnd(c.b)
+			if c.bad != (err != nil) {
+				t.Fatalf("checkVarintEnd(%x) = %v, want error %v", c.b, err, c.bad)
+			}
+			if err != nil && !errors.Is(err, ErrMalformed) {
+				t.Fatalf("error %v does not wrap ErrMalformed", err)
+			}
+		})
+	}
+}
+
+// Every split packed record also breaks R13 (k), so this pins the (i)
+// check in markSeen on its own: it stays as defence in depth.
+func TestMarkSeenSplitPackedRecord(t *testing.T) {
+	fd := (&wardenv1.DbTerminateSessionRequest{}).ProtoReflect().Descriptor().Fields().ByName("session_ids")
+	seen, seenOneof := map[protowire.Number]bool{}, map[int]bool{}
+	if err := markSeen(fd, protowire.BytesType, seen, seenOneof); err != nil {
+		t.Fatalf("first packed record: %v", err)
+	}
+	err := markSeen(fd, protowire.BytesType, seen, seenOneof)
+	if !errors.Is(err, ErrNonCanonical) {
+		t.Fatalf("second packed record: got %v, want ErrNonCanonical", err)
 	}
 }
