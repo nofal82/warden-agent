@@ -278,7 +278,12 @@ func TestContractFieldOrderDetectsViolations(t *testing.T) {
 		// between its members is also declared out of order.
 		{(&ordertest.SplitOneof{}).ProtoReflect().Descriptor(), []string{
 			"wardentest.ordertest.SplitOneof: field second (2) declared after third (3)",
-			"wardentest.ordertest.SplitOneof: field second (2) lies between members of oneof choice",
+			"wardentest.ordertest.SplitOneof: field second (2) is outside oneof choice",
+		}},
+		// Declared in order, but protobuf-go writes the oneof after
+		// field 3 (OQ28 option (a)).
+		{(&ordertest.OneofBelowField{}).ProtoReflect().Descriptor(), []string{
+			"wardentest.ordertest.OneofBelowField: field third (3) is outside oneof choice",
 		}},
 		{(&ordertest.DescendingDeclaration{}).ProtoReflect().Descriptor(), []string{
 			"wardentest.ordertest.DescendingDeclaration: field first (1) declared after second (2)",
