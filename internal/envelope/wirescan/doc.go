@@ -24,12 +24,11 @@
 // oneof, protobuf-go writes the fields outside any oneof first, then each
 // oneof in declaration order, with or without Deterministic, and its
 // reflection-based marshaller (dynamicpb) does the same
-// (TestOrderReflectionMarshalOneofLast). A contract message whose oneof
-// members are numbered below another field would therefore marshal out of
-// order and be rejected. Today's only oneof (TypedRequest.request) is the
-// whole message. TestContractFieldOrder in api/proto/warden/v1 enforces
-// the declaration rule the human reviewer ruled for OQ28; AC8a is the
-// backstop for the oneof-last order.
+// (TestOrderReflectionMarshalOneofLast). So the contract declares every
+// message's fields in ascending number order, and a message that contains
+// a oneof contains nothing but that oneof (OQ28 option (a); today that is
+// TypedRequest). TestContractFieldOrder in api/proto/warden/v1 enforces
+// both rules.
 //
 // # Entry point
 //

@@ -1,5 +1,5 @@
 // Test-only messages that break the contract's field-order rule on purpose
-// (action-envelope R13 (k), OQ28 ruling). They are never part of the
+// (action-envelope R13 (k), OQ28 option (a)). They are never part of the
 // contract and never imported by a binary; only tests use them.
 //
 // Regenerate from the repository root with the pinned tools listed in
@@ -177,9 +177,10 @@ func (x *DescendingDeclaration) GetFirst() string {
 	return ""
 }
 
-// OneofBelowField passes the contract's field-order check (ascending
-// declaration, no number between oneof members), yet with first and third
-// set it is written as field 3, then field 1.
+// OneofBelowField is declared in ascending order, yet with first and third
+// set it is written as field 3, then field 1. The contract's field-order
+// check rejects it: a message with a oneof holds nothing but that oneof
+// (OQ28 option (a)).
 type OneofBelowField struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Choice:

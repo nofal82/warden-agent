@@ -196,13 +196,11 @@ func TestContractChecksDetectViolations(t *testing.T) {
 
 // orderViolations lists every message in mds, nested ones included, that
 // breaks the contract's field-order rule (action-envelope R13 (k), OQ28
-// ruling): fields declared in strictly ascending number order, and the
-// members of each oneof declared next to each other with no other field's
-// number between them. This is necessary for protobuf-go to marshal in
-// ascending order but not sufficient: it writes oneof members after every
-// other field, so a oneof numbered below another field is still written
-// out of order. TestAC8aEveryMessageEveryOneofMember in wirescan catches
-// that case.
+// option (a)): fields declared in strictly ascending number order, and a
+// message that contains a oneof contains nothing but that oneof.
+// protobuf-go writes oneof members after every other field, with or
+// without Deterministic, so a oneof that shares its message with another
+// field can be written out of order; the strict scanner rejects such bytes.
 func orderViolations(mds protoreflect.MessageDescriptors) []string {
 	var out []string
 	for i := 0; i < mds.Len(); i++ {
@@ -225,9 +223,8 @@ func orderViolations(mds protoreflect.MessageDescriptors) []string {
 }
 
 // oneofOrderViolations checks that the members of od are declared in
-// ascending order and that no field outside od has a number between the
-// lowest and highest member. protobuf-go itself refuses a oneof whose
-// members are not declared next to each other.
+// ascending order and that md has no field outside od, a proto3 optional
+// field or a member of another oneof included.
 func oneofOrderViolations(md protoreflect.MessageDescriptor, od protoreflect.OneofDescriptor) []string {
 	var out []string
 	members := od.Fields()
@@ -237,17 +234,9 @@ func oneofOrderViolations(md protoreflect.MessageDescriptor, od protoreflect.One
 				md.FullName(), od.Name(), fd.Name(), fd.Number(), prev.Name(), prev.Number()))
 		}
 	}
-	if members.Len() == 0 {
-		return out
-	}
-	lo, hi := members.Get(0).Number(), members.Get(0).Number()
-	for k := 1; k < members.Len(); k++ {
-		lo, hi = min(lo, members.Get(k).Number()), max(hi, members.Get(k).Number())
-	}
 	for k := 0; k < md.Fields().Len(); k++ {
-		fd := md.Fields().Get(k)
-		if fd.ContainingOneof() != od && fd.Number() > lo && fd.Number() < hi {
-			out = append(out, fmt.Sprintf("%s: field %s (%d) lies between members of oneof %s",
+		if fd := md.Fields().Get(k); fd.ContainingOneof() != od {
+			out = append(out, fmt.Sprintf("%s: field %s (%d) is outside oneof %s",
 				md.FullName(), fd.Name(), fd.Number(), od.Name()))
 		}
 	}
@@ -255,7 +244,8 @@ func oneofOrderViolations(md protoreflect.MessageDescriptor, od protoreflect.One
 }
 
 // TestContractFieldOrder: every contract message is declared so that
-// marshalling writes its fields in ascending order (R13 (k), OQ28 ruling).
+// marshalling writes its fields in ascending order (R13 (k), OQ28 option
+// (a)).
 // Signers must still marshal with proto.MarshalOptions{Deterministic: true}
 // (R3).
 func TestContractFieldOrder(t *testing.T) {
@@ -266,7 +256,7 @@ func TestContractFieldOrder(t *testing.T) {
 	}
 }
 
-// TestContractFieldOrderDetectsViolations: the check above catches both
+// TestContractFieldOrderDetectsViolations: the check above catches the
 // shapes it forbids, using the test-only messages in internal/testproto,
 // which are outside the contract.
 func TestContractFieldOrderDetectsViolations(t *testing.T) {
@@ -303,13 +293,13 @@ func TestContractFieldOrderDetectsViolations(t *testing.T) {
 	}
 }
 
-// TestOneofOrderDetectsViolations covers a oneof declared in descending
-// order, nested one level deep.
+// TestOneofOrderDetectsViolations covers, nested one level deep, a oneof
+// declared in descending order and a message with two oneofs.
 func TestOneofOrderDetectsViolations(t *testing.T) {
 	opt := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
 	str := descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum()
-	field := func(name string, num int32) *descriptorpb.FieldDescriptorProto {
-		return &descriptorpb.FieldDescriptorProto{Name: proto.String(name), Number: proto.Int32(num), Label: opt, Type: str, OneofIndex: proto.Int32(0)}
+	field := func(name string, num, oneof int32) *descriptorpb.FieldDescriptorProto {
+		return &descriptorpb.FieldDescriptorProto{Name: proto.String(name), Number: proto.Int32(num), Label: opt, Type: str, OneofIndex: proto.Int32(oneof)}
 	}
 	f, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
 		Name:    proto.String("wardentest/bad_oneof.proto"),
@@ -319,8 +309,12 @@ func TestOneofOrderDetectsViolations(t *testing.T) {
 			Name: proto.String("Outer"),
 			NestedType: []*descriptorpb.DescriptorProto{{
 				Name:      proto.String("Descending"),
-				Field:     []*descriptorpb.FieldDescriptorProto{field("z", 3), field("y", 2)},
+				Field:     []*descriptorpb.FieldDescriptorProto{field("z", 3, 0), field("y", 2, 0)},
 				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("d")}},
+			}, {
+				Name:      proto.String("TwoOneofs"),
+				Field:     []*descriptorpb.FieldDescriptorProto{field("a", 1, 0), field("b", 2, 1)},
+				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("p")}, {Name: proto.String("q")}},
 			}},
 		}},
 	}, new(protoregistry.Files))
@@ -330,6 +324,8 @@ func TestOneofOrderDetectsViolations(t *testing.T) {
 	want := []string{
 		"wardentest.Outer.Descending: field y (2) declared after z (3)",
 		"wardentest.Outer.Descending: oneof d member y (2) declared after z (3)",
+		"wardentest.Outer.TwoOneofs: field b (2) is outside oneof p",
+		"wardentest.Outer.TwoOneofs: field a (1) is outside oneof q",
 	}
 	if got := orderViolations(f.Messages()); !slices.Equal(got, want) {
 		t.Errorf("violations = %q, want %q", got, want)

@@ -798,10 +798,9 @@ func TestAC8aEveryMessageEveryOneofMember(t *testing.T) {
 // OQ28: protobuf-go writes the fields outside any oneof first, then the
 // oneof, with or without Deterministic. A message whose oneof member is
 // numbered below another set field therefore marshals out of order, and
-// the scanner rejects it. SplitOneof breaks the contract's declaration rule
-// (TestContractFieldOrder); OneofBelowField satisfies it and is still
-// written out of order. Both live in a test-only package outside the
-// contract. The same values written in ascending order are accepted, so
+// the scanner rejects it. Both messages break the contract's rule that a
+// message with a oneof holds nothing but that oneof (TestContractFieldOrder,
+// OQ28 option (a)); they live in a test-only package outside the contract. The same values written in ascending order are accepted, so
 // the order alone causes the rejection.
 func TestOutOfOrderMarshalRejected(t *testing.T) {
 	cases := []struct {

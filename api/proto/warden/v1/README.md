@@ -21,17 +21,17 @@ name (as `TypedRequest` does for P20).
 
 ## Fields are declared in ascending number order
 
-Within every message, declare fields in strictly ascending number order, and
-give no other field a number between the members of a `oneof`
-(action-envelope R13 (k), OQ28 ruling). `TestContractFieldOrder` enforces
-this.
+Within every message, declare fields in strictly ascending number order. A
+message that contains a `oneof` contains nothing but that oneof: no other
+field, no proto3 `optional` field, no second oneof (action-envelope R13 (k),
+OQ28 option (a)). `TypedRequest` is the example. `TestContractFieldOrder`
+enforces both rules.
 
-In a message with a `oneof`, protobuf-go writes the fields outside any oneof
-first, then the oneof, even with `proto.MarshalOptions{Deterministic: true}`.
-If a oneof member is numbered below another field, the bytes come out of
-order and the strict scanner rejects them. Keep every oneof member numbered
-above the message's other fields (today `TypedRequest` is only its oneof).
-The AC8a test in `internal/envelope/wirescan` catches a violation.
+The reason: in a message with a oneof, protobuf-go writes the fields outside
+any oneof first, then the oneof, even with
+`proto.MarshalOptions{Deterministic: true}`. A oneof member numbered below
+another field would come out of order, and the strict scanner would reject
+every envelope that used it.
 
 ## Regenerating
 
