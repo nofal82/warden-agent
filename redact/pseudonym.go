@@ -64,7 +64,13 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 	var b strings.Builder
 	var segs []seg
 	replace := func(name, label string) {
-		if name == "" || isPseudonym(name) || name == UserNameMarker || name == NameUserNameMarker {
+		if name == "" {
+			return
+		}
+		if isPseudonym(name) || name == UserNameMarker || name == NameUserNameMarker {
+			// Kept as it is, but still a unit the output limit may not cut
+			// (R40), or a cut half would read as a raw name next time.
+			segs = append(segs, seg{start: b.Len(), end: b.Len() + len(name), marker: !isPseudonym(name)})
 			b.WriteString(name)
 			return
 		}
