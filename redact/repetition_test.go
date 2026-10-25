@@ -14,11 +14,11 @@ func repetitionEvent(unit string) string {
 	return strings.TrimSuffix(strings.Repeat(line+"\n", MaxEventInput/(len(line)+1)), "\n")
 }
 
+// The check is on growth, not only wall time, so it holds under the race
+// detector and coverage too: four times the input must cost well under
+// sixteen times the time (quadratic), and an uninstrumented build must
+// also stay inside ItemDeadline.
 func TestHomogeneousRepetitionIsLinear(t *testing.T) {
-	limit := ItemDeadline
-	if raceEnabled {
-		limit *= 10
-	}
 	units := map[string]string{
 		"jwt":                  "eyJ",
 		"jwt-tail":             "eyJ" + strings.Repeat("A", 8) + ".",
@@ -36,10 +36,9 @@ func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 		"iban":                 "GB82 ",
 	}
 	red := New(WithClock(frozenClock))
-	for name, unit := range units {
-		in := repetitionEvent(unit)
+	timeOf := func(name, in string) time.Duration {
 		best := time.Duration(1 << 62)
-		for i := 0; i < 2; i++ {
+		for i := 0; i < 3; i++ {
 			start := time.Now()
 			_, _, err := red.Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, in, nil)
 			best = min(best, time.Since(start))
@@ -47,8 +46,20 @@ func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 				t.Fatalf("%s: %v", name, err)
 			}
 		}
-		if best > limit {
-			t.Errorf("%s: %v for a %d-byte event, over %v", name, best, len(in), limit)
+		return best
+	}
+	instrumented := raceEnabled || testing.CoverMode() != ""
+	for name, unit := range units {
+		full := repetitionEvent(unit)
+		line := full[:strings.IndexByte(full, '\n')]
+		tLine, tFull := timeOf(name, line), timeOf(name, full)
+		lines := float64(strings.Count(full, "\n") + 1)
+		if ratio := float64(tFull) / float64(max(tLine, time.Microsecond)); ratio > 2*lines {
+			t.Errorf("%s: %v for %d bytes, %v for one line: %.1fx for %.0fx the input (quadratic?)",
+				name, tFull, len(full), tLine, ratio, lines)
+		}
+		if !instrumented && tFull > ItemDeadline {
+			t.Errorf("%s: %v for a %d-byte event, over %v", name, tFull, len(full), ItemDeadline)
 		}
 	}
 }

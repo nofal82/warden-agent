@@ -339,9 +339,13 @@ func TestPEMBase64(t *testing.T) {
 			if out != m {
 				t.Errorf("alone: got %q, want %q", lastN(out, 80), m)
 			}
+			// The random base64 can, about once in 150 keys, hold a
+			// secret-assignment keyword right before its "=" padding; that
+			// value may then also take the closing quote (R33 accepts the
+			// over-redaction), so only the marker and the prefix are fixed.
 			out, _ = redactE(t, `{"blob":"`+b+`"}`)
-			if want := `{"blob":"` + m + `"}`; out != want {
-				t.Errorf("JSON value: got %q, want %q", lastN(out, 80), want)
+			if want := `{"blob":"` + m; !strings.HasPrefix(out, want) || len(out) > len(want)+2 {
+				t.Errorf("JSON value: got %q, want %q", lastN(out, 80), want+`"}`)
 			}
 			assertNoLeak(t, name, out, b)
 		})

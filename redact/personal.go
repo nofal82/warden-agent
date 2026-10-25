@@ -465,7 +465,6 @@ const ibanMax = 34
 
 func iban() detector {
 	const pattern = `[A-Z]{2}[0-9]{2}[A-Z0-9 ]{11,40}`
-	re := anchored(pattern)
 	return detector{
 		id:      "iban",
 		kind:    kindMarker,
@@ -485,11 +484,7 @@ func iban() detector {
 				if i > 0 && (isAlnum(s[i-1]) || s[i-1] == '_') {
 					continue
 				}
-				m := matchAt(re, s, i)
-				if m == nil {
-					continue
-				}
-				if sp, ok := ibanAt(s, m[0], m[1]); ok {
+				if sp, ok := ibanAt(s, i); ok {
 					out = append(out, sp)
 					i = sp.end - 1
 				}
@@ -503,24 +498,34 @@ func iban() detector {
 	}
 }
 
-// ibanAt tries every end at a group boundary of the match [p, b) that
-// starts at p (MA10): a candidate whose length without spaces is the
-// country's IBAN length and passes mod 97 is an IBAN.
-func ibanAt(s string, p, b int) (span, bool) {
+// ibanAt tries the candidate that starts at p, whose first four
+// characters are checked (MA10): the iban pattern's anchored match is the
+// run of [A-Z0-9 ] after them, at most 40 long and at least 11, and every
+// end of it at a group boundary is tried. A candidate whose length without
+// spaces is the country's IBAN length and passes mod 97 is an IBAN. The
+// walk stops once the length without spaces passes the country's length,
+// as no later end can match.
+func ibanAt(s string, p int) (span, bool) {
 	want, known := ibanLengths[s[p:p+2]]
 	if !known {
 		return span{}, false
 	}
-	var compact []byte
-	for e := p; e < b; e++ {
-		if s[e] != ' ' {
-			compact = append(compact, s[e])
+	b := p + 4
+	for b < len(s) && b-p-4 < 40 && (isUpper(s[b]) || isDigitByte(s[b]) || s[b] == ' ') {
+		b++
+	}
+	if b-p-4 < 11 {
+		return span{}, false
+	}
+	var buf [ibanMax]byte
+	n := 0
+	for e := p; e < b && n < want; e++ {
+		if s[e] == ' ' {
+			continue
 		}
-		if len(compact) > ibanMax {
-			break
-		}
-		atEnd := e+1 == b || s[e+1] == ' '
-		if atEnd && s[e] != ' ' && len(compact) == want && ibanMod97(compact) {
+		buf[n] = s[e]
+		n++
+		if n == want && (e+1 == b || s[e+1] == ' ') && ibanMod97(buf[:n]) {
 			return span{start: p, end: e + 1}, true
 		}
 	}
@@ -533,9 +538,9 @@ func isDigitByte(c byte) bool { return c >= '0' && c <= '9' }
 // ibanMod97 checks ISO 7064 mod 97: the country code and check digits move
 // to the end, letters become 10–35, and the number mod 97 must be 1.
 func ibanMod97(c []byte) bool {
-	r := append(append([]byte(nil), c[4:]...), c[:4]...)
 	m := 0
-	for _, ch := range r {
+	for k := range c {
+		ch := c[(k+4)%len(c)]
 		switch {
 		case isDigitByte(ch):
 			m = (m*10 + int(ch-'0')) % 97
