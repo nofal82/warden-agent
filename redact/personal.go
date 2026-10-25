@@ -470,18 +470,28 @@ func iban() detector {
 		id:      "iban",
 		kind:    kindMarker,
 		classes: allClasses,
-		canon:   canon(pattern, "every-country-code-start", "every-group-end", "country-length", "mod97"),
+		canon:   canon(pattern, "every-country-code-start-on-word-boundary", "every-group-end", "country-length", "mod97"),
 		find: func(s string) ([]span, error) {
-			// A match can only start at two capitals and two digits; the
-			// leftmost such start of a match is where the pattern runs.
+			// A candidate starts at two capitals and two digits on a word
+			// boundary. The pattern runs anchored at every such start
+			// (MA10), so an earlier IBAN-shaped token cannot end the search
+			// window inside a real IBAN (security review H2). Each match is
+			// at most 44 bytes, so the scan stays linear.
 			var out []span
 			for i := 0; i+4 <= len(s); i++ {
 				if !isUpper(s[i]) || !isUpper(s[i+1]) || !isDigitByte(s[i+2]) || !isDigitByte(s[i+3]) {
 					continue
 				}
-				if m := matchAt(re, s, i); m != nil {
-					out = append(out, ibansIn(s, m[0], m[1])...)
-					i = m[1] - 1
+				if i > 0 && (isAlnum(s[i-1]) || s[i-1] == '_') {
+					continue
+				}
+				m := matchAt(re, s, i)
+				if m == nil {
+					continue
+				}
+				if sp, ok := ibanAt(s, m[0], m[1]); ok {
+					out = append(out, sp)
+					i = sp.end - 1
 				}
 			}
 			return out, nil
@@ -493,42 +503,28 @@ func iban() detector {
 	}
 }
 
-// ibansIn tries every country-code start at a word boundary and every end
-// at a group boundary inside one match (MA10), so a leading or trailing
-// token cannot hide an IBAN.
-func ibansIn(s string, a, b int) []span {
-	var out []span
-	for p := a; p+4 <= b; p++ {
-		if !isUpper(s[p]) || !isUpper(s[p+1]) || !isDigitByte(s[p+2]) || !isDigitByte(s[p+3]) {
-			continue
+// ibanAt tries every end at a group boundary of the match [p, b) that
+// starts at p (MA10): a candidate whose length without spaces is the
+// country's IBAN length and passes mod 97 is an IBAN.
+func ibanAt(s string, p, b int) (span, bool) {
+	want, known := ibanLengths[s[p:p+2]]
+	if !known {
+		return span{}, false
+	}
+	var compact []byte
+	for e := p; e < b; e++ {
+		if s[e] != ' ' {
+			compact = append(compact, s[e])
 		}
-		if p > 0 && (isAlnum(s[p-1]) || s[p-1] == '_') {
-			continue
+		if len(compact) > ibanMax {
+			break
 		}
-		want, known := ibanLengths[s[p:p+2]]
-		if !known {
-			continue
-		}
-		var compact []byte
-		found := -1
-		for e := p; e < b; e++ {
-			if s[e] != ' ' {
-				compact = append(compact, s[e])
-			}
-			if len(compact) > ibanMax {
-				break
-			}
-			atEnd := e+1 == b || s[e+1] == ' '
-			if atEnd && s[e] != ' ' && len(compact) == want && ibanMod97(compact) {
-				found = e + 1
-			}
-		}
-		if found > 0 {
-			out = append(out, span{start: p, end: found})
-			p = found - 1
+		atEnd := e+1 == b || s[e+1] == ' '
+		if atEnd && s[e] != ' ' && len(compact) == want && ibanMod97(compact) {
+			return span{start: p, end: e + 1}, true
 		}
 	}
-	return out
+	return span{}, false
 }
 
 func isUpper(c byte) bool     { return c >= 'A' && c <= 'Z' }

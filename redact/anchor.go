@@ -51,13 +51,18 @@ func wordStart(s string, i int) bool { return i == 0 || !isWordByte(s[i-1]) }
 // literalSpans finds matches of an anchored re at each occurrence of any
 // of lits, optionally only where \b holds before it, and returns the first
 // non-empty group (group 1 and on) or, when group is false, the whole
-// match. Duplicates from overlapping literals are removed.
+// match. An occurrence inside an earlier match of the same literal is not
+// tried again: its match would end at the same place (the patterns are
+// greedy over a fixed alphabet), and re-scanning it for every occurrence
+// would make a line of repeated literals cost quadratic time (security
+// review H1).
 func literalSpans(s string, lits []string, re *regexp.Regexp, boundary, group bool) []span {
 	var out []span
 	seen := map[int]bool{}
 	for _, lit := range lits {
+		covered := 0
 		eachIndex(s, lit, func(i int) {
-			if seen[i] || (boundary && !wordStart(s, i)) {
+			if i < covered || seen[i] || (boundary && !wordStart(s, i)) {
 				return
 			}
 			m := matchAt(re, s, i)
@@ -65,6 +70,7 @@ func literalSpans(s string, lits []string, re *regexp.Regexp, boundary, group bo
 				return
 			}
 			seen[i] = true
+			covered = m[1]
 			if !group {
 				out = append(out, span{start: m[0], end: m[1]})
 				return

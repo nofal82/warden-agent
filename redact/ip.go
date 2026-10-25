@@ -41,16 +41,19 @@ func publicIP() detector {
 func ipSpans(v4, v6 *regexp.Regexp, s string) []span {
 	var out []span
 	var v6s [][]int
-	tried := -1
+	runEnd := -1
 	eachIndex(s, ":", func(i int) {
+		if i < runEnd {
+			return // a later ':' of a hex-and-colon run already tried (H1)
+		}
 		a := i
 		for a > 0 && (isHexByte(s[a-1]) || s[a-1] == ':') {
 			a--
 		}
-		if a <= tried {
-			return
+		runEnd = i
+		for runEnd < len(s) && (isHexByte(s[runEnd]) || s[runEnd] == ':') {
+			runEnd++
 		}
-		tried = a
 		if a > 0 && (isAlnum(s[a-1]) || s[a-1] == '.') {
 			return
 		}

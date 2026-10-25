@@ -161,6 +161,10 @@ func TestBenignMarkers(t *testing.T) {
 			benignInAllClasses(t, "marker after key", kf(v))
 		}
 	}
+	// A redacted unit name is not a §4.3 marker (after a key it is a value
+	// R33 redacts), but alone it must come back unchanged, so the agent's
+	// output gives zero intake matches (AC37).
+	benignInAllClasses(t, "redacted unit name", "postgresql@REDACTED-warden-enrollment-token.service")
 	if out, _ := redactE(t, LineDroppedText); out != LineDroppedText {
 		t.Errorf("dropped-line text changed: %q", out)
 	}

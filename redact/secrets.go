@@ -439,17 +439,19 @@ func jwtHeaderHasAlg(header string) bool {
 
 func urlCredentials() detector {
 	const pattern = `[a-zA-Z][a-zA-Z0-9+.-]*://([^\s"']*)@`
-	rest := anchored(`://([^\s"']*)@`)
 	return detector{
 		id:      "url-credentials",
 		kind:    kindValue,
 		classes: allClasses,
-		canon:   canon(pattern, "userinfo-has-colon", "anchor:://"),
+		canon:   canon(pattern, "userinfo-has-colon", "anchor:://", "token-once"),
 		find: func(s string) ([]span, error) {
 			var out []span
+			// The token (up to whitespace or a quote), its last '@' and the
+			// last ':' before it are found once per token, so a token of
+			// many "://" costs linear time (security review H1). This is
+			// what the anchored pattern rest would match from each "://".
+			tokEnd, lastAt, lastColon := -1, -1, -1
 			eachIndex(s, "://", func(i int) {
-				// The scheme is the leftmost letter-led run of scheme
-				// characters before "://", as the pattern's leftmost match.
 				k := i
 				for k > 0 && isSchemeByte(s[k-1]) {
 					k--
@@ -460,8 +462,19 @@ func urlCredentials() detector {
 				if k == i {
 					return
 				}
-				if m := matchAt(rest, s, i); m != nil && m[3] > m[2] && strings.Contains(s[m[2]:m[3]], ":") {
-					out = append(out, span{start: m[2], end: m[3]})
+				if i >= tokEnd {
+					tokEnd = len(s)
+					if j := strings.IndexAny(s[i:], " \t\n\r\v\f\"'"); j >= 0 {
+						tokEnd = i + j
+					}
+					lastAt = strings.LastIndexByte(s[i:tokEnd], '@')
+					if lastAt >= 0 {
+						lastAt += i
+						lastColon = strings.LastIndexByte(s[i:lastAt], ':') + i
+					}
+				}
+				if lastAt > i+3 && lastColon >= i+3 {
+					out = append(out, span{start: i + 3, end: lastAt})
 				}
 			})
 			return out, nil
@@ -498,7 +511,11 @@ func urlSecretParam() detector {
 		find: func(s string) ([]span, error) {
 			var out []span
 			lower := asciiLower(s)
+			valueEnd := 0
 			eachIndex(s, "=", func(i int) {
+				if i < valueEnd {
+					return // inside the previous value: same end, merged anyway (H1)
+				}
 				k := i
 				for k > 0 && (isAlnum(s[k-1]) || s[k-1] == '_' || s[k-1] == '-') {
 					k--
@@ -508,6 +525,7 @@ func urlSecretParam() detector {
 				}
 				if m := matchAt(value, s, i); m != nil {
 					out = append(out, span{start: m[2], end: m[3]})
+					valueEnd = m[3]
 				}
 			})
 			return out, nil
@@ -651,6 +669,9 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 	var out []span
 	seen := map[int]bool{}
 	for _, kw := range secretKeyWords {
+		// An occurrence inside the previous key or value of this keyword
+		// is not tried again: same key, or a value already covered (H1).
+		covered := 0
 		for from := 0; ; {
 			i := strings.Index(lower[from:], kw)
 			if i < 0 {
@@ -658,6 +679,9 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 			}
 			i += from
 			from = i + len(kw)
+			if i < covered {
+				continue
+			}
 			ks, ke := i, i+len(kw)
 			for ks > 0 && isKeyByte(s[ks-1]) {
 				ks--
@@ -665,6 +689,7 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 			for ke < len(s) && isKeyByte(s[ke]) {
 				ke++
 			}
+			covered = ke
 			if seen[ks] {
 				continue
 			}
@@ -676,6 +701,7 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 			for _, re := range res {
 				if sp, ok := firstGroup(re, s, ke); ok {
 					out = append(out, sp)
+					covered = max(covered, sp.end)
 					break
 				}
 			}
