@@ -1,0 +1,12 @@
+[    0.000000] Linux version 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC
+[    1.234567] EXT4-fs (sda1): mounted filesystem 0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9 r/w with ordered data mode. Quota mode: none.
+[    2.345678] e1000e 0000:00:1f.6 eth0: NIC Link is Up 1000 Mbps Full Duplex, Flow Control: None
+[    3.456789] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready
+[   12.000001] audit: type=1400 audit(1761385200.123:42): apparmor="STATUS" operation="profile_load" profile="unconfined" name="nginx" pid=812
+[  123.456789] Out of memory: Killed process 4242 (java) total-vm:8123456kB, anon-rss:2048000kB, file-rss:0kB, UID:1001 oom_score_adj:0
+[  200.000000] br-4f3c2b1a0e9d: port 1(veth1a2b3c4) entered forwarding state
+[  201.500000] eth0: renamed from veth9f8e7d6
+[  301.000000] usb 1-1: new high-speed USB device number 2 using xhci_hcd
+[  302.000000] eth1: link up, 00:1a:2b:3c:4d:5e
+[  303.000000] nvme0n1: p1 p2 p3
+[  304.000000] TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
