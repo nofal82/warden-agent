@@ -110,7 +110,7 @@ func TestNormalizeTable(t *testing.T) {
 						}
 					}
 				}
-				if row.kind == NormInvalidUTF8 && row.in != want && counts[NormInvalidUTF8] == 0 {
+				if !utf8.ValidString(row.in) && row.in != want && counts[NormInvalidUTF8] == 0 {
 					t.Errorf("%s: invalid UTF-8 removed but not counted", className(c))
 				}
 			}

@@ -132,7 +132,8 @@ func TestBenignMarkers(t *testing.T) {
 	values := append(allMarkers(),
 		"u-0123456789abcdef",
 		"REDACTED-aws-access-key-id.service",
-		"postgresql@REDACTED-warden-enrollment-token.service",
+		// Not "postgresql@REDACTED-…​.service": that is a redacted unit name,
+		// not a §4.3 marker, and after a key it is a value R33 redacts.
 		"203.0.113.0/24", "2002:c000:200::/40", "2001:db8:1234::/48",
 		"/home/u-0123456789abcdef/x", "/home/"+UserNameMarker+"/x", "/home/"+NameUserNameMarker+"/x",
 	)

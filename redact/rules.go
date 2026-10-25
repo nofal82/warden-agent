@@ -1,5 +1,14 @@
 package redact
 
+import (
+	"crypto/sha256"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"unicode/utf8"
+)
+
 // detectorKind says how a detector's matches are replaced.
 type detectorKind uint8
 
@@ -11,6 +20,22 @@ const (
 
 // classSet is a bit set of the classes a detector applies to.
 type classSet uint16
+
+func classSetOf(cs ...Class) classSet {
+	var s classSet
+	for _, c := range cs {
+		s |= 1 << c
+	}
+	return s
+}
+
+func (s classSet) has(c Class) bool { return s&(1<<c) != 0 }
+
+// "Applies to" of §4.2.
+var (
+	allClasses  = classSetOf(TName, TPath, TText, EText, LValue, NPatterned)
+	textClasses = classSetOf(TText, EText)
+)
 
 // span is one match over normalised text, as byte offsets. repl is used
 // only by kindIP.
@@ -24,11 +49,15 @@ type detector struct {
 	id      string
 	kind    detectorKind
 	extend  bool
+	numeric bool // a number detector: kept inside digests and container IDs (R33)
 	classes classSet
 	find    func(s string) ([]span, error)
 	// samples returns the built-in positive and negative self-test inputs
 	// (R42), built at run time from fragments.
 	samples func() (pos, neg []string)
+	// canon is the canonical text of the row's patterns and validators,
+	// hashed into the rule-set digest (§4.5).
+	canon string
 }
 
 // hooks are test seams; nil in production.
@@ -38,4 +67,154 @@ var hooks struct {
 	normalise func(c Class, n int)   // before normalisation, with the input length
 }
 
-func defaultRules() []detector { return nil }
+// ruleTable compiles the §4.2 table once. The patterns are constants; a
+// pattern that does not compile panics here, and New turns that panic into
+// ErrRulesUnavailable (R42).
+var ruleTable = sync.OnceValue(func() []detector {
+	return []detector{
+		pemPrivateKey(),
+		pemBodyLine(),
+		pemPrivateKeyB64(),
+		wardenEnrollmentToken(),
+		awsAccessKeyID(),
+		awsSecretKey(),
+		vendorToken(),
+		jwtToken(),
+		urlCredentials(),
+		urlSecretParam(),
+		authorizationHeader(),
+		cookieHeader(),
+		secretAssignment(),
+		email(),
+		phone(),
+		nationalIDJO(),
+		nationalIDSA(),
+		nationalIDAE(),
+		paymentCard(),
+		iban(),
+		publicIP(),
+	}
+})
+
+func defaultRules() []detector { return append([]detector(nil), ruleTable()...) }
+
+// Detectors returns the detector IDs in §4.2 order.
+func Detectors() (ids []string) {
+	defer func() {
+		if recover() != nil {
+			ids = nil
+		}
+	}()
+	for _, d := range ruleTable() {
+		ids = append(ids, d.id)
+	}
+	return ids
+}
+
+// RulesDigest is the SHA-256 of the canonical rule table: every detector's
+// ID, flags, patterns and validators in §4.2 order (§4.5). The table is
+// compiled in, so the digest is fixed for a build.
+func RulesDigest() (sum [32]byte) {
+	defer func() {
+		if recover() != nil {
+			sum = [32]byte{}
+		}
+	}()
+	var b strings.Builder
+	for _, d := range ruleTable() {
+		for _, field := range []string{
+			d.id,
+			strconv.Itoa(int(d.kind)),
+			strconv.FormatBool(d.extend),
+			strconv.FormatBool(d.numeric),
+			strconv.Itoa(int(d.classes)),
+			d.canon,
+		} {
+			b.WriteString(strconv.Itoa(len(field)))
+			b.WriteByte(':')
+			b.WriteString(field)
+		}
+	}
+	return sha256.Sum256([]byte(b.String()))
+}
+
+// canon joins the patterns and validator names of one row.
+func canon(parts ...string) string { return strings.Join(parts, "\x1f") }
+
+// matchSpans returns every match of re as a span.
+func matchSpans(re *regexp.Regexp, s string) []span {
+	var out []span
+	for _, m := range re.FindAllStringIndex(s, -1) {
+		out = append(out, span{start: m[0], end: m[1]})
+	}
+	return out
+}
+
+// groupSpans returns, for every match of re, the first non-empty capture
+// group: the value of a key-value detector. A match whose value is empty is
+// not a match (§4.2 secret-assignment).
+func groupSpans(re *regexp.Regexp, s string) []span {
+	var out []span
+	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+		for g := 2; g+1 < len(m); g += 2 {
+			if m[g] >= 0 && m[g+1] > m[g] {
+				out = append(out, span{start: m[g], end: m[g+1]})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// retrySpans finds matches of re and keeps those that valid accepts. After
+// a rejected match it searches again one character after the match start,
+// so a rejected candidate cannot hide a valid one that begins inside it.
+// re must not depend on the text before its start (no leading \b or ^),
+// because the search restarts on a substring; valid sees absolute offsets
+// and checks left context itself.
+func retrySpans(re *regexp.Regexp, s string, valid func(m []int) (span, bool)) []span {
+	var out []span
+	for pos := 0; pos < len(s); {
+		m := re.FindStringSubmatchIndex(s[pos:])
+		if m == nil {
+			break
+		}
+		for k := range m {
+			if m[k] >= 0 {
+				m[k] += pos
+			}
+		}
+		if sp, ok := valid(m); ok {
+			out = append(out, sp)
+			pos = max(m[1], m[0]+1)
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[m[0]:])
+		pos = m[0] + max(size, 1)
+	}
+	return out
+}
+
+// unitSuffixes are the systemd unit suffixes of §4.2 (email, vendor-token).
+var unitSuffixes = []string{
+	"service", "socket", "target", "timer", "mount", "automount",
+	"path", "slice", "scope", "device", "swap",
+}
+
+func isUnitSuffix(word string) bool {
+	for _, u := range unitSuffixes {
+		if word == u {
+			return true
+		}
+	}
+	return false
+}
+
+func startsWithUnitSuffix(s string) bool {
+	for _, u := range unitSuffixes {
+		if strings.HasPrefix(s, "."+u) {
+			return true
+		}
+	}
+	return false
+}

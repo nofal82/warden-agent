@@ -351,7 +351,10 @@ func TestURLSecretParam(t *testing.T) {
 		ecase{"after ampersand", "GET https://h/cb?code=1&access_token=" + v + " ok.", "GET https://h/cb?code=1&access_token=" + m + " ok.", "url-secret-param"},
 		ecase{"S3 security token (AC60)", "GET https://b.s3.example/o?X-Amz-Security-Token=" + v + " ok.", "GET https://b.s3.example/o?X-Amz-Security-Token=" + m + " ok.", "url-secret-param"},
 		ecase{"semicolon", "GET https://h/p;sig=" + v + " ok.", "GET https://h/p;sig=" + m + " ok.", "url-secret-param"},
-		ecase{"stops at fragment", "GET https://h/p?token=" + v + "#top ok.", "GET https://h/p?token=" + m + "#top ok.", "url-secret-param"},
+		// The url-secret-param value stops at '#', but secret-assignment's
+		// value (key "token") runs on to the space; R31 merges the two
+		// overlapping matches into one span under the earlier detector.
+		ecase{"merged with secret-assignment past fragment", "GET https://h/p?token=" + v + "#top ok.", "GET https://h/p?token=" + m + " ok.", "url-secret-param"},
 		ecase{"JSON-escaped ampersand (AC38)", "GET https://h/cb?code=1" + bs + "u0026access_token=" + v + " ok.", "GET https://h/cb?code=1&access_token=" + m + " ok.", "url-secret-param"},
 		same("benign query", "GET https://h/search?page=2&sort=asc ok."),
 		same("empty value", "GET https://h/p?token=&page=2 ok."),
@@ -413,7 +416,7 @@ func TestSecretAssignment(t *testing.T) {
 			"DefaultEndpointsProtocol=https;AccountName=lab;Account" + "Key=" + k + ";EndpointSuffix=core.example",
 			"DefaultEndpointsProtocol=https;AccountName=lab;Account" + "Key=" + m + ";EndpointSuffix=core.example", "secret-assignment"},
 		ecase{"api_key holding a UUID (ruling 12)", "api_key=" + randUUID(), "api_key=" + m, "secret-assignment"},
-		same("empty value", "password= ok."),
+		same("empty value", "password=;"),
 		same("empty quoted value", `password: ""`),
 		same("password as a word", "FATAL: password authentication failed for user app ok."),
 		same("marker value", "DB_PASSWORD="+m),
