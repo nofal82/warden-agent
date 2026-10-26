@@ -1,0 +1,13 @@
+2026-10-25 10:15:30.123 UTC [4242] LOG:  database system is ready to accept connections
+2026-10-25 10:15:31.456 UTC [4250] app@shop LOG:  duration: 12.345 ms  statement: SELECT id, total FROM orders WHERE id = $1
+2026-10-25 10:15:32.789 UTC [4251] FATAL:  password authentication failed for user "report"
+2026-10-25 10:15:33.000 UTC [4252] LOG:  checkpoint complete: wrote 1532 buffers (9.4%); 0 WAL file(s) added, 0 removed, 1 recycled; write=153.201 s, sync=0.012 s
+2026-10-25T10:15:34.567890Z 12 [Note] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.0.39'  socket: '/var/run/mysqld/mysqld.sock'  port: 3306
+2026-10-25T10:15:35.000+00:00 InnoDB: Buffer pool(s) load completed at 261025 10:15:35
+{"t":{"$date":"2026-10-25T10:15:36.123+00:00"},"s":"I","c":"NETWORK","id":23016,"ctx":"listener","msg":"Waiting for connections","attr":{"port":27017,"ssl":"off"}}
+{"t":{"$date":"2026-10-25T10:15:37.456+00:00"},"s":"I","c":"ACCESS","id":20250,"ctx":"conn12","msg":"Authentication succeeded","attr":{"mechanism":"SCRAM-SHA-256"}}
+2026-10-25 10:15:38.900 UTC [4260] LOG:  connection received: host=10.0.0.15 port=52814
+2026-10-25 10:15:39.000 UTC [4261] ERROR:  relation "invoices" does not exist at character 15
+2026-10-25 10:15:40 1 [Warning] Aborted connection 1532 to db: 'shop' user: 'app' host: 'localhost' (Got timeout reading communication packets)
+2026-10-25 10:15:41.000 UTC [4262] LOG:  automatic vacuum of table "shop.public.orders": index scans: 1, pages: 0 removed, 812 remain
+2026-10-25 10:15:42.000 UTC [4263] LOG:  replication slot "standby_1" lag 4096 bytes, replay delay 0.002 s
