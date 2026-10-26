@@ -200,9 +200,11 @@ func (ps *pass) applies(d *detector) bool {
 	return d.classes.has(ps.class)
 }
 
-// tokenBoundary is R31's token boundary for "extend".
+// tokenBoundaries are R31's token boundaries for "extend".
+const tokenBoundaries = " \t\n\"',;&<>"
+
 func tokenBoundary(c byte) bool {
-	return strings.IndexByte(" \t\n\"',;&<>", c) >= 0
+	return strings.IndexByte(tokenBoundaries, c) >= 0
 }
 
 // extendSpan widens a match to the nearest token boundaries (R31). A value

@@ -38,6 +38,9 @@ func publicIP() detector {
 // candidate at the start of the hex-and-colon token around each ':', an
 // IPv4 candidate at each digit that follows neither a digit nor a '.'.
 // The boundary checks are the same as for an unanchored search.
+// keptPrefixes are the ranges R34 keeps (filled in by the next commit).
+var keptPrefixes []netip.Prefix
+
 func ipSpans(v4, v6 *regexp.Regexp, s string) []span {
 	var out []span
 	var v6s [][]int
