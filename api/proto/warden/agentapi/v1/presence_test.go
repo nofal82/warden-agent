@@ -82,6 +82,7 @@ func optionalTestFile(t *testing.T, pkg, msg string, fields []struct {
 }) []protoreflect.MessageDescriptor {
 	t.Helper()
 	dp := &descriptorpb.DescriptorProto{Name: proto.String(msg)}
+	var oneofs int32
 	for i, f := range fields {
 		fdp := &descriptorpb.FieldDescriptorProto{
 			Name: proto.String(f.name), Number: proto.Int32(int32(i + 1)),
@@ -90,7 +91,8 @@ func optionalTestFile(t *testing.T, pkg, msg string, fields []struct {
 		}
 		if f.optional {
 			fdp.Proto3Optional = proto.Bool(true)
-			fdp.OneofIndex = proto.Int32(int32(len(dp.OneofDecl)))
+			fdp.OneofIndex = proto.Int32(oneofs)
+			oneofs++
 			dp.OneofDecl = append(dp.OneofDecl, &descriptorpb.OneofDescriptorProto{Name: proto.String("_" + f.name)})
 		}
 		dp.Field = append(dp.Field, fdp)

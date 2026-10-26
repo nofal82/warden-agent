@@ -16,8 +16,8 @@ import (
 // scalarValue is a non-zero value of fd's kind; k varies it between list
 // elements, and k = 2 gives signed kinds a negative value so the scanner's
 // sign-extension rules are exercised.
-func scalarValue(fd protoreflect.FieldDescriptor, k int) protoreflect.Value {
-	sign := 1
+func scalarValue(fd protoreflect.FieldDescriptor, k uint8) protoreflect.Value {
+	sign := int32(1)
 	if k == 2 {
 		sign = -1
 	}
@@ -26,9 +26,9 @@ func scalarValue(fd protoreflect.FieldDescriptor, k int) protoreflect.Value {
 		return protoreflect.ValueOfBool(true)
 	case protoreflect.EnumKind:
 		vals := fd.Enum().Values()
-		return protoreflect.ValueOfEnum(vals.Get(1 + (k-1)%(vals.Len()-1)).Number())
+		return protoreflect.ValueOfEnum(vals.Get(1 + (int(k)-1)%(vals.Len()-1)).Number())
 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-		return protoreflect.ValueOfInt32(int32(sign * 3 * k))
+		return protoreflect.ValueOfInt32(sign * 3 * int32(k))
 	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
 		return protoreflect.ValueOfInt64(int64(sign) * 1_700_000_000_000 * int64(k))
 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
@@ -38,7 +38,7 @@ func scalarValue(fd protoreflect.FieldDescriptor, k int) protoreflect.Value {
 	case protoreflect.FloatKind:
 		return protoreflect.ValueOfFloat32(float32(k) + 0.5)
 	case protoreflect.DoubleKind:
-		return protoreflect.ValueOfFloat64(float64(sign*k) + 0.25)
+		return protoreflect.ValueOfFloat64(float64(sign)*float64(k) + 0.25)
 	case protoreflect.StringKind:
 		return protoreflect.ValueOfString(fmt.Sprintf("value-%d-é", k))
 	case protoreflect.BytesKind:
@@ -66,10 +66,10 @@ func populate(m protoreflect.Message, variant, depth int) {
 		switch {
 		case fd.IsList():
 			l := m.Mutable(fd).List()
-			for k := 1; k <= 2; k++ {
+			for k := uint8(1); k <= 2; k++ {
 				if fd.Message() != nil {
 					e := l.NewElement()
-					populate(e.Message(), variant+k, depth+1)
+					populate(e.Message(), variant+int(k), depth+1)
 					l.Append(e)
 				} else {
 					l.Append(scalarValue(fd, k))

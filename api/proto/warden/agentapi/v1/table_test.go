@@ -11,7 +11,8 @@ import (
 const (
 	uuidV4Pattern     = `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`
 	instanceIDPattern = `^[0-9a-f]{32}$`
-	tokenPattern      = `^wdn1_[A-Za-z0-9_-]{43}$`
+	// The enrollment-token format of agent-identity §4.2.
+	identity42Pattern = `^wdn1_[A-Za-z0-9_-]{43}$`
 	unitPattern       = `^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\.service$`
 	metricNamePattern = `^[a-z_][a-z0-9_]{0,127}$`
 	labelKeyPattern   = `^[a-z_][a-z0-9_]{0,63}$`
@@ -47,7 +48,7 @@ var agentapiTable = msgTable{
 	// §4.3
 	"EnrollRequest": {opts: maxMsg(8192), fields: []fieldSpec{
 		{1, "format_version", "uint32", o(minU(formatOnly), maxU(formatOnly), rc(clsI))},
-		{2, "token", "string", o(exactB(48), pat(tokenPattern), rc(clsI))},
+		{2, "token", "string", o(exactB(48), pat(identity42Pattern), rc(clsI))},
 		{3, "server_id", "string", o(exactB(36), pat(uuidV4Pattern), rc(clsI))},
 		{4, "csr", "bytes", o(minB(1), maxB(4096), rc(clsI))},
 		{5, "executor_public_key", "bytes", o(exactB(32), rc(clsI))},
