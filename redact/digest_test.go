@@ -7,8 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -61,7 +61,7 @@ func canonicalRuleTable() string {
 	field("digit-class", digitClass)
 	field("body-line", fmt.Sprint(bodyLineMin, bodyLineMax, bodyLineShortMin))
 	field("b64-decode-max", fmt.Sprint(b64DecodeMax))
-	field("token-boundary", tokenBoundaries)
+	field("token-boundary", extendBoundaries)
 	field("home-start", homeStartBefore)
 	field("home-name-end", homeNameEnd)
 	field("protected", pseudonymRe.String()+"|"+uuidRe.String()+"|"+hexRunRe.String())
@@ -107,7 +107,8 @@ func TestRulesDigestIsCurrent(t *testing.T) {
 // R12, AC28: the only hash the package (non-test code) uses is HMAC-SHA-256
 // in the pseudonym function.
 func TestOnlyPseudonymsHash(t *testing.T) {
-	files, err := filepath.Glob("*.go")
+	pkg := os.DirFS(".")
+	files, err := fs.Glob(pkg, "*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestOnlyPseudonymsHash(t *testing.T) {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(f) // #nosec G304 -- the package's own source files
+		src, err := fs.ReadFile(pkg, f)
 		if err != nil {
 			t.Fatal(err)
 		}

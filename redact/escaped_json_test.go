@@ -39,8 +39,8 @@ func TestCredentialPairsInEscapedJSON(t *testing.T) {
 		for level, in := range map[string]string{"plain": c.doc, "escaped": once, "doubly escaped": twice} {
 			for _, cls := range []Class{EText, TText, LValue} {
 				f := fieldFor(cls)
-				if cls == LValue && len(in) > LabelValueMaxBytes {
-					continue
+				if cls == LValue && (len(in) > LabelValueMaxBytes || c.id == "cookie-header") {
+					continue // over the label limit, or a text-only detector (§4.2)
 				}
 				out, rep := mustRedact(t, f, in, nil)
 				where := name + "/" + level + "/" + className(cls)

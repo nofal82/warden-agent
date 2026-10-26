@@ -469,7 +469,9 @@ func TestPhone(t *testing.T) {
 		{"Jordan mobile 079", "call 079" + randDigits(7) + " ok.", "call " + m + " ok.", "phone"},
 		{"Jordan mobile space", "call 079 " + randDigits(7) + " ok.", "call " + m + " ok.", "phone"},
 		{"Jordan mobile dash", "call 078-" + randDigits(7) + " ok.", "call " + m + " ok.", "phone"},
-		same("plus zero", "call +0"+randDigits(9)+" ok."),
+		// "+0" is no country code; the next digit is fixed so the run is
+		// never also a Jordanian mobile (07[789]…), which is redacted.
+		same("plus zero", "call +01"+randDigits(8)+" ok."),
 		same("too short", "call +12345 ok."),
 		same("not a mobile prefix", "call 076"+randDigits(7)+" ok."),
 		same("11 digits", "call 079"+randDigits(8)+" ok."),
