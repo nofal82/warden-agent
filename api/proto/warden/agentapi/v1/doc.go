@@ -14,4 +14,17 @@
 // (ValidUnitID's "no .."), and reads the rest from the options. The .pb.go
 // files are generated, never edited. Regenerate them with the pinned tools
 // listed in ../../v1/README.md.
+//
+// classtable_gen.go is the redaction field-class table (redaction.md R5,
+// §4.1): the class of every non-message field the agent sends, at any
+// depth, PrimitiveResult variants and the three executor bodies included.
+// It is generated from the redact_class options by the contract test
+// (go test -run TestClassTableGenerated -update-class-table), never
+// written by hand, and the same test fails the build when the committed
+// table differs from a fresh generation or a string or bytes field in
+// R5's scope has no class. FieldClass reads it. It lives here, not in the
+// shared redact/ package, because it is keyed by contract field names and
+// holds the classes that are never scanned (S, X, I, U): redact/ handles
+// text only and imports no protobuf code, and both the agent and the
+// control plane already import this package.
 package agentapiv1

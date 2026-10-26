@@ -23,7 +23,11 @@ control plane, in two proto packages (decision 0008, amended 2026-10-25):
 | `agentapi/v1/errors.proto` | `agent-api.md` §4.8, R45 |
 | `agentapi/v1/service.proto` | `agent-api.md` §4.1 |
 
-Redaction classes (`redact_class`) follow `redaction.md` §4.1. In M1,
+Redaction classes (`redact_class`) follow `redaction.md` §4.1. The field-class
+table `agentapi/v1/classtable_gen.go` is generated from them; after changing a
+`redact_class` or adding a field the agent sends, regenerate it with
+`go test ./api/proto/warden/agentapi/v1/ -run TestClassTableGenerated -update-class-table`
+(the contract test fails until you do). In M1,
 `warden.v1` messages carry only `redact_class`; their limits stay in
 hand-written validators until the M2 envelope change (agent-api R52c).
 

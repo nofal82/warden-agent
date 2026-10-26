@@ -19,8 +19,8 @@
 // handed in by the caller as a *Pseudonymizer, and is nil at the control
 // plane (R12b, R12d).
 //
-// Not here: the field-class table and its contract test (they are
-// generated from the .proto), the per-minute byte budget, counters and key
+// Not here: the field-class table and its contract test (generated from
+// the .proto, in api/proto/warden/agentapi/v1: FieldClass), the per-minute byte budget, counters and key
 // loading of the agent (internal/redact), and the intake, egress and audit
 // callers.
 package redact
