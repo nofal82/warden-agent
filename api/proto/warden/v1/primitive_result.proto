@@ -1,0 +1,573 @@
+// Primitive results: what a typed primitive reports after it ran.
+//
+// Source of truth: warden/specs/typed-action-catalog.md §4.8 and §4.8.1;
+// redaction classes from warden/specs/redaction.md §4.1 (R5).
+// A PrimitiveResult is unsigned and agent-trust level (executor-ipc R33).
+// Its bounds are executor output limits, enforced by hand-written code
+// until the M2 envelope change (agent-api R52c); only redact_class is set
+// here, on every string and bytes field.
+// Field numbers and enum values are final wire numbers. Never renumber or
+// reuse one.
+
+syntax = "proto3";
+
+package warden.v1;
+
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
+
+// PrimitiveResult is ExecuteReply field 2 and SignedReplyReport field 4.
+message PrimitiveResult {
+  PrimitiveStatus status = 1;
+  // Set only for FAILED.
+  PrimitiveErrorCode error_code = 2;
+  // Present exactly when a program ran: exit status 0 is a real reading
+  // (agent-api R52b).
+  optional int32 exit_status = 3;
+  // typed-action-catalog R9.
+  bool output_truncated = 4;
+  // Unix time, milliseconds.
+  int64 started_at = 5;
+  // Unix time, milliseconds.
+  int64 finished_at = 6;
+  // Present for SUCCEEDED and NO_CHANGE, and for FAILED only with PARTIAL;
+  // absent otherwise (PR #22 approval, F2).
+  TypedResult result = 7;
+}
+
+enum PrimitiveStatus {
+  PRIMITIVE_STATUS_UNSPECIFIED = 0;
+  PRIMITIVE_STATUS_SUCCEEDED = 1;
+  PRIMITIVE_STATUS_NO_CHANGE = 2;
+  PRIMITIVE_STATUS_FAILED = 3;
+  PRIMITIVE_STATUS_TIMED_OUT = 4;
+}
+
+enum PrimitiveErrorCode {
+  PRIMITIVE_ERROR_CODE_UNSPECIFIED = 0;
+  PRIMITIVE_ERROR_CODE_EXIT_NONZERO = 1;
+  PRIMITIVE_ERROR_CODE_DB_ERROR = 2;
+  PRIMITIVE_ERROR_CODE_IO_ERROR = 3;
+  PRIMITIVE_ERROR_CODE_PARTIAL = 4;
+  // §4.10: warden-dbhelper output failed the executor's checks.
+  PRIMITIVE_ERROR_CODE_HELPER_OUTPUT_INVALID = 5;
+}
+
+// TypedResult holds nothing but its oneof (action-envelope §4.1a), like
+// TypedRequest. Member numbers equal the primitive numbers.
+message TypedResult {
+  // P20 (cert.renew) was removed from the catalog; its number is never
+  // reused.
+  reserved 20;
+  reserved "cert_renew";
+
+  oneof result {
+    FsUsageResult fs_usage = 1;
+    FsLargestEntriesResult fs_largest_entries = 2;
+    ServiceStatusResult service_status = 3;
+    WebConfigTestResult web_config_test = 4;
+    CertInspectResult cert_inspect = 5;
+    ProcessTopResult process_top = 6;
+    MemStatusResult mem_status = 7;
+    ContainerInspectResult container_inspect = 8;
+    DbQueryReadonlyResult db_query_readonly = 9;
+    DbBackupVerifyResult db_backup_verify = 10;
+    ServiceRestartResult service_restart = 11;
+    ServiceResetFailedResult service_reset_failed = 12;
+    ServiceReloadResult service_reload = 13;
+    ServiceStartResult service_start = 14;
+    ServiceSetCpuQuotaResult service_set_cpu_quota = 15;
+    ProcessSignalResult process_signal = 16;
+    FileDeleteByAgeResult file_delete_by_age = 17;
+    JournalVacuumResult journal_vacuum = 18;
+    PkgCacheCleanResult pkg_cache_clean = 19;
+    ContainerRestartResult container_restart = 21;
+    DbTerminateSessionResult db_terminate_session = 22;
+  }
+}
+
+// P1 fs.usage.
+message FsUsageResult {
+  // 1 … 32 bytes.
+  string fs_type = 1 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  uint64 total_bytes = 2;
+  uint64 used_bytes = 3;
+  uint64 available_bytes = 4;
+  uint64 inodes_total = 5;
+  uint64 inodes_used = 6;
+  bool read_only = 7;
+}
+
+// P2 fs.largest_entries.
+message FsLargestEntriesResult {
+  // 0 … top_n (≤ 50), largest first.
+  repeated FsLargestEntry entries = 1;
+  uint64 entries_scanned = 2;
+  bool truncated = 3;
+}
+
+message FsLargestEntry {
+  // 1 … 4,095 bytes, relative to the request path. The home-directory
+  // component is pseudonymised (redaction R12a).
+  string path = 1 [(redact_class) = REDACT_FIELD_CLASS_T_PATH];
+  FsEntryKind kind = 2;
+  // Directories: total of what was walked.
+  uint64 size_bytes = 3;
+  // Unix seconds, clamped to 0 … 2^40 − 1.
+  int64 modified_at = 4;
+}
+
+enum FsEntryKind {
+  FS_ENTRY_KIND_UNSPECIFIED = 0;
+  FS_ENTRY_KIND_FILE = 1;
+  FS_ENTRY_KIND_DIRECTORY = 2;
+}
+
+// P3 service.status: one field per property of the systemctl show call,
+// in that order.
+message ServiceStatusResult {
+  UnitLoadState load_state = 1;
+  UnitActiveState active_state = 2;
+  ServiceSubState sub_state = 3;
+  ServiceRunResult result = 4;
+  uint32 n_restarts = 5;
+  // As systemd reports it; 0 before a first run, so not optional.
+  int32 exec_main_status = 6;
+  // 0: no main process.
+  uint32 exec_main_pid = 7;
+  // Microseconds of CLOCK_MONOTONIC; 0: never entered.
+  uint64 active_enter_timestamp_monotonic = 8;
+  bool can_reload = 9;
+  // Microseconds of CPU per second; 0: no limit.
+  uint64 cpu_quota_per_sec_usec = 10;
+}
+
+enum UnitLoadState {
+  UNIT_LOAD_STATE_UNSPECIFIED = 0;
+  UNIT_LOAD_STATE_LOADED = 1;
+  UNIT_LOAD_STATE_NOT_FOUND = 2;
+  UNIT_LOAD_STATE_BAD_SETTING = 3;
+  UNIT_LOAD_STATE_ERROR = 4;
+  UNIT_LOAD_STATE_MASKED = 5;
+  UNIT_LOAD_STATE_UNKNOWN = 6;
+}
+
+enum UnitActiveState {
+  UNIT_ACTIVE_STATE_UNSPECIFIED = 0;
+  UNIT_ACTIVE_STATE_ACTIVE = 1;
+  UNIT_ACTIVE_STATE_RELOADING = 2;
+  UNIT_ACTIVE_STATE_INACTIVE = 3;
+  UNIT_ACTIVE_STATE_FAILED = 4;
+  UNIT_ACTIVE_STATE_ACTIVATING = 5;
+  UNIT_ACTIVE_STATE_DEACTIVATING = 6;
+  UNIT_ACTIVE_STATE_MAINTENANCE = 7;
+  UNIT_ACTIVE_STATE_REFRESHING = 8;
+  UNIT_ACTIVE_STATE_UNKNOWN = 9;
+}
+
+// The service sub-states of systemd 245 (Ubuntu 20.04, the oldest in V1
+// scope); later ones are UNKNOWN until a spec revision.
+enum ServiceSubState {
+  SERVICE_SUB_STATE_UNSPECIFIED = 0;
+  SERVICE_SUB_STATE_DEAD = 1;
+  SERVICE_SUB_STATE_CONDITION = 2;
+  SERVICE_SUB_STATE_START_PRE = 3;
+  SERVICE_SUB_STATE_START = 4;
+  SERVICE_SUB_STATE_START_POST = 5;
+  SERVICE_SUB_STATE_RUNNING = 6;
+  SERVICE_SUB_STATE_EXITED = 7;
+  SERVICE_SUB_STATE_RELOAD = 8;
+  SERVICE_SUB_STATE_STOP = 9;
+  SERVICE_SUB_STATE_STOP_WATCHDOG = 10;
+  SERVICE_SUB_STATE_STOP_SIGTERM = 11;
+  SERVICE_SUB_STATE_STOP_SIGKILL = 12;
+  SERVICE_SUB_STATE_STOP_POST = 13;
+  SERVICE_SUB_STATE_FINAL_WATCHDOG = 14;
+  SERVICE_SUB_STATE_FINAL_SIGTERM = 15;
+  SERVICE_SUB_STATE_FINAL_SIGKILL = 16;
+  SERVICE_SUB_STATE_FAILED = 17;
+  SERVICE_SUB_STATE_AUTO_RESTART = 18;
+  SERVICE_SUB_STATE_CLEANING = 19;
+  SERVICE_SUB_STATE_UNKNOWN = 20;
+}
+
+enum ServiceRunResult {
+  SERVICE_RUN_RESULT_UNSPECIFIED = 0;
+  SERVICE_RUN_RESULT_SUCCESS = 1;
+  SERVICE_RUN_RESULT_PROTOCOL = 2;
+  SERVICE_RUN_RESULT_TIMEOUT = 3;
+  SERVICE_RUN_RESULT_EXIT_CODE = 4;
+  SERVICE_RUN_RESULT_SIGNAL = 5;
+  SERVICE_RUN_RESULT_CORE_DUMP = 6;
+  SERVICE_RUN_RESULT_WATCHDOG = 7;
+  SERVICE_RUN_RESULT_START_LIMIT_HIT = 8;
+  SERVICE_RUN_RESULT_RESOURCES = 9;
+  SERVICE_RUN_RESULT_OOM_KILL = 10;
+  SERVICE_RUN_RESULT_EXEC_CONDITION = 11;
+  SERVICE_RUN_RESULT_UNKNOWN = 12;
+}
+
+// P4 web.config_test.
+message WebConfigTestResult {
+  bool ok = 1;
+  // 0 … 20, each 1 … 512 bytes.
+  repeated string messages = 2 [(redact_class) = REDACT_FIELD_CLASS_T_TEXT];
+  bool truncated = 3;
+}
+
+// P5 cert.inspect.
+message CertInspectResult {
+  // 0 … 10, in file order.
+  repeated CertificateInfo certificates = 1;
+  bool truncated = 2;
+}
+
+message CertificateInfo {
+  // 0 … 255 bytes.
+  string subject_cn = 1 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // 0 … 50, each 1 … 255 bytes.
+  repeated string dns_names = 2 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // 0 … 255 bytes.
+  string issuer_cn = 3 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // Unix seconds as parsed by crypto/x509 (negative before 1970).
+  int64 not_before = 4;
+  int64 not_after = 5;
+  // 1 … 64 bytes, lowercase hex.
+  string serial_hex = 6 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // Exactly 32 bytes.
+  bytes sha256_fingerprint = 7 [(redact_class) = REDACT_FIELD_CLASS_X];
+}
+
+// P6 process.top.
+message ProcessTopResult {
+  // 0 … top_n (≤ 50), in the requested order.
+  repeated ProcessInfo processes = 1;
+}
+
+message ProcessInfo {
+  uint32 pid = 1;
+  uint64 start_time_ticks = 2;
+  // 0 … 15 bytes.
+  string comm = 3 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // Numeric: a signed body never carries a user name (executor-ipc R36).
+  uint32 uid = 4;
+  // 0 … 256 bytes; empty: no unit.
+  string unit = 5 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // Hundredths of a percent of one CPU; 0 for order_by MEMORY.
+  uint32 cpu_percent = 6;
+  uint64 rss_bytes = 7;
+  ProcessState state = 8;
+}
+
+// Field 3 of /proc/<pid>/stat.
+enum ProcessState {
+  PROCESS_STATE_UNSPECIFIED = 0;
+  // R
+  PROCESS_STATE_RUNNING = 1;
+  // S
+  PROCESS_STATE_SLEEPING = 2;
+  // D
+  PROCESS_STATE_DISK_SLEEP = 3;
+  // Z
+  PROCESS_STATE_ZOMBIE = 4;
+  // T
+  PROCESS_STATE_STOPPED = 5;
+  // t
+  PROCESS_STATE_TRACING_STOP = 6;
+  // X
+  PROCESS_STATE_DEAD = 7;
+  // I
+  PROCESS_STATE_IDLE = 8;
+  PROCESS_STATE_UNKNOWN = 9;
+}
+
+// P7 mem.status.
+message MemStatusResult {
+  uint64 total_bytes = 1;
+  uint64 available_bytes = 2;
+  uint64 swap_total_bytes = 3;
+  uint64 swap_free_bytes = 4;
+  // Hundredths of a percent, 0 … 10,000. Absent when the kernel has no
+  // /proc/pressure/memory; 0 is a real reading (agent-api R52b).
+  optional uint32 psi_some_avg10 = 5;
+  optional uint32 psi_full_avg10 = 6;
+  uint64 oom_kills_since_boot = 7;
+}
+
+// P8 container.inspect.
+message ContainerInspectResult {
+  // Exactly 64 lowercase hex characters.
+  string id = 1 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // The §4.2 container pattern, without Docker's leading "/".
+  string name = 2 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  ContainerState state = 3;
+  ContainerHealth health = 4;
+  uint32 restart_count = 5;
+  // Docker always reports one.
+  int32 exit_code = 6;
+  // Unix seconds; 0 for Docker's zero time (never started).
+  int64 started_at = 7;
+  // Unix seconds; 0 for Docker's zero time (never finished).
+  int64 finished_at = 8;
+  uint32 failing_streak = 9;
+}
+
+enum ContainerState {
+  CONTAINER_STATE_UNSPECIFIED = 0;
+  CONTAINER_STATE_CREATED = 1;
+  CONTAINER_STATE_RUNNING = 2;
+  CONTAINER_STATE_PAUSED = 3;
+  CONTAINER_STATE_RESTARTING = 4;
+  CONTAINER_STATE_REMOVING = 5;
+  CONTAINER_STATE_EXITED = 6;
+  CONTAINER_STATE_DEAD = 7;
+  CONTAINER_STATE_UNKNOWN = 8;
+}
+
+enum ContainerHealth {
+  CONTAINER_HEALTH_UNSPECIFIED = 0;
+  CONTAINER_HEALTH_NONE = 1;
+  CONTAINER_HEALTH_STARTING = 2;
+  CONTAINER_HEALTH_HEALTHY = 3;
+  CONTAINER_HEALTH_UNHEALTHY = 4;
+}
+
+// P9 db.query_readonly.
+message DbQueryReadonlyResult {
+  // Required.
+  DbQueryData data = 1;
+  bool truncated = 2;
+}
+
+// DbQueryData holds only its oneof (action-envelope §4.1a). Each member's
+// number equals the request's DbQuery value, so the executor checks that
+// the helper answered the query asked with a number comparison (PR #22
+// approval, ruling (a)).
+message DbQueryData {
+  oneof query {
+    DbServerStatus server_status = 1;
+    DbConnectionsSummary connections_summary = 2;
+    DbSessionsTopIdle sessions_top_idle = 3;
+    DbReplicationStatus replication_status = 4;
+    DbReplsetStatus replset_status = 5;
+  }
+}
+
+message DbServerStatus {
+  // 1 … 64 bytes.
+  string version = 1 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  uint64 uptime_seconds = 2;
+  bool read_only = 3;
+}
+
+// idle_in_transaction and reserved_superuser are 0 on an engine without
+// them.
+message DbConnectionsSummary {
+  uint32 max_connections = 1;
+  uint32 current = 2;
+  uint32 active = 3;
+  uint32 idle = 4;
+  uint32 idle_in_transaction = 5;
+  uint32 reserved_superuser = 6;
+}
+
+message DbSessionsTopIdle {
+  // 0 … limit (≤ 100), most idle first.
+  repeated DbSession sessions = 1;
+  // Unix seconds; 0 for engines other than MySQL/MariaDB.
+  int64 server_started_at = 2;
+}
+
+message DbSession {
+  uint64 session_id = 1;
+  // Microseconds since the Unix epoch; 0 for MySQL/MariaDB.
+  int64 session_started_at = 2;
+  // Exactly 32 bytes (executor HMAC) or empty.
+  bytes owner_digest = 3 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 0 … 64 bytes; pseudonymised (redaction R12a item 3).
+  string user = 4 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  // 0 … 64 bytes.
+  string database = 5 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  DbClientKind client_kind = 6;
+  DbSessionState state = 7;
+  uint64 idle_seconds = 8;
+  // 0 with no open transaction; read with state.
+  uint64 transaction_age_seconds = 9;
+}
+
+enum DbClientKind {
+  DB_CLIENT_KIND_UNSPECIFIED = 0;
+  DB_CLIENT_KIND_LOCAL = 1;
+  DB_CLIENT_KIND_REMOTE = 2;
+}
+
+enum DbSessionState {
+  DB_SESSION_STATE_UNSPECIFIED = 0;
+  DB_SESSION_STATE_ACTIVE = 1;
+  DB_SESSION_STATE_IDLE = 2;
+  DB_SESSION_STATE_IDLE_IN_TRANSACTION = 3;
+  DB_SESSION_STATE_IDLE_IN_TRANSACTION_ABORTED = 4;
+  DB_SESSION_STATE_UNKNOWN = 5;
+}
+
+message DbReplicationStatus {
+  DbReplicationRole role = 1;
+  // Present only for REPLICA with a lag the engine reports; absent must
+  // never read as "in sync" (agent-api R52b).
+  optional uint64 lag_seconds = 2;
+}
+
+enum DbReplicationRole {
+  DB_REPLICATION_ROLE_UNSPECIFIED = 0;
+  DB_REPLICATION_ROLE_PRIMARY = 1;
+  DB_REPLICATION_ROLE_REPLICA = 2;
+  DB_REPLICATION_ROLE_STANDALONE = 3;
+}
+
+message DbReplsetStatus {
+  // 0 … 50 (MongoDB's member limit).
+  repeated DbReplsetMember members = 1;
+}
+
+message DbReplsetMember {
+  // 1 … 255 bytes.
+  string name = 1 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  DbMemberState state = 2;
+  bool health = 3;
+  // Behind the primary's optime; absent when there is no primary or the
+  // member has no optime (agent-api R52b).
+  optional uint64 optime_lag_seconds = 4;
+  bool is_self = 5;
+}
+
+enum DbMemberState {
+  DB_MEMBER_STATE_UNSPECIFIED = 0;
+  DB_MEMBER_STATE_PRIMARY = 1;
+  DB_MEMBER_STATE_SECONDARY = 2;
+  DB_MEMBER_STATE_RECOVERING = 3;
+  DB_MEMBER_STATE_STARTUP = 4;
+  DB_MEMBER_STATE_STARTUP2 = 5;
+  DB_MEMBER_STATE_ARBITER = 6;
+  DB_MEMBER_STATE_DOWN = 7;
+  DB_MEMBER_STATE_ROLLBACK = 8;
+  DB_MEMBER_STATE_REMOVED = 9;
+  DB_MEMBER_STATE_UNKNOWN = 10;
+}
+
+// P10 db.backup_verify. With found false, fields 2–6 are zero.
+message DbBackupVerifyResult {
+  bool found = 1;
+  // 0 … 255 bytes, file name only.
+  string newest_name = 2 [(redact_class) = REDACT_FIELD_CLASS_T_NAME];
+  uint64 age_seconds = 3;
+  uint64 size_bytes = 4;
+  BackupFormat format = 5;
+  bool format_ok = 6;
+  // 0 … 4, packed, sorted, distinct.
+  repeated BackupCheck checks_failed = 7;
+}
+
+enum BackupFormat {
+  BACKUP_FORMAT_UNSPECIFIED = 0;
+  BACKUP_FORMAT_MYSQLDUMP_TEXT = 1;
+  // gzip only (§4.4 P10).
+  BACKUP_FORMAT_MYSQLDUMP_COMPRESSED = 2;
+  BACKUP_FORMAT_POSTGRES_CUSTOM = 3;
+  BACKUP_FORMAT_MONGODB_ARCHIVE = 4;
+  BACKUP_FORMAT_UNRECOGNISED = 5;
+}
+
+enum BackupCheck {
+  BACKUP_CHECK_UNSPECIFIED = 0;
+  BACKUP_CHECK_TOO_OLD = 1;
+  BACKUP_CHECK_TOO_SMALL = 2;
+  BACKUP_CHECK_BAD_FORMAT = 3;
+  BACKUP_CHECK_NOT_FOUND = 4;
+}
+
+// P11 service.restart.
+message ServiceRestartResult {
+  ServiceStatusResult before = 1;
+  ServiceStatusResult after = 2;
+}
+
+// P12 service.reset_failed.
+message ServiceResetFailedResult {
+  ServiceStatusResult before = 1;
+  ServiceStatusResult after = 2;
+}
+
+// P13 service.reload.
+message ServiceReloadResult {
+  ServiceStatusResult before = 1;
+  ServiceStatusResult after = 2;
+}
+
+// P14 service.start.
+message ServiceStartResult {
+  ServiceStatusResult before = 1;
+  ServiceStatusResult after = 2;
+}
+
+// P15 service.set_cpu_quota. 0: no limit.
+message ServiceSetCpuQuotaResult {
+  uint32 previous_cpu_quota_percent = 1;
+  uint32 new_cpu_quota_percent = 2;
+}
+
+// P16 process.signal.
+message ProcessSignalResult {
+  bool delivered = 1;
+  bool exited_within_wait = 2;
+}
+
+// P17 file.delete_by_age. With dry_run, fields 1 and 2 are the would-be
+// values.
+message FileDeleteByAgeResult {
+  uint32 files_deleted = 1;
+  uint64 bytes_freed = 2;
+  // 0 when files_deleted is 0.
+  uint32 oldest_age_days = 3;
+  uint32 newest_age_days = 4;
+  bool stopped_by_limit = 5;
+}
+
+// P18 journal.vacuum.
+message JournalVacuumResult {
+  uint64 before_bytes = 1;
+  uint64 after_bytes = 2;
+}
+
+// P19 pkg.cache_clean.
+message PkgCacheCleanResult {
+  uint64 before_bytes = 1;
+  uint64 after_bytes = 2;
+}
+
+// P21 container.restart.
+message ContainerRestartResult {
+  ContainerInspectResult before = 1;
+  ContainerInspectResult after = 2;
+}
+
+// P22 db.terminate_session.
+message DbTerminateSessionResult {
+  // Exactly one per requested id, in request order (1 … 20).
+  repeated DbSessionOutcome sessions = 1;
+}
+
+message DbSessionOutcome {
+  uint64 session_id = 1;
+  DbTerminateOutcome outcome = 2;
+}
+
+enum DbTerminateOutcome {
+  DB_TERMINATE_OUTCOME_UNSPECIFIED = 0;
+  DB_TERMINATE_OUTCOME_TERMINATED = 1;
+  DB_TERMINATE_OUTCOME_NOT_FOUND = 2;
+  DB_TERMINATE_OUTCOME_NOT_IDLE_ENOUGH = 3;
+  DB_TERMINATE_OUTCOME_PROTECTED = 4;
+  DB_TERMINATE_OUTCOME_CHANGED = 5;
+  DB_TERMINATE_OUTCOME_FAILED = 6;
+}

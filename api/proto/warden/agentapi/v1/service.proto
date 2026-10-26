@@ -1,0 +1,28 @@
+// The agent API's gRPC services.
+//
+// Source of truth: warden/specs/agent-api.md §4.1.
+// The agent only dials out; the control plane serves both services, each
+// on its own endpoint. Timeouts, size and rate limits are in §4.1 and §7.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/agentapi/v1/enrollment.proto";
+import "warden/agentapi/v1/stream.proto";
+import "warden/agentapi/v1/telemetry.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// AgentEnrollment is served on the enrollment endpoint only.
+service AgentEnrollment {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+// AgentControl is served on the agent endpoint (mutual TLS) only.
+service AgentControl {
+  // The control stream: deliveries down, outbox and health up (R9–R42).
+  rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+  rpc Renew(RenewRequest) returns (RenewResponse);
+  rpc UploadTelemetry(TelemetryBatch) returns (TelemetryAck);
+}

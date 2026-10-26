@@ -1,0 +1,234 @@
+// Messages of the Connect stream, in both directions.
+//
+// Source of truth: warden/specs/agent-api.md §4.2, §4.4, §4.5, §4.8 and
+// §4.10.1; limits written as the warden.v1 contract options (R52c);
+// redaction classes from redaction.md §4.1.
+// Rules the options cannot state ("exactly one of", "present only with",
+// the "sent" column of AgentCondition) are checked by hand (R13).
+// Field numbers and enum values are final wire numbers (R52). Never
+// renumber or reuse one.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/agentapi/v1/outbox.proto";
+import "warden/v1/executor.proto";
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// AgentMessage holds only its oneof (action-envelope §4.1a). Its size
+// limit depends on the member (§4.2, R11), so it is on each member type.
+message AgentMessage {
+  oneof body {
+    Hello hello = 1;
+    DeliveryAck delivery_ack = 2;
+    OutboxMessage outbox = 3;
+    HealthReport health = 4;
+  }
+}
+
+// Hello is the first message of a stream only (R9).
+message Hello {
+  option (warden.v1.max_message_bytes) = 512;
+
+  // 1 … contract_version_max.
+  uint32 contract_version_min = 1 [(warden.v1.min_uint) = 1];
+  uint32 contract_version_max = 2 [(warden.v1.max_uint) = 65535];
+  // Equal to the certificate's UUID (R8).
+  string server_id = 3 [
+    (warden.v1.min_bytes) = 36,
+    (warden.v1.max_bytes) = 36,
+    (warden.v1.pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // agent-identity §4.8.
+  string instance_id = 4 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.pattern) = "^[0-9a-f]{32}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // SemVer 2.0.0 without build metadata (§4.10.1).
+  string agent_version = 5 [
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // A connect-time snapshot, superseded by the first HealthReport (R10).
+  bool executor_available = 6;
+}
+
+message DeliveryAck {
+  option (warden.v1.max_message_bytes) = 32;
+
+  // A delivery_id not sent on this stream is ignored and counted.
+  uint64 delivery_id = 1 [(warden.v1.min_uint) = 1];
+}
+
+// HealthReport (R39–R41) never carries the instance ID.
+message HealthReport {
+  option (warden.v1.max_message_bytes) = 1024;
+
+  int64 agent_time_ms = 1 [(warden.v1.min_int) = 1];
+  // Packed; only values marked "sent" (§4.4), checked by hand.
+  repeated AgentCondition conditions = 2 [
+    (warden.v1.max_count) = 16,
+    (warden.v1.sorted) = true
+  ];
+  // R40.
+  repeated bytes controlplane_ca_sha256 = 3 [
+    (warden.v1.max_count) = 2,
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.sorted) = true,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  uint32 outbox_messages = 4 [(warden.v1.max_uint) = 1000000];
+  uint64 outbox_bytes = 5 [(warden.v1.max_uint) = 1099511627776];
+  // Since agent start.
+  uint64 telemetry_dropped_batches = 6 [(warden.v1.max_uint) = 1099511627776];
+  // Outbox messages answered REJECTED or removed under R29 or R32a since
+  // agent start.
+  uint64 rejected_messages = 7 [(warden.v1.max_uint) = 1099511627776];
+  // Agent clock; 0 = no valid status reply since start.
+  int64 last_executor_status_at = 8;
+  // The running agent's REDACT_RULES_VERSION (redaction R41a).
+  uint32 redact_rules_version = 9 [(warden.v1.min_uint) = 1];
+  // A class with no drops is left out (redaction §4.6a).
+  repeated RedactDropCount redact_drops = 10 [
+    (warden.v1.max_count) = 7,
+    (warden.v1.sorted_by) = "class"
+  ];
+}
+
+message RedactDropCount {
+  RedactClass class = 1;
+  // Items dropped or withheld since agent start.
+  uint64 dropped = 2 [(warden.v1.max_uint) = 1099511627776];
+}
+
+// RedactClass is the wire enum of the classes whose items can be dropped.
+// It is not warden.v1.RedactFieldClass; its values are stable.
+enum RedactClass {
+  REDACT_CLASS_UNSPECIFIED = 0;
+  REDACT_CLASS_T_NAME = 1;
+  REDACT_CLASS_T_PATH = 2;
+  REDACT_CLASS_T_TEXT = 3;
+  REDACT_CLASS_E_TEXT = 4;
+  REDACT_CLASS_L_VALUE = 5;
+  REDACT_CLASS_N_PATTERNED = 6;
+  REDACT_CLASS_UNSIGNED_BODY = 7;
+}
+
+// AgentCondition: values 1–5 are sent in HealthReport; 6–14 are local only
+// and make a HealthReport MALFORMED (R13).
+enum AgentCondition {
+  AGENT_CONDITION_UNSPECIFIED = 0;
+  AGENT_CONDITION_EXECUTOR_UNAVAILABLE = 1;
+  AGENT_CONDITION_OUTBOX_HIGH_WATER = 2;
+  AGENT_CONDITION_OUTBOX_FULL = 3;
+  AGENT_CONDITION_TELEMETRY_DROPPING = 4;
+  AGENT_CONDITION_ADMIN_TOOL_RECORD_UNREADABLE = 5;
+  AGENT_CONDITION_CONTROLPLANE_TRUST_OUTDATED = 6;
+  AGENT_CONDITION_TRUST_CHECK_IMPOSSIBLE = 7;
+  AGENT_CONDITION_CA_SWITCH_VERIFY_FAILED = 8;
+  AGENT_CONDITION_ENROLLMENT_TOKEN_EXPIRED = 9;
+  AGENT_CONDITION_IDENTITY_EXPIRED_OR_MISSING = 10;
+  AGENT_CONDITION_CERTIFICATE_REFUSED = 11;
+  AGENT_CONDITION_CONTRACT_VERSION_UNSUPPORTED = 12;
+  AGENT_CONDITION_EXECUTOR_BINDING_FILE_INVALID = 13;
+  AGENT_CONDITION_MEMORY_LIMIT_INVALID = 14;
+}
+
+// ControlMessage holds only its oneof (action-envelope §4.1a). The agent
+// applies the R12 rules to it too (§4.5).
+message ControlMessage {
+  option (warden.v1.max_message_bytes) = 266240;
+
+  oneof body {
+    Welcome welcome = 1;
+    Delivery delivery = 2;
+    MessageAck message_ack = 3;
+  }
+}
+
+// Welcome is sent exactly once, first.
+message Welcome {
+  // In the agent's Hello range (R49), checked by hand.
+  uint32 contract_version = 1;
+  // Shown locally only (R41).
+  int64 control_plane_time_ms = 2 [(warden.v1.min_int) = 1];
+}
+
+message Delivery {
+  // The outbox row's outbox_seq, strictly increasing on a stream.
+  uint64 delivery_id = 1 [(warden.v1.min_uint) = 1];
+  DeliveryContent content = 2 [(warden.v1.required) = true];
+}
+
+// DeliveryContent holds only its oneof (action-envelope §4.1a).
+message DeliveryContent {
+  oneof content {
+    EnvelopeDelivery envelope = 1;
+    TrustDocument trust_document = 2;
+    StatusRequest status_request = 3;
+  }
+}
+
+message EnvelopeDelivery {
+  // Opaque (R22). No size option by design (§4.10.1): an envelope over
+  // 16,384 bytes is acknowledged and reported NOT_FORWARDED_OVERSIZED, and
+  // length 0 is a strict-decode failure, both checked by hand (R21, R23).
+  bytes signed_envelope = 1;
+}
+
+// TrustDocument (signing-and-updates §4.11).
+message TrustDocument {
+  warden.v1.TrustKind kind = 1 [(warden.v1.required) = true];
+  // SignedDocument bytes as held, or canonical PEM for CONTROLPLANE_CA;
+  // opaque (R24). No size option by design (§4.10.1): a document over its
+  // kind's limit is acknowledged and reported as TrustDocumentOversize,
+  // checked by hand after acknowledging (R21, R24).
+  bytes document = 2;
+}
+
+message StatusRequest {
+  // From crypto/rand (R25).
+  bytes challenge = 1 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32
+  ];
+  // R26.
+  bool priority = 2;
+}
+
+message MessageAck {
+  // The acknowledged OutboxMessage.
+  uint64 message_seq = 1 [(warden.v1.min_uint) = 1];
+  AckOutcome outcome = 2 [(warden.v1.required) = true];
+  // Required for RETRY_LATER and REJECTED, absent otherwise; checked by
+  // hand.
+  AckReason reason = 3;
+}
+
+enum AckOutcome {
+  ACK_OUTCOME_UNSPECIFIED = 0;
+  ACK_OUTCOME_ACCEPTED = 1;
+  ACK_OUTCOME_DUPLICATE = 2;
+  ACK_OUTCOME_RETRY_LATER = 3;
+  ACK_OUTCOME_REJECTED = 4;
+}
+
+// AckReason (§4.8): values 1–5 go with RETRY_LATER, 6–7 with REJECTED.
+enum AckReason {
+  ACK_REASON_UNSPECIFIED = 0;
+  ACK_REASON_REVOCATION_STATE_STALE = 1;
+  ACK_REASON_INBOX_FULL = 2;
+  ACK_REASON_RATE_LIMITED = 3;
+  ACK_REASON_DATABASE_UNAVAILABLE = 4;
+  ACK_REASON_ORDER = 5;
+  ACK_REASON_TOO_LARGE = 6;
+  ACK_REASON_MALFORMED = 7;
+}
