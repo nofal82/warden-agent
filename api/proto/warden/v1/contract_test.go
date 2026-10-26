@@ -12,6 +12,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 
+	// Registers the warden.agentapi.v1 files, which the contract checks
+	// cover too (agent-api R52, AC36).
+	_ "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 	"github.com/nofal82/warden-agent/internal/testproto/ordertest"
 )
@@ -80,35 +83,70 @@ func TestRequestsHaveNoMessageFields(t *testing.T) {
 }
 
 // TestEnumsStartUnspecified checks that every enum's zero value is
-// *_UNSPECIFIED, which validators always reject (§4.1).
+// *_UNSPECIFIED, which validators always reject (§4.1), in every file of
+// both contract packages, nested enums included (agent-api §4,
+// executor-ipc §4.5).
 func TestEnumsStartUnspecified(t *testing.T) {
-	files := []protoreflect.FileDescriptor{
-		wardenv1.File_warden_v1_envelope_proto,
-		wardenv1.File_warden_v1_typed_request_proto,
-	}
-	for _, f := range files {
+	for _, f := range allContractFiles(t) {
+		var enums []protoreflect.EnumDescriptor
 		for i := 0; i < f.Enums().Len(); i++ {
-			ed := f.Enums().Get(i)
+			enums = append(enums, f.Enums().Get(i))
+		}
+		var walk func(protoreflect.MessageDescriptors)
+		walk = func(mds protoreflect.MessageDescriptors) {
+			for i := 0; i < mds.Len(); i++ {
+				for j := 0; j < mds.Get(i).Enums().Len(); j++ {
+					enums = append(enums, mds.Get(i).Enums().Get(j))
+				}
+				walk(mds.Get(i).Messages())
+			}
+		}
+		walk(f.Messages())
+		for _, ed := range enums {
 			zero := ed.Values().ByNumber(0)
-			if zero == nil || len(zero.Name()) < len("_UNSPECIFIED") ||
-				string(zero.Name()[len(zero.Name())-len("_UNSPECIFIED"):]) != "_UNSPECIFIED" {
-				t.Errorf("enum %s: value 0 is not *_UNSPECIFIED", ed.Name())
+			if zero == nil || !strings.HasSuffix(string(zero.Name()), "_UNSPECIFIED") {
+				t.Errorf("enum %s: value 0 is not *_UNSPECIFIED", ed.FullName())
 			}
 		}
 	}
 }
 
-// contractFiles is every registered file of package warden.v1, so a contract
+// contractPackages are the proto packages of the contract (decision 0008):
+// warden.v1, shared with the executor, and warden.agentapi.v1, the agent
+// and control plane API.
+var contractPackages = []protoreflect.FullName{"warden.v1", "warden.agentapi.v1"}
+
+// minFiles is the fewest files each package must register, so a package
+// that silently failed to link is not read as "no violations".
+var minFiles = map[protoreflect.FullName]int{
+	// envelope, typed_request, options, and the result and executor
+	// messages.
+	"warden.v1": 4,
+	// The services and messages of agent-api §4.
+	"warden.agentapi.v1": 1,
+}
+
+// contractFiles is every registered file of package pkg, so a contract
 // file added later is covered without editing these tests.
-func contractFiles(t *testing.T) []protoreflect.FileDescriptor {
+func contractFiles(t *testing.T, pkg protoreflect.FullName) []protoreflect.FileDescriptor {
 	t.Helper()
 	var files []protoreflect.FileDescriptor
-	protoregistry.GlobalFiles.RangeFilesByPackage("warden.v1", func(f protoreflect.FileDescriptor) bool {
+	protoregistry.GlobalFiles.RangeFilesByPackage(pkg, func(f protoreflect.FileDescriptor) bool {
 		files = append(files, f)
 		return true
 	})
-	if len(files) < 2 {
-		t.Fatalf("found %d warden.v1 files, want at least envelope.proto and typed_request.proto", len(files))
+	if len(files) < minFiles[pkg] {
+		t.Fatalf("found %d %s files, want at least %d", len(files), pkg, minFiles[pkg])
+	}
+	return files
+}
+
+// allContractFiles is every registered file of both contract packages.
+func allContractFiles(t *testing.T) []protoreflect.FileDescriptor {
+	t.Helper()
+	var files []protoreflect.FileDescriptor
+	for _, pkg := range contractPackages {
+		files = append(files, contractFiles(t, pkg)...)
 	}
 	return files
 }
@@ -137,7 +175,7 @@ func mapFields(f protoreflect.FileDescriptor) []protoreflect.FullName {
 // strict scanner's R13 (j) rule rejects, and duplicate keys silently keep
 // the last entry (Nofal, 2026-10-18).
 func TestContractHasNoMaps(t *testing.T) {
-	for _, f := range contractFiles(t) {
+	for _, f := range allContractFiles(t) {
 		for _, name := range mapFields(f) {
 			t.Errorf("%s: map field %s; the contract must never contain map fields", f.Path(), name)
 		}
@@ -148,7 +186,7 @@ func TestContractHasNoMaps(t *testing.T) {
 // rules assume proto3: repeated scalars packed by default and implicit
 // presence for plain scalars (Nofal, 2026-10-18).
 func TestContractIsProto3(t *testing.T) {
-	for _, f := range contractFiles(t) {
+	for _, f := range allContractFiles(t) {
 		if f.Syntax() != protoreflect.Proto3 {
 			t.Errorf("%s has syntax %v, want proto3", f.Path(), f.Syntax())
 		}
@@ -249,7 +287,7 @@ func oneofOrderViolations(md protoreflect.MessageDescriptor, od protoreflect.One
 // Signers must still marshal with proto.MarshalOptions{Deterministic: true}
 // (R3).
 func TestContractFieldOrder(t *testing.T) {
-	for _, f := range contractFiles(t) {
+	for _, f := range allContractFiles(t) {
 		for _, v := range orderViolations(f.Messages()) {
 			t.Errorf("%s: %s", f.Path(), v)
 		}
