@@ -88,3 +88,16 @@ func groupBy4(s string) string {
 	}
 	return strings.Join(append(parts, s), " ")
 }
+
+// Fuzz finding (FuzzRedactEText): a truncated IPv6 network is written in
+// lowercase, so "\E::" became "\e::/48", an R25a escape that a second pass
+// (intake) decodes. The output must be a fixed point.
+func TestIPTruncationMakesNoEscape(t *testing.T) {
+	for _, in := range []string{`\E::`, `x \EC00::1 y`, `\\\E::`, `\\E::`} {
+		once, _ := redactE(t, in)
+		twice, _ := redactE(t, once)
+		if once != twice {
+			t.Errorf("%q: not a fixed point: %q then %q", in, once, twice)
+		}
+	}
+}
