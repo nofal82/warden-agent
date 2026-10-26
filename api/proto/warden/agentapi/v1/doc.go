@@ -9,7 +9,9 @@
 // gRPC library and its network stack never reach the root process.
 //
 // Field limits and redaction classes are written in the .proto files as
-// the options of warden/v1/options.proto (agent-api R52c). The .pb.go
+// the options of warden/v1/options.proto (agent-api R52c). rules.go holds
+// the few rules an option cannot state, next to the options they complete
+// (ValidUnitID's "no .."), and reads the rest from the options. The .pb.go
 // files are generated, never edited. Regenerate them with the pinned tools
 // listed in ../../v1/README.md.
 package agentapiv1
