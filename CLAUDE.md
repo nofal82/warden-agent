@@ -23,10 +23,13 @@ Sources of truth, in order:
 | Path | What lives there |
 | --- | --- |
 | `api/proto/warden/v1/` | Protocol Buffers contract shared with the control plane |
+| `api/proto/warden/agentapi/v1/` | Agent and control plane gRPC services and messages (decision 0008); never imported by the executor or dbhelper |
 | `cmd/warden-agent/` | Agent binary entry point |
 | `cmd/warden-executor/` | Executor binary entry point |
 | `internal/agent/` | Telemetry, discovery, log matching, buffering, gRPC client |
 | `internal/redact/` | Removes secrets and personal data before anything leaves the server |
+| `redact/` | Public redaction package (normalisation, detectors, replacement) shared by the agent and the control plane (redaction.md OQ4) |
+| `internal/testproto/` | Test-only protobuf messages; never linked into a shipped binary |
 | `internal/identity/` | Enrollment, certificates, rotation, revocation, mTLS config |
 | `internal/envelope/` | Signed action envelope: build, verify, replay protection |
 | `internal/ipc/` | Agent ↔ executor Unix-socket protocol |
