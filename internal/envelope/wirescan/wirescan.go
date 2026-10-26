@@ -72,6 +72,9 @@ func Unmarshal(b []byte, m proto.Message) error {
 		return fmt.Errorf("%w: %w", ErrMalformed, err)
 	}
 	if hasUnknown(m.ProtoReflect()) {
+		// Unreachable while check is sound; kept as defence in depth —
+		// this is why the package cannot reach 100% coverage without a
+		// fake.
 		return ErrUnknownField
 	}
 	return nil
