@@ -167,7 +167,7 @@ func (ps *pass) detect(s string) ([]hit, error) {
 					continue
 				}
 			}
-			if isMarkerText(s[sp.start:sp.end]) || protectedSpan(s, d, sp) {
+			if ps.r.isMarkerText(s[sp.start:sp.end]) || protectedSpan(s, d, sp) {
 				continue
 			}
 			if d.extend && ps.mode == modeField {
@@ -200,11 +200,11 @@ func (ps *pass) applies(d *detector) bool {
 	return d.classes.has(ps.class)
 }
 
-// tokenBoundaries are R31's token boundaries for "extend".
-const tokenBoundaries = " \t\n\"',;&<>"
+// extendBoundaries are R31's token boundaries for "extend".
+const extendBoundaries = " \t\n\"',;&<>"
 
 func tokenBoundary(c byte) bool {
-	return strings.IndexByte(tokenBoundaries, c) >= 0
+	return strings.IndexByte(extendBoundaries, c) >= 0
 }
 
 // extendSpan widens a match to the nearest token boundaries (R31). A value

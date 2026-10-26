@@ -38,8 +38,20 @@ func publicIP() detector {
 // candidate at the start of the hex-and-colon token around each ':', an
 // IPv4 candidate at each digit that follows neither a digit nor a '.'.
 // The boundary checks are the same as for an unanchored search.
-// keptPrefixes are the ranges R34 keeps (filled in by the next commit).
-var keptPrefixes []netip.Prefix
+// keptPrefixes are the ranges R34 keeps: unspecified and loopback,
+// private (RFC 1918, ULA), RFC 6598, link-local, and the non-unicast
+// ranges (OQ8). A table, so the rule-set digest covers it.
+var keptPrefixes = func() []netip.Prefix {
+	var ps []netip.Prefix
+	for _, p := range []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+		"172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+		"::/128", "::1/128", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
+	} {
+		ps = append(ps, netip.MustParsePrefix(p))
+	}
+	return ps
+}()
 
 func ipSpans(v4, v6 *regexp.Regexp, s string) []span {
 	var out []span
@@ -165,19 +177,12 @@ func prefixSuffix(s string, i, maxBits int) (int, int, bool) {
 	return n, j, true
 }
 
-// keptIP lists the ranges R34 keeps: loopback, private (RFC 1918, ULA),
-// RFC 6598, link-local, unspecified, and the non-unicast ranges.
+// keptIP reports whether a (unmapped) is in a range R34 keeps.
 func keptIP(a netip.Addr) bool {
-	if a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() ||
-		a.IsLinkLocalMulticast() || a.IsUnspecified() || a.IsMulticast() {
-		return true
+	for _, p := range keptPrefixes {
+		if p.Contains(a) {
+			return true
+		}
 	}
-	if a.Is4() {
-		b := a.As4()
-		return b[0] == 0 || // 0.0.0.0/8
-			(b[0] == 100 && b[1]&0xc0 == 64) || // 100.64.0.0/10
-			b[0] >= 240 // 240.0.0.0/4 and 255.255.255.255
-	}
-	b := a.As16()
-	return b[0] == 0xfe && b[1]&0xc0 == 0xc0 // fec0::/10
+	return false
 }

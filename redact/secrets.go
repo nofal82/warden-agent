@@ -318,7 +318,9 @@ func awsAccessKeyID() detector {
 }
 
 func awsSecretKey() detector {
-	const pattern = `(?i)(?:aws_secret_access_key|secret_access_key|secretaccesskey)["']?\s*(?:=>|[:=]|\s)\s*["']?([A-Za-z0-9/+=]{40})`
+	// A quote may carry any number of backslashes (escaped JSON, ruling
+	// on PR #10).
+	const pattern = `(?i)(?:aws_secret_access_key|secret_access_key|secretaccesskey)(?:\\*["'])?\s*(?:=>|[:=]|\s)\s*(?:\\*["'])?([A-Za-z0-9/+=]{40})`
 	re := regexp.MustCompile(pattern)
 	return detector{
 		id:      "aws-secret-key",
@@ -536,27 +538,110 @@ func urlSecretParam() detector {
 	}
 }
 
-// headerValue is the value part shared by the header detectors: a quoted
-// value up to its closing quote, or the rest of the line.
-const headerValue = `\s*[:=]\s*(?:"([^"\n]*)"?|'([^'\n]*)'?|([^\n]*))`
+// headerSeparator ends a header key: an optional closing quote (with any
+// number of backslashes, for escaped JSON), then ':' or '='. The value
+// after it is a quoted value up to its closing quote, or the rest of the
+// line (headerValueAt).
+const headerSeparator = `(?:\\*["'])?\s*[:=]\s*`
+
+// headerSpans finds each keyword (on the lowercased text, at \b) followed
+// by headerSeparator and returns its value. An occurrence inside an
+// earlier value is not tried again (security review H1).
+func headerSpans(s string, keyword string, sep *regexp.Regexp) []span {
+	lower := asciiLower(s)
+	var out []span
+	covered := 0
+	eachIndex(lower, keyword, func(i int) {
+		if i < covered || !wordStart(lower, i) {
+			return
+		}
+		m := matchAt(sep, lower, i+len(keyword))
+		if m == nil {
+			return
+		}
+		if sp, ok := headerValueAt(s, m[1]); ok {
+			out = append(out, sp)
+			covered = sp.end
+		}
+	})
+	return out
+}
+
+// headerValueAt reads a header value at s[v:]: a quoted value up to its
+// closing quote (quotedValue), else to the end of the line. Trailing
+// blanks are left out, so a value that is only blanks is not a match.
+func headerValueAt(s string, v int) (span, bool) {
+	start, end := v, lineEnd(s, v)
+	if qs, qe, quoted, closed := quotedValue(s, v); quoted {
+		start = qs
+		if closed {
+			end = qe
+		} else {
+			end = lineEnd(s, qs)
+		}
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return span{start: start, end: end}, end > start
+}
+
+func lineEnd(s string, i int) int {
+	if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(s)
+}
+
+// quotedValue reads a quoted value at s[v:]. The opening quote may follow
+// k backslashes (a JSON document logged inside a JSON string, at any
+// depth; ruling on PR #10). It closes at the same quote character
+// preceded by exactly k backslashes, or, at k = 0, by an even number (a
+// plain JSON string, where \" is part of the value); a single-quoted value
+// at k = 0 closes at the next single quote (shell, SQL). It returns the
+// content span, whether the value is quoted, and whether it closed on its
+// line.
+func quotedValue(s string, v int) (start, end int, quoted, closed bool) {
+	k := 0
+	for v+k < len(s) && s[v+k] == '\\' {
+		k++
+	}
+	if v+k >= len(s) || (s[v+k] != '"' && s[v+k] != '\'') {
+		return 0, 0, false, false
+	}
+	q := s[v+k]
+	start = v + k + 1
+	for i := start; i < len(s) && s[i] != '\n'; i++ {
+		if s[i] != q {
+			continue
+		}
+		m := 0
+		for i-m-1 >= start && s[i-m-1] == '\\' {
+			m++
+		}
+		if m == k || (k == 0 && (q == '\'' || m%2 == 0)) {
+			return start, i - m, true, true
+		}
+	}
+	return start, len(s), true, false
+}
 
 func authorizationHeader() detector {
-	const header = `(?i)\b(?:proxy-)?authorization["']?` + headerValue
+	const header = `(?i)\b(?:proxy-)?authorization` + headerSeparator + `<value>`
 	const standalone = `(?i)\b(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{8,}=*)`
-	h := anchored(`authorization["']?` + headerValue)
+	sep := anchored(headerSeparator)
 	st := anchored(`(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{8,}=*)`)
 	return detector{
 		id:      "authorization-header",
 		kind:    kindValue,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(header, standalone, "anchor:keywords"),
+		canon:   canon(header, standalone, "anchor:keywords", "value:quoted-by-level-or-line"),
 		find: func(s string) ([]span, error) {
 			// The anchored patterns run on the ASCII-lowercased text, which
 			// keeps every offset, in place of (?i).
-			lower := asciiLower(s)
-			out := trimSpans(s, literalSpans(lower, []string{"authorization"}, h, true, true))
-			return append(out, literalSpans(lower, []string{"bearer", "basic", "token"}, st, true, true)...), nil
+			out := headerSpans(s, "authorization", sep)
+			return append(out, literalSpans(asciiLower(s), []string{"bearer", "basic", "token"}, st, true, true)...), nil
 		},
 		samples: func() ([]string, []string) {
 			return []string{"Authorization: Bearer " + strings.Repeat("a", 12)},
@@ -566,37 +651,22 @@ func authorizationHeader() detector {
 }
 
 func cookieHeader() detector {
-	const header = `(?i)\b(?:set-)?cookie["']?` + headerValue
-	h := anchored(`cookie["']?` + headerValue)
+	const header = `(?i)\b(?:set-)?cookie` + headerSeparator + `<value>`
+	sep := anchored(headerSeparator)
 	return detector{
 		id:      "cookie-header",
 		kind:    kindValue,
 		classes: textClasses,
-		canon:   canon(header, "anchor:cookie"),
+		canon:   canon(header, "anchor:cookie", "value:quoted-by-level-or-line"),
 		find: func(s string) ([]span, error) {
 			// "Set-Cookie": '-' is not a word character, so \b holds before
 			// "cookie" there too.
-			return trimSpans(s, literalSpans(asciiLower(s), []string{"cookie"}, h, true, true)), nil
+			return headerSpans(s, "cookie", sep), nil
 		},
 		samples: func() ([]string, []string) {
 			return []string{"Cookie: session=" + "abc"}, []string{"cookie jar empty"}
 		},
 	}
-}
-
-// trimSpans leaves trailing spaces and tabs out of header values, so a
-// value that is only blanks is not a match.
-func trimSpans(s string, spans []span) []span {
-	var out []span
-	for _, sp := range spans {
-		for sp.end > sp.start && (s[sp.end-1] == ' ' || s[sp.end-1] == '\t') {
-			sp.end--
-		}
-		if sp.end > sp.start {
-			out = append(out, sp)
-		}
-	}
-	return out
 }
 
 // secretKeyWords are the key-name fragments of §4.2 secret-assignment.
@@ -607,16 +677,18 @@ var secretKeyWords = []string{
 	"masterauth", "requirepass",
 }
 
-// assignmentValue is a quoted string (JSON, YAML, shell) or a bare value up to
-// whitespace, ';', ',', '&' or '}'.
-const assignmentValue = `(?:"((?:[^"\\\n]|\\.)*)"|'([^'\n]*)'|([^\s;,&}]+))`
+// assignmentBare is an unquoted value: up to whitespace, ';', ',', '&' or
+// '}'. A quoted value (JSON, YAML, shell, and escaped JSON at any depth)
+// is read by quotedValue.
+const assignmentBare = `[^\s;,&}]+`
 
-// After a key, its separator and value: an optional closing quote, spaces,
-// and "=", ":" or "=>" (or only whitespace for requirepass and
-// masterauth). Anchored: the key itself is found by keyword search.
+// After a key, its separator: an optional closing quote (with any number
+// of backslashes), spaces, and "=", ":" or "=>" (or only whitespace for
+// requirepass and masterauth). Anchored: the key itself is found by
+// keyword search.
 const (
-	secretAfterKey      = `^["']?[ \t]*(?:=>|=|:)[ \t]*` + assignmentValue
-	secretAfterSpaceKey = `^["']?[ \t]+` + assignmentValue
+	assignAfterKey      = `^(?:\\*["'])?[ \t]*(?:=>|=|:)[ \t]*`
+	assignAfterSpaceKey = `^(?:\\*["'])?[ \t]+`
 )
 
 // secretSQLPatterns are the SQL and Azure forms of secret-assignment, with
@@ -631,12 +703,13 @@ var secretSQLPatterns = []struct {
 }
 
 func secretAssignment() detector {
-	after := regexp.MustCompile(secretAfterKey)
-	afterSpace := regexp.MustCompile(secretAfterSpaceKey)
+	after := regexp.MustCompile(assignAfterKey)
+	afterSpace := regexp.MustCompile(assignAfterSpaceKey)
+	bare := anchored(assignmentBare)
 	sql := make([]*regexp.Regexp, len(secretSQLPatterns))
-	pats := []string{"anchor:keywords",
-		`["']?[A-Za-z0-9_.-]*(?i:` + strings.Join(secretKeyWords, "|") + `)[A-Za-z0-9_.-]*` + strings.TrimPrefix(secretAfterKey, "^"),
-		`[A-Za-z0-9_.-]*(?i:requirepass|masterauth)[A-Za-z0-9_.-]*` + strings.TrimPrefix(secretAfterSpaceKey, "^"),
+	pats := []string{"anchor:keywords", "value:quoted-by-level-or-bare", assignmentBare,
+		`["']?[A-Za-z0-9_.-]*(?i:` + strings.Join(secretKeyWords, "|") + `)[A-Za-z0-9_.-]*` + strings.TrimPrefix(assignAfterKey, "^"),
+		`[A-Za-z0-9_.-]*(?i:requirepass|masterauth)[A-Za-z0-9_.-]*` + strings.TrimPrefix(assignAfterSpaceKey, "^"),
 	}
 	for i, p := range secretSQLPatterns {
 		sql[i] = anchored(p.body)
@@ -649,7 +722,7 @@ func secretAssignment() detector {
 		canon:   canon(pats...),
 		find: func(s string) ([]span, error) {
 			lower := asciiLower(s)
-			out := secretKeyValues(s, lower, after, afterSpace)
+			out := secretKeyValues(s, lower, after, afterSpace, bare)
 			for i, re := range sql {
 				out = append(out, literalSpans(lower, secretSQLPatterns[i].literals, re, true, true)...)
 			}
@@ -665,7 +738,7 @@ func secretAssignment() detector {
 // secretKeyValues finds each key that contains a keyword (the whole run of
 // [A-Za-z0-9_.-] around it, as the §4.2 pattern's leftmost match would)
 // and returns the value after its separator.
-func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
+func secretKeyValues(s, lower string, after, afterSpace, bare *regexp.Regexp) []span {
 	var out []span
 	seen := map[int]bool{}
 	for _, kw := range secretKeyWords {
@@ -699,7 +772,11 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 				res = append(res, afterSpace)
 			}
 			for _, re := range res {
-				if sp, ok := firstGroup(re, s, ke); ok {
+				m := re.FindStringIndex(s[ke:])
+				if m == nil {
+					continue
+				}
+				if sp, ok := assignmentValueAt(s, ke+m[1], bare); ok {
 					out = append(out, sp)
 					covered = max(covered, sp.end)
 					break
@@ -712,14 +789,15 @@ func secretKeyValues(s, lower string, after, afterSpace *regexp.Regexp) []span {
 
 func isKeyByte(c byte) bool { return isAlnum(c) || c == '_' || c == '.' || c == '-' }
 
-// firstGroup matches the anchored re at s[at:] and returns its first
-// non-empty capture group as an absolute span.
-func firstGroup(re *regexp.Regexp, s string, at int) (span, bool) {
-	m := re.FindStringSubmatchIndex(s[at:])
-	for g := 2; m != nil && g+1 < len(m); g += 2 {
-		if m[g] >= 0 && m[g+1] > m[g] {
-			return span{start: at + m[g], end: at + m[g+1]}, true
-		}
+// assignmentValueAt reads a secret-assignment value at s[v:]: a quoted
+// value that closes on its line, else a bare value. An empty value is not
+// a match (§4.2).
+func assignmentValueAt(s string, v int, bare *regexp.Regexp) (span, bool) {
+	if start, end, quoted, closed := quotedValue(s, v); quoted && closed {
+		return span{start: start, end: end}, end > start
+	}
+	if m := bare.FindStringIndex(s[v:]); m != nil {
+		return span{start: v, end: v + m[1]}, true
 	}
 	return span{}, false
 }

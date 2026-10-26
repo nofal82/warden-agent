@@ -113,9 +113,10 @@ func WithClock(now func() time.Time) Option {
 // Redactor applies the compiled rule table. It keeps no state between
 // items (R3) and is safe for concurrent use.
 type Redactor struct {
-	cfg   config
-	rules []detector
-	err   error
+	cfg     config
+	rules   []detector
+	markers map[string]bool // exact markers of the known detectors (§4.3)
+	err     error
 }
 
 // New compiles the rule table and runs its self-test (R42). When the
@@ -137,6 +138,12 @@ func newRedactor(rules []detector, opts ...Option) *Redactor {
 	if r.cfg.now == nil {
 		r.cfg.now = time.Now
 	}
+	// Known detectors: the compiled table's, and those of this rule set.
+	ids := Detectors()
+	for _, d := range rules {
+		ids = append(ids, d.id)
+	}
+	r.markers = markerSet(ids)
 	if !selfTest(rules) {
 		r.err = ErrRulesUnavailable
 	}
