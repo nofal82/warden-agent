@@ -133,14 +133,30 @@ func violations(deps map[string]bool, bad func(string) bool) []string {
 	return out
 }
 
-// executorPackages lists every Go package that exists today under
-// cmd/warden-executor and internal/executor.
+// executorRoots are the folders whose packages the executor links (decision
+// 0008; Nofal, PR #13). required marks a folder that exists today, so its
+// absence fails the test instead of silently checking nothing;
+// cmd/warden-dbhelper and internal/dbhelper are added when they exist.
+var executorRoots = []struct {
+	dir      string
+	required bool
+}{
+	{"cmd/warden-executor", false},
+	{"internal/executor", false},
+	{"internal/envelope", true},
+}
+
+// executorPackages lists every Go package that exists today under the
+// executor roots, sub-packages included.
 func executorPackages(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, dir := range []string{"cmd/warden-executor", "internal/executor"} {
-		base := filepath.Join(repoRoot, filepath.FromSlash(dir))
+	for _, root := range executorRoots {
+		base := filepath.Join(repoRoot, filepath.FromSlash(root.dir))
 		if _, err := os.Stat(base); errors.Is(err, fs.ErrNotExist) {
+			if root.required {
+				t.Fatalf("%s is missing; it is an executor root that must be checked", root.dir)
+			}
 			continue
 		}
 		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
@@ -164,14 +180,22 @@ func executorPackages(t *testing.T) []string {
 	return out
 }
 
-// TestExecutorNeverImportsAgentAPI (decision 0008, user ruling E15): no
-// package of the executor, through any chain of imports, reaches the agent
-// API, gRPC, genproto, net/http, net/rpc, net/smtp or crypto/tls. No
-// executor package exists yet, so the contract package it will import is
-// checked directly as well.
+// TestExecutorNeverImportsAgentAPI (decision 0008, user ruling E15, PR
+// #13): no package the executor links, through any chain of imports,
+// reaches the agent API, gRPC, genproto, net/http, net/rpc, net/smtp or
+// crypto/tls. internal/envelope and its wirescan sub-package are walked
+// today; the contract package is also checked directly, since no executor
+// main exists yet.
 func TestExecutorNeverImportsAgentAPI(t *testing.T) {
-	for _, p := range executorPackages(t) {
-		if bad := violations(transitiveDeps(t, p), forbiddenForExecutor); len(bad) > 0 {
+	pkgs := executorPackages(t)
+	for _, want := range []string{module + "/internal/envelope", module + "/internal/envelope/wirescan"} {
+		if !slices.Contains(pkgs, want) {
+			t.Errorf("executor roots did not yield %s (got %v)", want, pkgs)
+		}
+	}
+	for _, p := range pkgs {
+		deps := transitiveDeps(t, p)
+		if bad := violations(deps, forbiddenForExecutor); len(bad) > 0 {
 			t.Errorf("%s reaches %v", p, bad)
 		}
 	}
@@ -181,6 +205,17 @@ func TestExecutorNeverImportsAgentAPI(t *testing.T) {
 	}
 	if bad := violations(deps, forbiddenForExecutor); len(bad) > 0 {
 		t.Errorf("%s reaches %v", wardenv1Pkg, bad)
+	}
+}
+
+// TestEnvelopeWalkReachesWardenV1: the walk of internal/envelope really
+// follows its imports, so a clean result above is not vacuous.
+func TestEnvelopeWalkReachesWardenV1(t *testing.T) {
+	deps := transitiveDeps(t, module+"/internal/envelope")
+	for _, want := range []string{wardenv1Pkg, module + "/internal/envelope/wirescan", "google.golang.org/protobuf/proto"} {
+		if !deps[want] {
+			t.Errorf("walk of internal/envelope did not reach %s", want)
+		}
 	}
 }
 
