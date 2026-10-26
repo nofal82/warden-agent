@@ -1,0 +1,115 @@
+// Enrollment and certificate renewal messages.
+//
+// Source of truth: warden/specs/agent-api.md §4.2, §4.3, §4.10.1; limits
+// written as the warden.v1 contract options (R52c); redaction classes from
+// redaction.md §4.1.
+// Field numbers and enum values are final wire numbers (R52). Never
+// renumber or reuse one.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// EnrollRequest (agent-identity §4.5). Every field is identity data (I):
+// never logged.
+message EnrollRequest {
+  option (warden.v1.max_message_bytes) = 8192;
+
+  uint32 format_version = 1 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 1,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // agent-identity §4.2.
+  string token = 2 [
+    (warden.v1.min_bytes) = 48,
+    (warden.v1.max_bytes) = 48,
+    (warden.v1.pattern) = "^wdn1_[A-Za-z0-9_-]{43}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // UUID v4, lowercase canonical form (agent-identity §4.1).
+  string server_id = 3 [
+    (warden.v1.min_bytes) = 36,
+    (warden.v1.max_bytes) = 36,
+    (warden.v1.pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // PKCS #10 DER (agent-identity §4.4).
+  bytes csr = 4 [
+    (warden.v1.min_bytes) = 1,
+    (warden.v1.max_bytes) = 4096,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // Raw Ed25519 public key (executor-ipc §4.8).
+  bytes executor_public_key = 5 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // agent-identity R12b, R13a.
+  bytes executor_binding_mac = 6 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+}
+
+// EnrollResponse carries the leaf certificate only: no CA certificate and
+// no other field (agent-identity §4.5).
+message EnrollResponse {
+  option (warden.v1.max_message_bytes) = 4608;
+
+  // DER.
+  bytes certificate = 1 [
+    (warden.v1.min_bytes) = 1,
+    (warden.v1.max_bytes) = 4096
+  ];
+}
+
+message RenewRequest {
+  option (warden.v1.max_message_bytes) = 8192;
+
+  uint32 format_version = 1 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 1,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+  // As EnrollRequest.csr.
+  bytes csr = 2 [
+    (warden.v1.min_bytes) = 1,
+    (warden.v1.max_bytes) = 4096,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_I
+  ];
+}
+
+// RenewResponse holds only its oneof (action-envelope §4.1a). Exactly one
+// member is set; that rule is checked by hand (R52c).
+message RenewResponse {
+  option (warden.v1.max_message_bytes) = 4608;
+
+  oneof outcome {
+    // Leaf certificate, DER.
+    bytes certificate = 1 [
+      (warden.v1.min_bytes) = 1,
+      (warden.v1.max_bytes) = 4096
+    ];
+    RenewalRefusal refusal = 2;
+  }
+}
+
+// RenewalRefusal (agent-identity §4.6a).
+enum RenewalRefusal {
+  RENEWAL_REFUSAL_UNSPECIFIED = 0;
+  RENEWAL_REFUSAL_KEY_REUSED = 1;
+  RENEWAL_REFUSAL_TOO_EARLY = 2;
+  RENEWAL_REFUSAL_ALREADY_SUPERSEDED = 3;
+  RENEWAL_REFUSAL_RATE_LIMITED = 4;
+  RENEWAL_REFUSAL_DECOMMISSIONED = 5;
+  RENEWAL_REFUSAL_QUARANTINED = 6;
+  RENEWAL_REFUSAL_CSR_INVALID = 7;
+  RENEWAL_REFUSAL_INTERNAL = 8;
+}

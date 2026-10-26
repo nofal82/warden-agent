@@ -1,0 +1,384 @@
+// Executor replies: protocol refusals and the signed result bodies.
+//
+// Source of truth: warden/specs/executor-ipc.md §4.3 and §4.5–§4.9; enum
+// values of action-envelope.md §4.4–§4.6; redaction classes from
+// redaction.md §4.1 (R5).
+// The bodies are signed by the executor's result key as SignedDocument
+// bytes (executor-ipc §4.4); the agent carries those bytes opaque and only
+// decodes them advisorily. Their limits stay in hand-written code until the
+// M2 envelope change (agent-api R52c); only redact_class is set here, on
+// every string and bytes field.
+// Every enum and message is top level (executor-ipc §4.5). Field numbers
+// and enum values are final wire numbers. Never renumber or reuse one.
+//
+// ExecutorStatusBody fields 31 (boot_id) and 32 (highest_envelope_counter)
+// are added in M2 together with the strict-scanner change (agent-api R52a).
+
+syntax = "proto3";
+
+package warden.v1;
+
+import "warden/v1/options.proto";
+import "warden/v1/primitive_result.proto";
+import "warden/v1/typed_request.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
+
+// TrustKind is the kind of a trust document (executor-ipc §4.6.2). The
+// executor takes it from the request type, never from the document.
+enum TrustKind {
+  TRUST_KIND_UNSPECIFIED = 0;
+  TRUST_KIND_KEYSET = 1;
+  TRUST_KIND_CATALOG = 2;
+  TRUST_KIND_MANIFEST = 3;
+  TRUST_KIND_CONTROLPLANE_CA = 4;
+}
+
+// IpcRefusal is the payload of a protocol refusal (reply type 0xFF), at
+// most 16 bytes. It is a transport answer, never an outcome: nothing was
+// verified, recorded or run (executor-ipc §4.3).
+message IpcRefusal {
+  IpcRefusalCode code = 1;
+}
+
+enum IpcRefusalCode {
+  IPC_REFUSAL_CODE_UNSPECIFIED = 0;
+  IPC_REFUSAL_CODE_FRAME_INVALID = 1;
+  IPC_REFUSAL_CODE_PEER_NOT_ALLOWED = 2;
+  IPC_REFUSAL_CODE_THROTTLED = 3;
+  IPC_REFUSAL_CODE_SHUTTING_DOWN = 4;
+  IPC_REFUSAL_CODE_BUSY = 5;
+  IPC_REFUSAL_CODE_RESULT_KEY_UNAVAILABLE = 6;
+}
+
+// ExecutorResultBody is the signed result of an EXECUTE request
+// (executor-ipc §4.6.1). Timestamps are Unix milliseconds on the
+// executor's clock.
+message ExecutorResultBody {
+  // 1.
+  uint32 format_version = 1;
+  // The executor's server-ID file value; absent when that file is invalid.
+  string server_id = 2 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 32 bytes; absent only for OVERSIZED.
+  bytes envelope_sha256 = 3 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // The header length.
+  uint32 received_length = 4;
+  // 32 bytes; present when the outer parse succeeded.
+  bytes body_sha256 = 5 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 36 characters; present only when check 5 passed.
+  string action_id = 6 [(redact_class) = REDACT_FIELD_CLASS_X];
+  ExecutorOutcome outcome = 7;
+  // Required for REJECTED, absent otherwise.
+  EnvelopeRejectionCode rejection_code = 8;
+  // Required for EXECUTED.
+  PrimitiveStatus primitive_status = 9;
+  // Only for FAILED.
+  PrimitiveErrorCode primitive_error_code = 10;
+  // When a program ran (agent-api R52b; action-envelope R13 (j)).
+  optional int32 exit_status = 11;
+  bool output_truncated = 12;
+  // Only with REPLAYED or IDEMPOTENCY_KEY_REUSED.
+  StoredState stored_state = 13;
+  // As 13, when the stored record has one.
+  PrimitiveStatus stored_primitive_status = 14;
+  PrimitiveErrorCode stored_primitive_error_code = 15;
+  int64 received_at = 16;
+  // EXECUTED only.
+  int64 started_at = 17;
+  int64 finished_at = 18;
+  int64 signed_at = 19;
+  // 36 characters; present only with IDEMPOTENCY_KEY_REUSED: the action_id
+  // of the recorded action.
+  optional string stored_action_id = 20 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // R36a; ≥ 1 on the agent socket, absent on the root socket.
+  uint64 result_sequence = 21;
+  // Exactly 16 bytes.
+  bytes boot_id = 22 [(redact_class) = REDACT_FIELD_CLASS_X];
+}
+
+enum ExecutorOutcome {
+  EXECUTOR_OUTCOME_UNSPECIFIED = 0;
+  EXECUTOR_OUTCOME_REJECTED = 1;
+  EXECUTOR_OUTCOME_EXECUTED = 2;
+}
+
+// EnvelopeRejectionCode holds each distinct code of action-envelope §4.5
+// once, numbered in order of first appearance; the check number is not on
+// the wire.
+enum EnvelopeRejectionCode {
+  ENVELOPE_REJECTION_CODE_UNSPECIFIED = 0;
+  ENVELOPE_REJECTION_CODE_OVERSIZED = 1;
+  ENVELOPE_REJECTION_CODE_MALFORMED = 2;
+  // Checks 3 and 7.
+  ENVELOPE_REJECTION_CODE_UNKNOWN_KEY = 3;
+  ENVELOPE_REJECTION_CODE_BAD_SIGNATURE = 4;
+  ENVELOPE_REJECTION_CODE_BODY_INVALID = 5;
+  ENVELOPE_REJECTION_CODE_UNSUPPORTED_FORMAT_VERSION = 6;
+  ENVELOPE_REJECTION_CODE_LIFETIME_INVALID = 7;
+  ENVELOPE_REJECTION_CODE_NOT_YET_VALID = 8;
+  // Checks 10 and 23a.
+  ENVELOPE_REJECTION_CODE_EXPIRED = 9;
+  ENVELOPE_REJECTION_CODE_WRONG_HOST = 10;
+  ENVELOPE_REJECTION_CODE_MANIFEST_REQUIRED = 11;
+  ENVELOPE_REJECTION_CODE_CREATED_BEFORE_RECOVERY = 12;
+  ENVELOPE_REJECTION_CODE_UNKNOWN_PLAYBOOK = 13;
+  ENVELOPE_REJECTION_CODE_PLAYBOOK_NOT_ENABLED = 14;
+  ENVELOPE_REJECTION_CODE_PLAYBOOK_VERSION_MISMATCH = 15;
+  ENVELOPE_REJECTION_CODE_PLAYBOOK_DIGEST_MISMATCH = 16;
+  ENVELOPE_REJECTION_CODE_STEP_NOT_IN_PLAYBOOK = 17;
+  ENVELOPE_REJECTION_CODE_PRIMITIVE_NOT_IN_STEP = 18;
+  ENVELOPE_REJECTION_CODE_PARAMETERS_INVALID = 19;
+  ENVELOPE_REJECTION_CODE_POLICY_DECISION_INVALID = 20;
+  ENVELOPE_REJECTION_CODE_STORE_UNAVAILABLE = 21;
+  ENVELOPE_REJECTION_CODE_CLOCK_ROLLBACK = 22;
+  ENVELOPE_REJECTION_CODE_REPLAYED = 23;
+  ENVELOPE_REJECTION_CODE_IDEMPOTENCY_KEY_REUSED = 24;
+  ENVELOPE_REJECTION_CODE_PLAYBOOK_FROZEN = 25;
+  ENVELOPE_REJECTION_CODE_RATE_LIMITED = 26;
+  ENVELOPE_REJECTION_CODE_STORE_FULL = 27;
+}
+
+// StoredState is the state of an executor store record (action-envelope
+// §4.4).
+enum StoredState {
+  STORED_STATE_UNSPECIFIED = 0;
+  STORED_STATE_STARTED = 1;
+  STORED_STATE_SUCCEEDED = 2;
+  STORED_STATE_FAILED = 3;
+  STORED_STATE_ROLLED_BACK = 4;
+}
+
+// TrustInstallResultBody is the signed result of an INSTALL_* request
+// (executor-ipc §4.6.2).
+message TrustInstallResultBody {
+  // 1.
+  uint32 format_version = 1;
+  // As ExecutorResultBody.server_id.
+  string server_id = 2 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // From the request type.
+  TrustKind kind = 3;
+  // 32 bytes, of the document after the minimum prefix; absent when not
+  // read.
+  bytes document_sha256 = 4 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // Absent for a type 0x07 frame under 9 bytes (agent-api R52b).
+  optional uint32 received_length = 5;
+  TrustInstallResult result = 6;
+  // Present only for type 0x07 when the prefix was read.
+  optional uint64 minimum_sequence = 7;
+  // Present only when the document's signature verified and its body
+  // decoded.
+  optional uint64 document_sequence = 8;
+  // Exactly 3 (keyset, catalog, manifest), sorted by kind, when the trust
+  // state is available.
+  repeated InstalledDocument installed = 9;
+  // 0–2, each 32 bytes, sorted (kind CONTROLPLANE_CA only).
+  repeated bytes controlplane_ca_sha256 = 10 [(redact_class) = REDACT_FIELD_CLASS_X];
+  int64 received_at = 11;
+  int64 signed_at = 12;
+  // As ExecutorResultBody.result_sequence.
+  uint64 result_sequence = 13;
+  // Exactly 16 bytes.
+  bytes boot_id = 14 [(redact_class) = REDACT_FIELD_CLASS_X];
+}
+
+// TrustInstallResult: INSTALLED, NO_CHANGE, then D1–D7 of action-envelope
+// §4.6 in order, then the CA codes of signing-and-updates §4.11.
+enum TrustInstallResult {
+  TRUST_INSTALL_RESULT_UNSPECIFIED = 0;
+  TRUST_INSTALL_RESULT_INSTALLED = 1;
+  TRUST_INSTALL_RESULT_NO_CHANGE = 2;
+  TRUST_INSTALL_RESULT_KEYSET_INVALID = 3;
+  TRUST_INSTALL_RESULT_KEYSET_ROLLBACK = 4;
+  TRUST_INSTALL_RESULT_CATALOG_INVALID = 5;
+  TRUST_INSTALL_RESULT_CATALOG_ROLLBACK = 6;
+  TRUST_INSTALL_RESULT_MANIFEST_INVALID = 7;
+  TRUST_INSTALL_RESULT_MANIFEST_ROLLBACK = 8;
+  TRUST_INSTALL_RESULT_SEQUENCE_CONFLICT = 9;
+  TRUST_INSTALL_RESULT_CA_INVALID = 10;
+  TRUST_INSTALL_RESULT_CA_NOT_IN_KEYSET = 11;
+}
+
+// InstalledDocument is the executor's record of one installed trust
+// document (action-envelope R34a).
+message InstalledDocument {
+  // KEYSET, CATALOG or MANIFEST.
+  TrustKind kind = 1;
+  // NONE_ACCEPTED only for MANIFEST.
+  SequenceState sequence_state = 2;
+  // 1 … 2^63 − 1, present only when RECORDED.
+  uint64 sequence = 3;
+  // UNKNOWN only for MANIFEST after a repair.
+  HashState hash_state = 4;
+  // 32 bytes, present only when KNOWN.
+  bytes hash = 5 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // The installed document's hash equals the record.
+  bool installed_matches = 6;
+}
+
+enum SequenceState {
+  SEQUENCE_STATE_UNSPECIFIED = 0;
+  SEQUENCE_STATE_RECORDED = 1;
+  SEQUENCE_STATE_NONE_ACCEPTED = 2;
+}
+
+enum HashState {
+  HASH_STATE_UNSPECIFIED = 0;
+  HASH_STATE_KNOWN = 1;
+  HASH_STATE_UNKNOWN = 2;
+}
+
+// ExecutorStatusBody is the signed reply to STATUS (executor-ipc §4.7).
+message ExecutorStatusBody {
+  // 1.
+  uint32 format_version = 1;
+  // As ExecutorResultBody.server_id.
+  string server_id = 2 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 32 bytes, echoed from the request; absent when none was sent.
+  bytes challenge = 3 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // Executor clock, Unix ms: the executor's own acceptance boundary for
+  // envelope expiry (durable-workflows R29a).
+  int64 executor_time = 4;
+  // SemVer 2.0.0 without build metadata, ≤ 32 bytes.
+  string binary_version = 5 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // From the R60 record; absent when there is none.
+  string installed_release_version = 6 [(redact_class) = REDACT_FIELD_CLASS_N_PATTERNED];
+  uint64 installed_release_sequence = 7;
+  // 0–32, packed, sorted ascending, distinct.
+  repeated HealthCondition conditions = 8;
+  bool healthy = 9;
+  TrustState trust_state = 10;
+  // As TrustInstallResultBody.installed.
+  repeated InstalledDocument installed = 11;
+  // ≤ 4,096 bytes: the installed keyset's SignedDocument bytes, present
+  // only when installed_matches is true for it.
+  bytes keyset_signed_bytes = 12 [(redact_class) = REDACT_FIELD_CLASS_S];
+  bool recovery_pending = 13;
+  // Exactly 24 bytes; present only while recovery_pending.
+  bytes recovery_id = 14 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // Unix seconds; present only while recovery_pending.
+  int64 recovery_time = 15;
+  // Unix seconds; present when a floor is recorded (agent-api R52b).
+  optional int64 recovery_floor = 16;
+  // 0–64, sorted by playbook_id.
+  repeated FrozenPlaybook frozen = 17;
+  // 0–2, each 32 bytes, sorted.
+  repeated bytes controlplane_ca_sha256 = 18 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 32 bytes.
+  bytes root_key_fingerprint = 19 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // 32 bytes; absent when the result key is unavailable.
+  bytes result_public_key = 20 [(redact_class) = REDACT_FIELD_CLASS_X];
+  // Required; each enum required.
+  FeatureLevel feature_level = 21;
+  // Present only with condition DATABASE_PLAYBOOKS_UNAVAILABLE.
+  DatabaseUnavailableReason database_unavailable_reason = 22;
+  // 0–32 instances with at least one condition, sorted by unit_id.
+  repeated DbInstanceHealth db_instances = 23;
+  bool db_conditions_since_start = 24;
+  uint32 store_records = 25;
+  uint32 store_unreadable_records = 26;
+  bool busy = 27;
+  bool db_instances_truncated = 28;
+  // Unix ms; shown only.
+  int64 started_at = 29;
+  // As ExecutorResultBody.result_sequence.
+  uint64 result_sequence = 30;
+}
+
+enum TrustState {
+  TRUST_STATE_UNSPECIFIED = 0;
+  TRUST_STATE_AVAILABLE = 1;
+  TRUST_STATE_RECOVERY_IN_PROGRESS = 2;
+  TRUST_STATE_LOCK_FILE_MISSING = 3;
+  TRUST_STATE_NEEDS_REPAIR = 4;
+}
+
+message FrozenPlaybook {
+  // action-envelope §4.2 pattern.
+  string playbook_id = 1 [(redact_class) = REDACT_FIELD_CLASS_X];
+  int64 frozen_at = 2;
+}
+
+// FeatureLevel records how this kernel lets the executor contain
+// warden-dbhelper (executor-ipc R23).
+message FeatureLevel {
+  CgroupVersion cgroup_version = 1;
+  HelperLaunchMethod helper_launch = 2;
+  HelperCleanupMethod helper_cleanup = 3;
+  ProcessIdentityMethod process_identity = 4;
+}
+
+enum CgroupVersion {
+  CGROUP_VERSION_UNSPECIFIED = 0;
+  CGROUP_VERSION_V1 = 1;
+  CGROUP_VERSION_V2 = 2;
+}
+
+enum HelperLaunchMethod {
+  HELPER_LAUNCH_METHOD_UNSPECIFIED = 0;
+  HELPER_LAUNCH_METHOD_CLONE_INTO_CGROUP = 1;
+  HELPER_LAUNCH_METHOD_LAUNCH_STAGE = 2;
+}
+
+enum HelperCleanupMethod {
+  HELPER_CLEANUP_METHOD_UNSPECIFIED = 0;
+  HELPER_CLEANUP_METHOD_CGROUP_KILL = 1;
+  HELPER_CLEANUP_METHOD_FREEZE = 2;
+}
+
+enum ProcessIdentityMethod {
+  PROCESS_IDENTITY_METHOD_UNSPECIFIED = 0;
+  PROCESS_IDENTITY_METHOD_PIDFD = 1;
+  PROCESS_IDENTITY_METHOD_O_PATH_FALLBACK = 2;
+}
+
+enum DatabaseUnavailableReason {
+  DATABASE_UNAVAILABLE_REASON_UNSPECIFIED = 0;
+  DATABASE_UNAVAILABLE_REASON_CONTAINMENT_INCOMPLETE = 1;
+  DATABASE_UNAVAILABLE_REASON_LEFTOVER_HELPER_CGROUP = 2;
+  DATABASE_UNAVAILABLE_REASON_HELPER_CGROUP_NOT_EMPTY = 3;
+}
+
+message DbInstanceHealth {
+  // typed-action-catalog §4.2 unit pattern, ≤ 256 bytes: the one
+  // client-chosen string in a signed body (redaction R22).
+  string unit_id = 1 [(redact_class) = REDACT_FIELD_CLASS_N_PATTERNED];
+  Engine engine = 2;
+  // 1–6, packed, sorted, distinct.
+  repeated DbCondition conditions = 3;
+  // 1 … 64, only with POSTGRES_UNCHECKED_DATABASES.
+  uint32 unchecked_databases = 4;
+  // 1 … 64, only with POSTGRES_SKIPPED_DATABASES.
+  uint32 skipped_databases = 5;
+}
+
+// HealthCondition (executor-ipc §4.9). A value unknown to the reader is
+// shown as "unknown condition", never dropped.
+enum HealthCondition {
+  HEALTH_CONDITION_UNSPECIFIED = 0;
+  HEALTH_CONDITION_RECOVERY_IN_PROGRESS = 1;
+  HEALTH_CONDITION_LOCK_FILE_MISSING = 2;
+  HEALTH_CONDITION_TRUST_STATE_NEEDS_REPAIR = 3;
+  HEALTH_CONDITION_SERVER_IDENTITY_MISSING = 4;
+  HEALTH_CONDITION_DOCUMENT_HASH_MISMATCH = 5;
+  HEALTH_CONDITION_RECOVERY_PENDING = 6;
+  HEALTH_CONDITION_STORE_UNAVAILABLE = 7;
+  HEALTH_CONDITION_STORE_FULL = 8;
+  HEALTH_CONDITION_STORE_UNREADABLE_RECORDS = 9;
+  HEALTH_CONDITION_DIGEST_KEY_MISSING_OR_INVALID = 10;
+  HEALTH_CONDITION_RESULT_KEY_MISSING_OR_INVALID = 11;
+  HEALTH_CONDITION_AGENT_UID_INVALID = 12;
+  HEALTH_CONDITION_DATABASE_PLAYBOOKS_UNAVAILABLE = 13;
+  HEALTH_CONDITION_CONTROLPLANE_CA_FILE_UNREADABLE = 14;
+  HEALTH_CONDITION_SHUTTING_DOWN = 15;
+  HEALTH_CONDITION_DB_CONDITIONS_FILE_UNREADABLE = 16;
+}
+
+enum DbCondition {
+  DB_CONDITION_UNSPECIFIED = 0;
+  DB_CONDITION_MONGODB_AUTHORIZATION_NOT_ENFORCED = 1;
+  DB_CONDITION_MONGODB_HELPER_LOGIN_FAILED = 2;
+  DB_CONDITION_POSTGRES_TOO_MANY_CONNECTABLE_DATABASES = 3;
+  DB_CONDITION_POSTGRES_UNCHECKED_DATABASES = 4;
+  DB_CONDITION_POSTGRES_SKIPPED_DATABASES = 5;
+  DB_CONDITION_POSTGRES_LOGIN_EVENT_TRIGGER = 6;
+}

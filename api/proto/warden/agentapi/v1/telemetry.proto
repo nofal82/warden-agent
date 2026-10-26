@@ -1,0 +1,113 @@
+// Telemetry upload messages.
+//
+// Source of truth: warden/specs/agent-api.md §4.2, §4.7 and §4.10.1;
+// limits written as the warden.v1 contract options (R52c); redaction
+// classes from redaction.md §4.1.
+// Telemetry is agent trust only (R14). The time windows of R43, finite
+// sample values and the "no control characters" and "no NUL" rules are
+// checked by hand.
+// Field numbers are final wire numbers (R52). Never renumber or reuse one.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// TelemetryBatch (R43).
+message TelemetryBatch {
+  option (warden.v1.max_message_bytes) = 262144;
+
+  uint32 format_version = 1 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 1
+  ];
+  // Equal to the certificate's UUID (R8).
+  string server_id = 2 [
+    (warden.v1.min_bytes) = 36,
+    (warden.v1.max_bytes) = 36,
+    (warden.v1.pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // As Hello.instance_id (agent-identity R31d).
+  string instance_id = 3 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.pattern) = "^[0-9a-f]{32}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // Strictly increasing per instance ID, persisted with it.
+  uint64 batch_seq = 4 [(warden.v1.min_uint) = 1];
+  // Not older than TELEMETRY_MAX_AGE before the receive time.
+  int64 collected_from_ms = 5 [(warden.v1.min_int) = 1];
+  // ≥ collected_from_ms, ≤ collected_from_ms + 3,600,000, and at most
+  // MAX_SKEW after the receive time.
+  int64 collected_to_ms = 6;
+  repeated MetricSample samples = 7 [(warden.v1.max_count) = 5000];
+  repeated LogEvent log_events = 8 [(warden.v1.max_count) = 200];
+  // Batches dropped by R44 since the previous accepted batch.
+  uint64 dropped_batches = 9 [(warden.v1.max_uint) = 1099511627776];
+}
+
+message MetricSample {
+  string name = 1 [
+    (warden.v1.max_bytes) = 128,
+    (warden.v1.pattern) = "^[a-z_][a-z0-9_]{0,127}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  repeated Label labels = 2 [
+    (warden.v1.max_count) = 16,
+    (warden.v1.sorted_by) = "key"
+  ];
+  // Finite: NaN and ±Inf are MALFORMED.
+  double value = 3;
+  // Within [collected_from_ms, collected_to_ms].
+  int64 timestamp_ms = 4;
+}
+
+message Label {
+  string key = 1 [
+    (warden.v1.max_bytes) = 64,
+    (warden.v1.pattern) = "^[a-z_][a-z0-9_]{0,63}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // UTF-8, no control characters.
+  string value = 2 [
+    (warden.v1.max_bytes) = 256,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_L_VALUE
+  ];
+}
+
+message LogEvent {
+  string rule_id = 1 [
+    (warden.v1.max_bytes) = 63,
+    (warden.v1.pattern) = "^[a-z][a-z0-9-]{1,62}$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  // typed-action-catalog §4.2 unit pattern.
+  string unit_id = 2 [
+    (warden.v1.max_bytes) = 256,
+    (warden.v1.pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_N_PATTERNED
+  ];
+  // Within the batch window.
+  int64 observed_at_ms = 3;
+  // Matches folded into this event.
+  uint32 count = 4 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 1000000
+  ];
+  // UTF-8, redacted, no NUL; control characters are handled by
+  // redaction.md.
+  string extract = 5 [
+    (warden.v1.max_bytes) = 4096,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_E_TEXT
+  ];
+}
+
+message TelemetryAck {
+  // The acknowledged batch.
+  uint64 batch_seq = 1 [(warden.v1.min_uint) = 1];
+}

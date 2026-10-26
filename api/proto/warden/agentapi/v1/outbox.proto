@@ -1,0 +1,212 @@
+// Outbox messages: what the agent reports to the control plane, each
+// acknowledged by a MessageAck.
+//
+// Source of truth: warden/specs/agent-api.md §4.2, §4.6 and §4.10.1;
+// limits written as the warden.v1 contract options (R52c); redaction
+// classes from redaction.md §4.1.
+// Everything here except the signed bytes is agent trust only (R14).
+// Rules the options cannot state ("exactly one of", "present only with",
+// the per-kind sizes of signed and unsigned_body) are checked by hand.
+// Field numbers and enum values are final wire numbers (R52). Never
+// renumber or reuse one.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/v1/executor.proto";
+import "warden/v1/options.proto";
+import "warden/v1/primitive_result.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// OutboxMessage. Its limit is MAX_INBOX_MESSAGE (durable-workflows §7),
+// applied to the whole AgentMessage carrying it (R11).
+message OutboxMessage {
+  option (warden.v1.max_message_bytes) = 65536;
+
+  // R29.
+  uint64 message_seq = 1 [(warden.v1.min_uint) = 1];
+  OutboxPayload payload = 2 [(warden.v1.required) = true];
+}
+
+// OutboxPayload holds only its oneof (action-envelope §4.1a).
+message OutboxPayload {
+  oneof payload {
+    SignedReplyReport signed_reply = 1;
+    EnvelopeAdvisory envelope_advisory = 2;
+    TrustDocumentOversize trust_document_oversize = 3;
+    RecoveryReport recovery_report = 4;
+    AdminToolRecord admin_tool_record = 5;
+  }
+}
+
+// SignedReplyReport carries an executor reply (R28, R35, R36). Exactly one
+// of signed, unsigned_body and unsigned_body_withheld is set.
+message SignedReplyReport {
+  // From the IPC reply type, never from the body; selects only the
+  // verification domain and the size limit.
+  ReplyKind kind = 1 [(warden.v1.required) = true];
+  // The exact SignedDocument bytes of the reply (executor-ipc §4.5),
+  // opaque. ENVELOPE_RESULT ≤ 1,280, TRUST_RESULT ≤ 1,024, STATUS ≤
+  // 28,672; the option holds the largest (R52c).
+  bytes signed = 2 [
+    (warden.v1.max_bytes) = 28672,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_S
+  ];
+  // The executor's unsigned body (executor-ipc R31), only for TRUST_RESULT
+  // (≤ 1,024) and STATUS (≤ 28,672).
+  bytes unsigned_body = 3 [
+    (warden.v1.max_bytes) = 28672,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_U
+  ];
+  // Only for ENVELOPE_RESULT; redacted (R35); ≤ MAX_RESULT_BYTES. Its
+  // typed result is present for SUCCEEDED, NO_CHANGE and FAILED with
+  // PARTIAL only (PR #22 approval, F2).
+  warden.v1.PrimitiveResult primitive_result = 4;
+  // Only for TRUST_RESULT, from the agent's advisory decode of the refused
+  // document (signing-and-updates N4).
+  optional uint64 advisory_document_sequence = 5 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 9223372036854775807
+  ];
+  // True when R35 omitted the typed result; field 8 gives the reason.
+  bool primitive_result_omitted = 6;
+  // Only for TRUST_RESULT and STATUS; set only by the agent, never by the
+  // control plane (redaction R18).
+  WithheldReason unsigned_body_withheld = 7;
+  // Present exactly when primitive_result_omitted is true.
+  OmitReason primitive_result_omitted_reason = 8;
+}
+
+enum ReplyKind {
+  REPLY_KIND_UNSPECIFIED = 0;
+  REPLY_KIND_ENVELOPE_RESULT = 1;
+  REPLY_KIND_TRUST_RESULT = 2;
+  REPLY_KIND_STATUS = 3;
+}
+
+enum WithheldReason {
+  WITHHELD_REASON_UNSPECIFIED = 0;
+  WITHHELD_REASON_REDACTION_MATCH = 1;
+  // The body could not be decoded for the scan.
+  WITHHELD_REASON_REDACTION_ERROR = 2;
+  // The agent's rule set failed its self-test (redaction R42).
+  WITHHELD_REASON_REDACTION_RULES_UNAVAILABLE = 3;
+}
+
+enum OmitReason {
+  OMIT_REASON_UNSPECIFIED = 0;
+  OMIT_REASON_SIZE = 1;
+  OMIT_REASON_REDACTION = 2;
+}
+
+// EnvelopeAdvisory (R23, R34; executor-ipc R47).
+message EnvelopeAdvisory {
+  // SHA-256 of the delivered signed_envelope bytes, matched against the
+  // control plane's send-time hash (action-envelope R29).
+  bytes envelope_sha256 = 1 [
+    (warden.v1.min_bytes) = 32,
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  AdvisoryReason reason = 2 [(warden.v1.required) = true];
+  // Only with NOT_DELIVERED_EXECUTOR_UNAVAILABLE; a listed non-zero value
+  // when present (R52b).
+  optional warden.v1.IpcRefusalCode last_ipc_refusal = 3;
+}
+
+enum AdvisoryReason {
+  ADVISORY_REASON_UNSPECIFIED = 0;
+  ADVISORY_REASON_NOT_FORWARDED_OVERSIZED = 1;
+  ADVISORY_REASON_NOT_FORWARDED_EXPIRED = 2;
+  ADVISORY_REASON_NOT_FORWARDED_WRONG_HOST = 3;
+  ADVISORY_REASON_NOT_DELIVERED_EXECUTOR_UNAVAILABLE = 4;
+}
+
+// TrustDocumentOversize (R24, R36; signing-and-updates R31, N5).
+message TrustDocumentOversize {
+  warden.v1.TrustKind kind = 1 [(warden.v1.required) = true];
+  // Above the kind's limit, checked by hand.
+  uint32 received_size = 2 [(warden.v1.max_uint) = 266240];
+}
+
+// RecoveryReport (R38).
+message RecoveryReport {
+  // action-envelope R37; a hint only.
+  bytes recovery_id = 1 [
+    (warden.v1.min_bytes) = 24,
+    (warden.v1.max_bytes) = 24,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+}
+
+// AdminToolRecord (R37): the result of a root admin-tool run. File
+// encoding in agent-packaging.md.
+message AdminToolRecord {
+  // From crypto/rand, drawn by the admin tool.
+  bytes record_id = 1 [
+    (warden.v1.min_bytes) = 16,
+    (warden.v1.max_bytes) = 16,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_X
+  ];
+  AdminToolMode mode = 2 [(warden.v1.required) = true];
+  AdminToolCode code = 3 [(warden.v1.required) = true];
+  // The sequence of the refused release or keyset, when the tool read one
+  // (R52b).
+  optional uint64 refused_sequence = 4 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 9223372036854775807
+  ];
+  // Update modes only (checked by hand), so the pattern also accepts the
+  // empty value (§4.10.1).
+  string release_version = 5 [
+    (warden.v1.max_bytes) = 32,
+    (warden.v1.pattern) = "^(?:(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)?$",
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_N_PATTERNED
+  ];
+  // Update modes only (signing-and-updates §4.7 release_sequence; R52b).
+  optional uint64 release_sequence = 6 [
+    (warden.v1.min_uint) = 1,
+    (warden.v1.max_uint) = 9223372036854775807
+  ];
+  // The tool's clock, Unix ms; shown only.
+  int64 recorded_at = 7 [(warden.v1.min_int) = 1];
+  // The exact SignedDocument bytes of each root-socket trust result
+  // (trust-update: keyset, then CONTROLPLANE_CA).
+  repeated bytes signed_replies = 8 [
+    (warden.v1.max_count) = 2,
+    (warden.v1.max_bytes) = 1024,
+    (warden.v1.redact_class) = REDACT_FIELD_CLASS_S
+  ];
+}
+
+enum AdminToolMode {
+  ADMIN_TOOL_MODE_UNSPECIFIED = 0;
+  ADMIN_TOOL_MODE_TRUST_UPDATE = 1;
+  ADMIN_TOOL_MODE_STAGE = 2;
+  ADMIN_TOOL_MODE_SWITCH = 3;
+  ADMIN_TOOL_MODE_CONFIRM = 4;
+  ADMIN_TOOL_MODE_ROLLBACK = 5;
+}
+
+// AdminToolCode: OK, then the codes of signing-and-updates §4.12 the admin
+// tool returns, in that table's order, then RESULT_KEY_UNAVAILABLE
+// (executor-ipc R5a).
+enum AdminToolCode {
+  ADMIN_TOOL_CODE_UNSPECIFIED = 0;
+  ADMIN_TOOL_CODE_OK = 1;
+  ADMIN_TOOL_CODE_RELEASE_INVALID = 2;
+  ADMIN_TOOL_CODE_DOWNGRADE = 3;
+  ADMIN_TOOL_CODE_SEQUENCE_TOO_FAR = 4;
+  ADMIN_TOOL_CODE_SEQUENCE_CONFLICT = 5;
+  ADMIN_TOOL_CODE_ARTIFACT_MISSING = 6;
+  ADMIN_TOOL_CODE_ARTIFACT_MISMATCH = 7;
+  ADMIN_TOOL_CODE_SERVICES_RUNNING = 8;
+  ADMIN_TOOL_CODE_UPDATE_PENDING = 9;
+  ADMIN_TOOL_CODE_HEALTH_FAILED = 10;
+  ADMIN_TOOL_CODE_FINGERPRINT_MISMATCH = 11;
+  ADMIN_TOOL_CODE_EXECUTOR_UNAVAILABLE = 12;
+  ADMIN_TOOL_CODE_INPUT_INVALID = 13;
+  ADMIN_TOOL_CODE_RESULT_KEY_UNAVAILABLE = 14;
+}

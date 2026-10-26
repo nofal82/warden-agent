@@ -1,0 +1,46 @@
+// The reason carried by every gRPC error either side returns.
+//
+// Source of truth: warden/specs/agent-api.md R45 and §4.8.
+// The reason travels as exactly one google.rpc.Status detail, an EndDetail
+// packed as google.protobuf.Any with type URL
+// type.googleapis.com/warden.agentapi.v1.EndDetail, at most 128 bytes.
+// The agent decides retry from the gRPC code and this reason only, never
+// from the status message.
+// Enum values are final wire numbers (R52). Never renumber or reuse one.
+
+syntax = "proto3";
+
+package warden.agentapi.v1;
+
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1;agentapiv1";
+
+// EndDetail has field 1 only.
+message EndDetail {
+  EndReason reason = 1 [(warden.v1.required) = true];
+}
+
+// EndReason: the reasons of the §4.8 table, in its order. The two answers
+// the gRPC library generates itself carry no EndDetail.
+enum EndReason {
+  END_REASON_UNSPECIFIED = 0;
+  END_REASON_CERTIFICATE_REVOKED = 1;
+  END_REASON_REVOCATION_STATE_STALE = 2;
+  END_REASON_DATABASE_UNAVAILABLE = 3;
+  END_REASON_SHUTTING_DOWN = 4;
+  END_REASON_ENROLLMENT_REFUSED = 5;
+  END_REASON_IDENTITY_MISMATCH = 6;
+  END_REASON_RATE_LIMITED = 7;
+  END_REASON_TOO_LARGE = 8;
+  END_REASON_MALFORMED = 9;
+  END_REASON_MESSAGE_SEQ_UNREADABLE = 10;
+  END_REASON_HELLO_REQUIRED = 11;
+  END_REASON_DUPLICATE_STREAM = 12;
+  END_REASON_CONTRACT_VERSION_UNSUPPORTED = 13;
+  END_REASON_HELLO_TIMEOUT = 14;
+  END_REASON_CONNECTION_REPLACED = 15;
+  END_REASON_ACK_TIMEOUT = 16;
+  END_REASON_DUPLICATE_IDENTITY_CLOSED = 17;
+  END_REASON_DUPLICATE_IDENTITY = 18;
+}

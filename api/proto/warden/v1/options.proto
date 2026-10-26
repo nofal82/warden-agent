@@ -1,0 +1,87 @@
+// Contract options: field limits, message size limits and redaction classes
+// written into the descriptors, so the .proto is the one machine-readable
+// source of them.
+//
+// Source of truth: warden/specs/agent-api.md §4.10 and §4.10.1 (R52c).
+// Options are descriptor data only: they change no wire byte. Extension
+// numbers are in 50000–99999, the range descriptor.proto leaves to an
+// organisation's own options, and are never renumbered or reused.
+//
+// In M1 warden.v1 messages carry only redact_class; their limits stay in
+// hand-written validators until the M2 envelope change (R52a, R52c).
+
+syntax = "proto3";
+
+package warden.v1;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
+
+extend google.protobuf.FieldOptions {
+  // Least length in bytes (UTF-8 bytes for a string). For a repeated
+  // string or bytes field it applies to each element.
+  uint32 min_bytes = 50001;
+  // Greatest length in bytes. min_bytes equal to max_bytes means "exactly".
+  uint32 max_bytes = 50002;
+  // Fewest elements of a repeated field.
+  uint32 min_count = 50003;
+  // Most elements of a repeated field.
+  uint32 max_count = 50004;
+  // Least value of an unsigned integer.
+  uint64 min_uint = 50005;
+  // Greatest value of an unsigned integer.
+  uint64 max_uint = 50006;
+  // Least value of a signed integer.
+  int64 min_int = 50007;
+  // Greatest value of a signed integer.
+  int64 max_int = 50008;
+  // RE2 expression, written with ^ and $, that the whole value must match,
+  // the empty value included.
+  string pattern = 50009;
+  // Repeated scalar, enum or bytes: strictly increasing (byte order for
+  // bytes), so also distinct.
+  bool sorted = 50010;
+  // Repeated message: the name of the element field that is strictly
+  // increasing.
+  string sorted_by = 50011;
+  // The field must be present: an enum non-zero, a message set.
+  bool required = 50012;
+  // The field's class in redaction.md §4.1. A numeric, bool or enum field
+  // without it is X.
+  RedactFieldClass redact_class = 50013;
+}
+
+extend google.protobuf.MessageOptions {
+  // The per-type raw-length limit of agent-api §4.2. On a member type of
+  // AgentMessage it is the limit of the whole AgentMessage carrying it
+  // (agent-api R11).
+  uint32 max_message_bytes = 50101;
+}
+
+// RedactFieldClass names the classes of redaction.md §4.1. It lives only in
+// descriptors and is never on the wire; it is not agentapi's RedactClass,
+// which is a wire enum with its own stable values.
+enum RedactFieldClass {
+  REDACT_FIELD_CLASS_UNSPECIFIED = 0;
+  // Signed bytes: never redacted.
+  REDACT_FIELD_CLASS_S = 1;
+  // Structural: enums, numbers, digests, patterned identifiers.
+  REDACT_FIELD_CLASS_X = 2;
+  // Identity and enrollment: never logged.
+  REDACT_FIELD_CLASS_I = 3;
+  // Unsigned executor body.
+  REDACT_FIELD_CLASS_U = 4;
+  // T-NAME: short name in a typed result.
+  REDACT_FIELD_CLASS_T_NAME = 5;
+  // T-PATH: path in a typed result.
+  REDACT_FIELD_CLASS_T_PATH = 6;
+  // T-TEXT: free text in a typed result.
+  REDACT_FIELD_CLASS_T_TEXT = 7;
+  // E-TEXT: log extract.
+  REDACT_FIELD_CLASS_E_TEXT = 8;
+  // L-VALUE: telemetry label value.
+  REDACT_FIELD_CLASS_L_VALUE = 9;
+  // N-PATTERNED: contract-patterned name.
+  REDACT_FIELD_CLASS_N_PATTERNED = 10;
+}
