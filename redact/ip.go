@@ -155,7 +155,20 @@ func ipSpan(s string, a, b int, addr netip.Addr) (span, bool) {
 	if err != nil {
 		return span{}, false
 	}
-	return span{start: a, end: end, repl: p.String()}, true
+	repl := p.String()
+	// The network is written in lowercase. After an odd run of
+	// backslashes, a leading "e" would form the R25a escape "\e" that the
+	// next pass (intake) decodes, so the last backslash is replaced too.
+	if repl[0] == 'e' {
+		n := 0
+		for a-n > 0 && s[a-n-1] == '\\' {
+			n++
+		}
+		if n%2 == 1 {
+			a--
+		}
+	}
+	return span{start: a, end: end, repl: repl}, true
 }
 
 // prefixSuffix reads "/N" after an address.
