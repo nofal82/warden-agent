@@ -27,4 +27,10 @@
 // holds the classes that are never scanned (S, X, I, U): redact/ handles
 // text only and imports no protobuf code, and both the agent and the
 // control plane already import this package.
+//
+// strict.go exports StrictUnmarshal, the shared strict decoder
+// (internal/envelope/wirescan) for the control plane, which as another
+// module cannot import an internal package (agent-api R12). The decoder
+// itself stays in internal/ and imports nothing from here, so the executor,
+// which uses it, still never reaches this package.
 package agentapiv1
