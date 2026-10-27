@@ -76,5 +76,24 @@ protoc -I api/proto \
   api/proto/warden/v1/*.proto api/proto/warden/agentapi/v1/*.proto
 ```
 
+## Mutation check of the contract tests
+
+`api/proto/mutation_check.py` proves the contract tests catch real `.proto`
+breaks. In a temporary copy of the repository, it applies each of its
+mutations (a changed limit or class, a dropped `optional`, an unclassified
+string inside a `PrimitiveResult` variant or an executor body, a stale class
+table, and others). It then regenerates with the pinned tools above and
+requires the named tests to fail. The repository is never modified. From the
+repository root, with the two plugins on `PATH`:
+
+```
+python3 api/proto/mutation_check.py --protoc /path/to/protoc-36.2/bin/protoc
+python3 api/proto/mutation_check.py --protoc ... --only stale-class-table   # one mutation
+```
+
+It first checks the tool versions, that a fresh generation equals the
+committed `.pb.go` files, and that the tests pass. It exits non-zero if any
+mutation is not caught.
+
 A `make proto` target and a CI check that the committed code matches a fresh
 generation are proposed to Nofal (guardrail files are not edited by agents).
