@@ -118,6 +118,21 @@ var v1Enums = enumTable{
 		"POSTGRES_SKIPPED_DATABASES", "POSTGRES_LOGIN_EVENT_TRIGGER"},
 }
 
+// preM1Enums: every enum of the pre-M1 files (Go reviewer, PR #16):
+// typed-action-catalog §4.1 (Engine, WebServer, Signal) and §4.4 (P6
+// ProcessOrder, P9 DbQuery, P17 FileDeleteRoot), typed_request.proto; and
+// action-envelope §4.2 (PolicyDecision field 2, AutonomyLevel L0–L3),
+// envelope.proto.
+var preM1Enums = enumTable{
+	"Engine":         {"MYSQL", "POSTGRESQL", "MONGODB"},
+	"WebServer":      {"NGINX", "APACHE"},
+	"Signal":         {"TERM", "KILL"},
+	"ProcessOrder":   {"CPU", "MEMORY"},
+	"DbQuery":        {"SERVER_STATUS", "CONNECTIONS_SUMMARY", "SESSIONS_TOP_IDLE", "REPLICATION_STATUS", "REPLSET_STATUS"},
+	"FileDeleteRoot": {"VAR_LOG_ROTATED", "CORE_DUMPS"},
+	"AutonomyLevel":  {"L0", "L1", "L2", "L3"},
+}
+
 // upperSnake turns an enum name into its value prefix: AdminToolCode is
 // ADMIN_TOOL_CODE (agent-api §4).
 func upperSnake(name string) string {
@@ -191,6 +206,23 @@ func TestNewV1EnumValues(t *testing.T) {
 	}
 }
 
+// TestPreM1EnumValues: every enum of the pre-M1 files has exactly the
+// spec's values and numbers, and every row an enum.
+func TestPreM1EnumValues(t *testing.T) {
+	var files []protoreflect.FileDescriptor
+	for _, f := range packageFiles(t, wardenPkg) {
+		if preM1Files[f.Path()] {
+			files = append(files, f)
+		}
+	}
+	if len(files) != len(preM1Files) {
+		t.Fatalf("found %d of the %d pre-M1 files", len(files), len(preM1Files))
+	}
+	for _, v := range enumViolations(wardenPkg, allEnums(files), preM1Enums) {
+		t.Error(v)
+	}
+}
+
 // TestEnumCounts pins the counts the issue calls out, so a value dropped
 // from both the table and the .proto is still caught.
 func TestEnumCounts(t *testing.T) {
@@ -212,6 +244,13 @@ func TestEnumCounts(t *testing.T) {
 		{v1Enums, "IpcRefusalCode", 6},
 		{v1Enums, "DbCondition", 6},
 		{v1Enums, "RedactFieldClass", 10},
+		{preM1Enums, "Engine", 3},
+		{preM1Enums, "WebServer", 2},
+		{preM1Enums, "Signal", 2},
+		{preM1Enums, "ProcessOrder", 2},
+		{preM1Enums, "DbQuery", 5},
+		{preM1Enums, "FileDeleteRoot", 2},
+		{preM1Enums, "AutonomyLevel", 4},
 	}
 	for _, c := range cases {
 		if got := len(c.table[c.name]); got != c.max {
