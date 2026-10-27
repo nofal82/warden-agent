@@ -81,7 +81,7 @@ func wantOnlySentinel(t *testing.T, err, want error) {
 		t.Fatalf("error %v does not wrap %v", err, want)
 	}
 	for name, s := range strictSentinels {
-		if s != want && errors.Is(err, s) {
+		if !errors.Is(s, want) && errors.Is(err, s) {
 			t.Fatalf("error %v also wraps %s", err, name)
 		}
 	}
