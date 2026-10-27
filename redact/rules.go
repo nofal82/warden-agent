@@ -3,6 +3,7 @@ package redact
 import (
 	"encoding/hex"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -82,7 +83,7 @@ func work(n int) {
 // pattern that does not compile panics here, and New turns that panic into
 // ErrRulesUnavailable (R42).
 var ruleTable = sync.OnceValue(func() []detector {
-	return []detector{
+	ds := []detector{
 		pemPrivateKey(),
 		pemBodyLine(),
 		pemPrivateKeyB64(),
@@ -105,7 +106,27 @@ var ruleTable = sync.OnceValue(func() []detector {
 		iban(),
 		publicIP(),
 	}
+	for i := range ds {
+		ds[i].find = inTextOrder(ds[i].find)
+	}
+	return ds
 })
+
+// inTextOrder returns find with its spans sorted by start. A detector that
+// joins several searches (one per literal or form) would otherwise return
+// them grouped by search; the pipeline sorts anyway (mergeHits), but every
+// detector's own result is in text order (issue #21).
+func inTextOrder(find func(string) ([]span, error)) func(string) ([]span, error) {
+	return func(s string) ([]span, error) {
+		spans, err := find(s)
+		sortSpans(spans)
+		return spans, err
+	}
+}
+
+func sortSpans(spans []span) {
+	slices.SortStableFunc(spans, func(a, b span) int { return a.start - b.start })
+}
 
 func defaultRules() []detector { return append([]detector(nil), ruleTable()...) }
 
