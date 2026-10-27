@@ -222,12 +222,17 @@ func generateClassTable(files *protoregistry.Files) ([]classEntry, []string) {
 }
 
 // classifyField returns the table entry of one outbound field, nil for a
-// message-typed field (its own fields carry the class), or a violation.
+// message-typed field (its own fields carry the class), or a violation. A
+// redact_class on a message-typed field is a violation whatever its value
+// (agent-api §4.10.1, rule 3).
 func classifyField(fd protoreflect.FieldDescriptor) (*classEntry, string) {
+	has := proto.HasExtension(fd.Options(), wardenv1.E_RedactClass)
 	if fd.Message() != nil {
+		if has {
+			return nil, fmt.Sprintf("%s: redact_class on a message-typed field", fd.FullName())
+		}
 		return nil, ""
 	}
-	has := proto.HasExtension(fd.Options(), wardenv1.E_RedactClass)
 	class := clsX // §4.10: a numeric, bool or enum field without the option
 	if has {
 		class = proto.GetExtension(fd.Options(), wardenv1.E_RedactClass).(wardenv1.RedactFieldClass)

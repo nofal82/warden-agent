@@ -188,6 +188,11 @@ func buildCanaries(t *testing.T, key [32]byte) []canary {
 	add(canary{name: "C19 card", text: "card " + card, secrets: []string{card}, id: "payment-card", paths: allPaths})
 	iban := joIBAN()
 	add(canary{name: "C19 JO IBAN", text: "iban " + iban, secrets: []string{iban}, id: "iban", paths: allPaths})
+	// B1: C19 adds MA, SN and GB (countries the first table missed, and one
+	// it held), with no country table in the detector.
+	for name, v := range map[string]string{"MA": stableIBAN(maIBAN), "SN": stableIBAN(snIBAN), "GB": stableIBAN(gbIBAN)} {
+		add(canary{name: "C19 " + name + " IBAN", text: "iban " + v, secrets: []string{v}, id: "iban", paths: allPaths})
+	}
 
 	// C20, C21: unit-id-shaped.
 	c20tok := wdnToken()

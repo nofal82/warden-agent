@@ -418,13 +418,27 @@ var specDetectorIDs = []string{
 	"payment-card", "iban", "public-ip",
 }
 
+// markerDetectorIDs are the detector IDs that write a marker: every one
+// except public-ip, which writes a truncated network (R34). Since the 13th
+// review's nit, "[REDACTED-public-ip]" is not an exact marker of §4.3: no
+// detector ever writes it, so after a key it is a value like any other.
+func markerDetectorIDs() []string {
+	var ids []string
+	for _, id := range specDetectorIDs {
+		if id != "public-ip" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // allMarkers lists every fixed marker of §4.3 (text and name forms).
 func allMarkers() []string {
 	m := []string{
 		ShortMarker, NameShortMarker, UserNameMarker, NameUserNameMarker,
 		ReleaseVersionMarker, AuditFailureMarker, LineDroppedText,
 	}
-	for _, id := range specDetectorIDs {
+	for _, id := range markerDetectorIDs() {
 		m = append(m, Marker(id), "redacted-"+id)
 	}
 	return m
@@ -697,6 +711,16 @@ func setHooks(t *testing.T, detect func(string, int), b64 func(int), normalise f
 	hooks.detect = detect
 	hooks.b64 = b64
 	hooks.normalise = normalise
+}
+
+// setWorkHook installs the work-counter seam (S1): every detector's
+// scanning helper reports the bytes each step examined. It restores the
+// previous hooks at cleanup. Tests that call it must not call t.Parallel.
+func setWorkHook(t *testing.T, work func(n int)) {
+	t.Helper()
+	old := hooks
+	t.Cleanup(func() { hooks = old })
+	hooks.work = work
 }
 
 func lastN(s string, n int) string {

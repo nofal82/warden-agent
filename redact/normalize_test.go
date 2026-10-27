@@ -15,6 +15,16 @@ import (
 
 var allNormClasses = []Class{TName, TPath, TText, EText, LValue, NPatterned}
 
+// mustNormalize calls Normalize (R28b signature) and fails on an error.
+func mustNormalize(t testing.TB, c Class, in string) (string, NormCounts) {
+	t.Helper()
+	out, n, err := Normalize(c, in)
+	if err != nil {
+		t.Fatalf("%s: Normalize(%q) error: %v", className(c), in, err)
+	}
+	return out, n
+}
+
 type normRow struct {
 	name      string
 	in        string
@@ -65,6 +75,18 @@ func normRows() []normRow {
 		// R28: other controls.
 		{"DEL", "a\x7fb", "ab", "ab", NormControl, 1},
 		{"NUL", "a\x00b", "ab", "ab", NormControl, 1},
+
+		// R28a: case folding to the ASCII letter of the SimpleFold orbit.
+		{"long s U+017F", "a" + r(0x017F) + "b", "asb", "asb", NormCaseFold, 1},
+		{"Kelvin sign U+212A", "a" + r(0x212A) + "b", "akb", "akb", NormCaseFold, 1},
+		{"two folds", r(0x017F) + r(0x212A), "sk", "sk", NormCaseFold, 2},
+		// Not folded: ASCII letters, and non-ASCII letters whose orbit holds
+		// no ASCII letter (U+0130 has no simple fold; U+00DF folds to U+1E9E).
+		{"ASCII upper K kept", "aKb", "aKb", "aKb", 0, 0},
+		{"dotted capital I kept", "a" + r(0x0130) + "b", "a" + r(0x0130) + "b", "a" + r(0x0130) + "b", 0, 0},
+		{"dotless i kept", "a" + r(0x0131) + "b", "a" + r(0x0131) + "b", "a" + r(0x0131) + "b", 0, 0},
+		{"sharp s kept", "a" + r(0x00DF) + "b", "a" + r(0x00DF) + "b", "a" + r(0x00DF) + "b", 0, 0},
+		{"Angstrom sign kept", "a" + r(0x212B) + "b", "a" + r(0x212B) + "b", "a" + r(0x212B) + "b", 0, 0},
 	}
 	for _, c := range []rune{0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069} {
 		rows = append(rows, normRow{fmt.Sprintf("bidi %U", c), "a" + r(c) + "b", "ab", "ab", NormBidi, 1})
@@ -96,7 +118,7 @@ func TestNormalizeTable(t *testing.T) {
 				if c == EText {
 					want = row.wantE
 				}
-				got, counts := Normalize(c, row.in)
+				got, counts := mustNormalize(t, c, row.in)
 				if got != want {
 					t.Errorf("%s: Normalize(%q) = %q, want %q", className(c), row.in, got, want)
 				}
@@ -121,7 +143,7 @@ func TestNormalizeTable(t *testing.T) {
 func TestNormalizePlainTextUnchanged(t *testing.T) {
 	in := "GET /index.html HTTP/1.1 200 5123 " + r(0xE9) + r(0x4E2D) + r(0x0627) + r(0x0644)
 	for _, c := range allNormClasses {
-		got, counts := Normalize(c, in)
+		got, counts := mustNormalize(t, c, in)
 		if got != in {
 			t.Errorf("%s: plain text changed: %q", className(c), got)
 		}
@@ -170,16 +192,16 @@ func TestNormalizeTextualEscapes(t *testing.T) {
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			if got, _ := Normalize(EText, row.in); got != row.wantE {
+			if got, _ := mustNormalize(t, EText, row.in); got != row.wantE {
 				t.Errorf("EText: Normalize(%q) = %q, want %q", row.in, got, row.wantE)
 			}
-			if got, _ := Normalize(TText, row.in); got != row.wantT {
+			if got, _ := mustNormalize(t, TText, row.in); got != row.wantT {
 				t.Errorf("TText: Normalize(%q) = %q, want %q", row.in, got, row.wantT)
 			}
 			// Not decoded in the other classes. These inputs hold no real
 			// control character, so they stay unchanged there.
 			for _, c := range []Class{TName, TPath, LValue, NPatterned} {
-				if got, _ := Normalize(c, row.in); got != row.in {
+				if got, _ := mustNormalize(t, c, row.in); got != row.in {
 					t.Errorf("%s: Normalize(%q) = %q, want it unchanged (R25a is E-TEXT and T-TEXT only)", className(c), row.in, got)
 				}
 			}
@@ -189,7 +211,7 @@ func TestNormalizeTextualEscapes(t *testing.T) {
 
 func TestNormalizeEscapeCountsAnsi(t *testing.T) {
 	for _, c := range []Class{EText, TText} {
-		_, counts := Normalize(c, "x"+bs+"u001b[31my")
+		_, counts := mustNormalize(t, c, "x"+bs+"u001b[31my")
 		if counts[NormEscape] < 1 {
 			t.Errorf("%s: an escape sequence produced by R25a was not counted as ESCAPE", className(c))
 		}
@@ -214,7 +236,7 @@ func TestNormalizeOutputProperty(t *testing.T) {
 	}
 	for _, in := range inputs {
 		for _, c := range allNormClasses {
-			got, _ := Normalize(c, in)
+			got, _ := mustNormalize(t, c, in)
 			if !utf8.ValidString(got) {
 				t.Errorf("%s: output for %q is not valid UTF-8", className(c), in)
 			}
