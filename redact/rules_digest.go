@@ -4,6 +4,6 @@ package redact
 
 // The rule-set digest of §4.5, fixed at build time.
 const (
-	rulesDigestHex     = "94b80bf9b5fe56bec7698bf36bb8794383f6220b68ee26b7749d6a398ca8196f"
-	rulesDigestVersion = 2
+	rulesDigestHex     = "fa11318e4ba45b78454e52ebbbde586aa41cb10bb035ec1fd3947af8db7bd34f"
+	rulesDigestVersion = 1
 )
