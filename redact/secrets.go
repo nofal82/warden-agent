@@ -446,8 +446,8 @@ func jwtHeaderHasAlg(header string) bool {
 	return ok
 }
 
-// urlTokenEnd ends the token of a URL with credentials.
-const urlTokenEnd = " \t\n\r\v\f\"'"
+// urlStopBytes end the run of a URL with credentials.
+const urlStopBytes = " \t\n\r\v\f\"'"
 
 func urlCredentials() detector {
 	scheme := anchored(`[a-zA-Z][a-zA-Z0-9+.-]*://`)
@@ -456,7 +456,7 @@ func urlCredentials() detector {
 		kind:    kindValue,
 		classes: allClasses,
 		res:     []*regexp.Regexp{scheme},
-		tables:  []string{"anchor:://", "userinfo-to-last-at", "userinfo-has-colon", "token-once", "token-end:" + urlTokenEnd},
+		tables:  []string{"anchor:://", "userinfo-to-last-at", "userinfo-has-colon", "token-once", "token-end:" + urlStopBytes},
 		find: func(s string) ([]span, error) {
 			var out []span
 			// The token (up to whitespace or a quote), its last '@' and the
@@ -478,7 +478,7 @@ func urlCredentials() detector {
 				}
 				if i >= tokEnd {
 					tokEnd = len(s)
-					if j := strings.IndexAny(s[i:], urlTokenEnd); j >= 0 {
+					if j := strings.IndexAny(s[i:], urlStopBytes); j >= 0 {
 						tokEnd = i + j
 					}
 					work(tokEnd - i)
