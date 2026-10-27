@@ -39,6 +39,9 @@ const endDetail protoreflect.FullName = "warden.agentapi.v1.EndDetail"
 // nonStringClassAllowed lists the messages where §4.1 gives every field,
 // numbers included, a class other than X: EnrollRequest and RenewRequest,
 // class I.
+// Stricter than §4.10.1 reading 2 on purpose, as is the "reached from
+// both directions" rule in generateClassTable (Go reviewer, PR #16; a
+// warden spec PR records both).
 var nonStringClassAllowed = map[protoreflect.FullName]wardenv1.RedactFieldClass{
 	"warden.agentapi.v1.EnrollRequest": clsI,
 	"warden.agentapi.v1.RenewRequest":  clsI,
@@ -289,4 +292,54 @@ func classTableDiff(compiled map[protoreflect.FullName]wardenv1.RedactFieldClass
 	}
 	sort.Strings(out)
 	return out
+}
+
+// structuralOnly are the messages redaction R14 and R15 keep free of
+// text: HealthReport carries enums, numbers and SHA-256 values only (R14),
+// the advisory reports have no string fields (R15). The rule is kept as a
+// field-type rule beside R5's classes (Go reviewer, PR #16), so a string
+// added with class X still fails.
+var structuralOnly = []protoreflect.FullName{
+	"warden.agentapi.v1.HealthReport",
+	"warden.agentapi.v1.EnvelopeAdvisory",
+	"warden.agentapi.v1.TrustDocumentOversize",
+	"warden.agentapi.v1.RecoveryReport",
+}
+
+// sha256Only are the structuralOnly roots whose bytes fields must be
+// SHA-256 values: exactly 32 bytes by their options (R14).
+var sha256Only = map[protoreflect.FullName]bool{"warden.agentapi.v1.HealthReport": true}
+
+// structuralViolations reports each string field reachable from a
+// structuralOnly message, and each bytes field under HealthReport whose
+// options do not fix it at 32 bytes.
+func structuralViolations(files *protoregistry.Files) []string {
+	var out []string
+	for _, name := range structuralOnly {
+		roots, err := addRoots(files, nil, name)
+		if err != nil {
+			out = append(out, err.Error())
+			continue
+		}
+		for _, md := range reachableMessages(roots) {
+			for i := 0; i < md.Fields().Len(); i++ {
+				fd := md.Fields().Get(i)
+				switch {
+				case fd.Kind() == protoreflect.StringKind:
+					out = append(out, fmt.Sprintf("%s: string field under %s (R14, R15)", fd.FullName(), name))
+				case fd.Kind() == protoreflect.BytesKind && sha256Only[name] && !exactly32(fd):
+					out = append(out, fmt.Sprintf("%s: bytes field under %s that is not a 32-byte SHA-256 (R14)", fd.FullName(), name))
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func exactly32(fd protoreflect.FieldDescriptor) bool {
+	opts := fd.Options()
+	return proto.HasExtension(opts, wardenv1.E_MinBytes) && proto.HasExtension(opts, wardenv1.E_MaxBytes) &&
+		proto.GetExtension(opts, wardenv1.E_MinBytes).(uint32) == 32 &&
+		proto.GetExtension(opts, wardenv1.E_MaxBytes).(uint32) == 32
 }
