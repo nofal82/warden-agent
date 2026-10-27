@@ -56,9 +56,9 @@ func isWordByte(c byte) bool { return isAlnum(c) || c == '_' }
 func wordStart(s string, i int) bool { return i == 0 || !isWordByte(s[i-1]) }
 
 // literalSpans finds matches of an anchored re at each occurrence of any
-// of lits, in text order (issue #21), optionally only where \b holds before it, and returns the first
-// non-empty group (group 1 and on) or, when group is false, the whole
-// match. An occurrence inside an earlier match of the same literal is not
+// of lits, optionally only where \b holds before it, and returns, in text
+// order (issue #21), the first non-empty group (group 1 and on) or, when
+// group is false, the whole match. An occurrence inside an earlier match of the same literal is not
 // tried again: its match would end at the same place (the patterns are
 // greedy over a fixed alphabet), and re-scanning it for every occurrence
 // would make a line of repeated literals cost quadratic time (security
