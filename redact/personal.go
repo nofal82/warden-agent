@@ -387,7 +387,7 @@ func paymentCard() detector {
 		numeric: true,
 		classes: allClasses,
 		res:     []*regexp.Regexp{re},
-		tables:  []string{"first-2-6", "13-19-digits", "start-at-run-first-digit", "every-group-end", "luhn", "longest", "no-hex-before"},
+		tables:  []string{"first-2-6", "13-19-digits", "start-at-every-group-start", "merge-overlaps", "every-group-end", "luhn", "longest", "no-hex-before"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			for _, m := range digitRuns(s, re, 13) {
@@ -485,7 +485,7 @@ func iban() detector {
 		kind:    kindMarker,
 		classes: allClasses,
 		res:     []*regexp.Regexp{re},
-		tables:  []string{"start-on-word-boundary", "every-group-end", "end-on-word-boundary", "length:15-34", "mod97"},
+		tables:  []string{"start-on-word-boundary", "every-group-end", "end-on-word-boundary", "window:45", "length:15-34", "mod97"},
 		find: func(s string) ([]span, error) {
 			// The pattern runs anchored at every start of two capitals and
 			// two digits on a word boundary (MA10), including starts inside
