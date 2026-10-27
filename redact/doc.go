@@ -7,10 +7,10 @@
 // control plane must never reimplement it.
 //
 // For one item the order is fixed (§4.4): input limits (R39), textual
-// escapes (R25a), normalisation (R25–R28), user-name pseudonyms (R12a),
-// detection (§4.2), span replacement with markers and the growth cap
-// (R31), the output limit (R40), and a post-check over the final output
-// (R32). Every failure means "drop the item" (R35); the error values carry
+// escapes (R25a) and normalisation (R25–R28a), repeated to a fixed point
+// within a pass cap (R28b), user-name pseudonyms (R12a), detection
+// (§4.2), span replacement with markers and the growth cap (R31), the
+// output limit (R40), and a post-check over the final output (R32). Every failure means "drop the item" (R35); the error values carry
 // no content from the input (R4).
 //
 // The rule table is compiled in (R43): nothing outside this package can

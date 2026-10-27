@@ -218,6 +218,7 @@ func extendSpan(s string, sp span, valueOnly bool) span {
 	for sp.end < len(s) && !tokenBoundary(s[sp.end]) {
 		sp.end++
 	}
+	work(sp.end - sp.start)
 	return sp
 }
 
@@ -264,6 +265,7 @@ func protectedSpan(s string, d *detector, sp span) bool {
 	for b < len(s) && isTokenHex(s[b]) {
 		b++
 	}
+	work(b - a)
 	token := s[a:b]
 	if within(pseudonymRe.FindAllStringIndex(token, -1), a, sp) {
 		return true

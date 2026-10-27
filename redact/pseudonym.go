@@ -67,7 +67,10 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 		if name == "" {
 			return
 		}
-		if isPseudonym(name) || name == UserNameMarker || name == NameUserNameMarker {
+		// A pseudonym or an exact marker is output of an earlier pass, not a
+		// name (§4.3; issue #14: "redacted-warden-enrollment-token" as the
+		// first component of a /home path).
+		if ps.r.isMarkerText(name) {
 			// Kept as it is, but still a unit the output limit may not cut
 			// (R40), or a cut half would read as a raw name next time.
 			segs = append(segs, seg{start: b.Len(), end: b.Len() + len(name), marker: !isPseudonym(name)})
@@ -89,8 +92,11 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 		replace(s, labelDBUser)
 		return b.String(), segs
 	case ps.f.HomeRoot && ps.class == TPath:
+		// The first component's name ends where a /home/ name ends, so a
+		// marker that an earlier pass put there is read alone, as an exact
+		// marker (issue #14: "redacted-warden-enrollment-token x").
 		first := s
-		if i := strings.IndexByte(s, '/'); i >= 0 {
+		if i := strings.IndexAny(s, homeNameEnd); i >= 0 {
 			first = s[:i]
 		}
 		replace(first, labelHomeUser)

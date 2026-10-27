@@ -22,7 +22,8 @@ func pemPrivateKey() detector {
 		id:      "pem-private-key",
 		kind:    kindMarker,
 		classes: allClasses,
-		canon:   canon(pemBeginPattern, pemEndPattern, "pair-to-end-or-input-end", "orphan-end"),
+		res:     []*regexp.Regexp{begin, end},
+		tables:  []string{"pair-to-end-or-input-end", "orphan-end"},
 		find: func(s string) ([]span, error) {
 			blocks, orphans := pemBlocks(begin, end, s)
 			return mergeSorted(blocks, orphans), nil
@@ -39,6 +40,7 @@ func pemPrivateKey() detector {
 // without an end marker runs to the end of the input (R13). It also
 // returns the end markers that no begin marker precedes.
 func pemBlocks(begin, end *regexp.Regexp, s string) (blocks, orphans []span) {
+	work(2 * len(s))
 	bs := begin.FindAllStringIndex(s, -1)
 	es := end.FindAllStringIndex(s, -1)
 	covered, ei := 0, 0
@@ -94,7 +96,8 @@ func pemBodyLine() detector {
 		id:      "pem-body-line",
 		kind:    kindMarker,
 		classes: textClasses,
-		canon:   canon(`[A-Za-z0-9+/]+={0,2}`, "prefix-ws-or-colon", "60-76-not-lower-hex", "4-76-next-to-body-or-marker", "orphan-end-run-1-76", pemAnyPattern),
+		res:     []*regexp.Regexp{begin, end, marker},
+		tables:  []string{"key-body:[A-Za-z0-9+/]+={0,2}", "prefix-ws-or-colon", "primary-not-lower-hex", "short-next-to-body-or-marker", "orphan-end-run"},
 		find: func(s string) ([]span, error) {
 			return bodyLines(s, begin, end, marker), nil
 		},
@@ -121,6 +124,7 @@ func (l textLine) kbLen() int {
 // a line's prefix (syslog, journal, YAML indentation, "key:") is kept and
 // only its key-body part is replaced.
 func bodyLines(s string, begin, end, marker *regexp.Regexp) []span {
+	work(len(s))
 	var lines []textLine
 	for off := 0; ; {
 		e := len(s)
@@ -158,6 +162,7 @@ func bodyLines(s string, begin, end, marker *regexp.Regexp) []span {
 	for _, o := range orphans {
 		li := lineOf(lines, o.start)
 		for k := li - 1; k >= 0; k-- {
+			work(1)
 			if n := lines[k].kbLen(); n < 1 || n > bodyLineMax {
 				break
 			}
@@ -237,9 +242,11 @@ func pemPrivateKeyB64() detector {
 		kind:    kindMarker,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(runPattern, "run-start", "decode-max-96", headPattern),
+		res:     []*regexp.Regexp{run, head},
+		tables:  []string{"run-start", "decode-bounded"},
 		find: func(s string) ([]span, error) {
 			var out []span
+			work(len(s))
 			for _, m := range run.FindAllStringIndex(s, -1) {
 				if m[0] > 0 && isBase64Run(s[m[0]-1]) {
 					continue // inside a longer token, not its start
@@ -283,7 +290,7 @@ func wardenEnrollmentToken() detector {
 		kind:    kindMarker,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(pattern),
+		res:     []*regexp.Regexp{re},
 		find: func(s string) ([]span, error) {
 			if !strings.Contains(s, "wdn1_") {
 				return nil, nil
@@ -307,7 +314,8 @@ func awsAccessKeyID() detector {
 		id:      "aws-access-key-id",
 		kind:    kindMarker,
 		classes: allClasses,
-		canon:   canon(`\b`+body, "anchor:prefixes"),
+		res:     []*regexp.Regexp{re},
+		tables:  []string{"word-start", "anchor:aws-prefixes"},
 		find: func(s string) ([]span, error) {
 			return literalSpans(s, awsKeyPrefixes, re, true, false), nil
 		},
@@ -327,7 +335,7 @@ func awsSecretKey() detector {
 		kind:    kindValue,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(pattern),
+		res:     []*regexp.Regexp{re},
 		find: func(s string) ([]span, error) {
 			if !containsAny(asciiLower(s), "secret_access_key", "secretaccesskey") {
 				return nil, nil
@@ -344,7 +352,9 @@ func awsSecretKey() detector {
 // vendorPatterns are the prefix forms of §4.2 vendor-token, one regexp
 // each so one form's alternation cannot shadow another's. Every form starts
 // at \b with a fixed prefix; the pattern runs anchored at each occurrence
-// of its prefix literals.
+// of its prefix literals. Every form that starts with "sk-" refuses a match
+// followed by a unit suffix, so a unit name such as
+// "sk-ant-api-gateway.service" is kept (R33, S4).
 var vendorPatterns = []struct {
 	body     string // the pattern after its leading \b
 	literals []string
@@ -360,41 +370,37 @@ var vendorPatterns = []struct {
 	{`sk-ant-[A-Za-z0-9_-]{20,}`, []string{"sk-ant-"}},
 	{`AGE-SECRET-KEY-1[0-9A-Z]{58}`, []string{"AGE-SECRET-KEY-1"}},
 	{`hooks\.slack\.com/services/[A-Za-z0-9/]+`, []string{"hooks.slack.com/services/"}},
+	{`sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{40,}`, []string{"sk-"}},
 }
-
-// vendorSKBody is the generic sk- form; its validator refuses a match
-// followed by a unit suffix (gate item, 2026-10-25).
-const vendorSKBody = `sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{40,}`
 
 func vendorToken() detector {
 	res := make([]*regexp.Regexp, len(vendorPatterns))
-	pats := make([]string, 0, len(vendorPatterns)+2)
 	for i, p := range vendorPatterns {
 		res[i] = anchored(p.body)
-		pats = append(pats, `\b`+p.body)
 	}
-	sk := anchored(vendorSKBody)
 	return detector{
 		id:      "vendor-token",
 		kind:    kindMarker,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(append(pats, `\b`+vendorSKBody, "sk-not-before-unit-suffix", "anchor:prefixes")...),
+		res:     res,
+		tables:  []string{"word-start", "anchor:vendor-literals", "sk-dash-not-before-unit-suffix"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			for i, re := range res {
-				out = append(out, literalSpans(s, vendorPatterns[i].literals, re, true, false)...)
-			}
-			for _, sp := range literalSpans(s, []string{"sk-"}, sk, true, false) {
-				if !startsWithUnitSuffix(s[sp.end:]) {
-					out = append(out, sp)
+				skipUnit := strings.HasPrefix(vendorPatterns[i].body, "sk-")
+				for _, sp := range literalSpans(s, vendorPatterns[i].literals, re, true, false) {
+					if !skipUnit || !startsWithUnitSuffix(s[sp.end:]) {
+						out = append(out, sp)
+					}
 				}
 			}
 			return out, nil
 		},
 		samples: func() ([]string, []string) {
 			return []string{"gh" + "p_" + strings.Repeat("a", 36), "sk" + "-proj-" + strings.Repeat("b", 40)},
-				[]string{"sk-payments-db.service", "sk" + "-" + strings.Repeat("c", 40) + ".service"}
+				[]string{"sk-payments-db.service", "sk" + "-" + strings.Repeat("c", 40) + ".service",
+					"sk" + "-ant-" + strings.Repeat("d", 20) + ".service"}
 		},
 	}
 }
@@ -407,7 +413,8 @@ func jwtToken() detector {
 		kind:    kindMarker,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(pattern, "header-json-object-with-alg"),
+		res:     []*regexp.Regexp{re},
+		tables:  []string{"header-json-object-with-alg"},
 		find: func(s string) ([]span, error) {
 			if !strings.Contains(s, "eyJ") {
 				return nil, nil
@@ -439,13 +446,17 @@ func jwtHeaderHasAlg(header string) bool {
 	return ok
 }
 
+// urlTokenEnd ends the token of a URL with credentials.
+const urlTokenEnd = " \t\n\r\v\f\"'"
+
 func urlCredentials() detector {
-	const pattern = `[a-zA-Z][a-zA-Z0-9+.-]*://([^\s"']*)@`
+	scheme := anchored(`[a-zA-Z][a-zA-Z0-9+.-]*://`)
 	return detector{
 		id:      "url-credentials",
 		kind:    kindValue,
 		classes: allClasses,
-		canon:   canon(pattern, "userinfo-has-colon", "anchor:://", "token-once"),
+		res:     []*regexp.Regexp{scheme},
+		tables:  []string{"anchor:://", "userinfo-to-last-at", "userinfo-has-colon", "token-once", "token-end:" + urlTokenEnd},
 		find: func(s string) ([]span, error) {
 			var out []span
 			// The token (up to whitespace or a quote), its last '@' and the
@@ -461,14 +472,16 @@ func urlCredentials() detector {
 				for k < i && !isLetter(s[k]) {
 					k++
 				}
-				if k == i {
+				work(i - k + 1)
+				if k == i || matchAt(scheme, s, k) == nil {
 					return
 				}
 				if i >= tokEnd {
 					tokEnd = len(s)
-					if j := strings.IndexAny(s[i:], " \t\n\r\v\f\"'"); j >= 0 {
+					if j := strings.IndexAny(s[i:], urlTokenEnd); j >= 0 {
 						tokEnd = i + j
 					}
+					work(tokEnd - i)
 					lastAt = strings.LastIndexByte(s[i:tokEnd], '@')
 					if lastAt >= 0 {
 						lastAt += i
@@ -499,7 +512,6 @@ var urlSecretParams = []string{
 }
 
 func urlSecretParam() detector {
-	pattern := `(?i)[?&;](?:` + strings.Join(urlSecretParams, "|") + `)=([^&\s#"']+)`
 	value := anchored(`=([^&\s#"']+)`)
 	names := map[string]bool{}
 	for _, n := range urlSecretParams {
@@ -509,7 +521,8 @@ func urlSecretParam() detector {
 		id:      "url-secret-param",
 		kind:    kindValue,
 		classes: allClasses,
-		canon:   canon(pattern, "anchor:="),
+		res:     []*regexp.Regexp{value},
+		tables:  []string{"anchor:=", "name-after:?&;", "names:url-secret-params", "ascii-case-insensitive"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			lower := asciiLower(s)
@@ -587,20 +600,25 @@ func headerValueAt(s string, v int) (span, bool) {
 }
 
 func lineEnd(s string, i int) int {
-	if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
-		return i + j
+	j := strings.IndexByte(s[i:], '\n')
+	if j < 0 {
+		j = len(s) - i
 	}
-	return len(s)
+	work(j)
+	return i + j
 }
 
 // quotedValue reads a quoted value at s[v:]. The opening quote may follow
 // k backslashes (a JSON document logged inside a JSON string, at any
 // depth; ruling on PR #10). It closes at the same quote character
-// preceded by exactly k backslashes, or, at k = 0, by an even number (a
-// plain JSON string, where \" is part of the value); a single-quoted value
-// at k = 0 closes at the next single quote (shell, SQL). It returns the
-// content span, whether the value is quoted, and whether it closed on its
-// line.
+// preceded by exactly k backslashes, or, at k = 0, for a double quote, by
+// an even number (a plain JSON string, where \" is part of the value). A
+// single-quoted value at k = 0 has two candidate ends and the longer span
+// is taken (§4.2 "Escaped quotes", OQ17): the shell-style end, the next
+// single quote, and the SQL-style end, the first single quote after an
+// even number of backslashes that is not doubled ("\'" and "”" are
+// quotes inside the value). It returns the content span, whether the
+// value is quoted, and whether it closed on its line.
 func quotedValue(s string, v int) (start, end int, quoted, closed bool) {
 	k := 0
 	for v+k < len(s) && s[v+k] == '\\' {
@@ -611,7 +629,9 @@ func quotedValue(s string, v int) (start, end int, quoted, closed bool) {
 	}
 	q := s[v+k]
 	start = v + k + 1
-	for i := start; i < len(s) && s[i] != '\n'; i++ {
+	shell := -1
+	i := start
+	for ; i < len(s) && s[i] != '\n'; i++ {
 		if s[i] != q {
 			continue
 		}
@@ -619,16 +639,35 @@ func quotedValue(s string, v int) (start, end int, quoted, closed bool) {
 		for i-m-1 >= start && s[i-m-1] == '\\' {
 			m++
 		}
-		if m == k || (k == 0 && (q == '\'' || m%2 == 0)) {
-			return start, i - m, true, true
+		switch {
+		case k > 0 || q == '"':
+			if m == k || (k == 0 && m%2 == 0) {
+				work(i - start)
+				return start, i - m, true, true
+			}
+		case shell < 0:
+			shell = i
+			fallthrough
+		default:
+			if m%2 == 1 {
+				continue
+			}
+			if i+1 < len(s) && s[i+1] == '\'' {
+				i++ // a doubled quote inside an SQL value
+				continue
+			}
+			work(i - start)
+			return start, i, true, true
 		}
+	}
+	work(i - start)
+	if shell >= 0 {
+		return start, shell, true, true
 	}
 	return start, len(s), true, false
 }
 
 func authorizationHeader() detector {
-	const header = `(?i)\b(?:proxy-)?authorization` + headerSeparator + `<value>`
-	const standalone = `(?i)\b(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{8,}=*)`
 	sep := anchored(headerSeparator)
 	st := anchored(`(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{8,}=*)`)
 	return detector{
@@ -636,7 +675,8 @@ func authorizationHeader() detector {
 		kind:    kindValue,
 		extend:  true,
 		classes: allClasses,
-		canon:   canon(header, standalone, "anchor:keywords", "value:quoted-by-level-or-line"),
+		res:     []*regexp.Regexp{sep, st},
+		tables:  []string{"keyword:authorization", "standalone:bearer|basic|token", "word-start", "ascii-case-insensitive", "value:quoted-by-level-or-line"},
 		find: func(s string) ([]span, error) {
 			// The anchored patterns run on the ASCII-lowercased text, which
 			// keeps every offset, in place of (?i).
@@ -651,13 +691,13 @@ func authorizationHeader() detector {
 }
 
 func cookieHeader() detector {
-	const header = `(?i)\b(?:set-)?cookie` + headerSeparator + `<value>`
 	sep := anchored(headerSeparator)
 	return detector{
 		id:      "cookie-header",
 		kind:    kindValue,
 		classes: textClasses,
-		canon:   canon(header, "anchor:cookie", "value:quoted-by-level-or-line"),
+		res:     []*regexp.Regexp{sep},
+		tables:  []string{"keyword:cookie", "word-start", "ascii-case-insensitive", "value:quoted-by-level-or-line"},
 		find: func(s string) ([]span, error) {
 			// "Set-Cookie": '-' is not a word character, so \b holds before
 			// "cookie" there too.
@@ -691,40 +731,53 @@ const (
 	assignAfterSpaceKey = `^(?:\\*["'])?[ \t]+`
 )
 
-// secretSQLPatterns are the SQL and Azure forms of secret-assignment, with
-// the lowercase literal each needs.
+// secretSQLPatterns are the SQL and Azure forms of secret-assignment,
+// with the lowercase literal each needs. An SQL form's pattern ends where
+// its quoted value starts, and quotes lists the quote characters that may
+// open it; the value is read by quotedValue, so "\'" and "”" inside it
+// are handled as for any other key (OQ17). The Azure form captures its
+// value in group 1.
 var secretSQLPatterns = []struct {
 	body     string // matched on the lowercased text, after \b
 	literals []string
+	quotes   string
 }{
-	{`identified[ \t]+(?:with[ \t]+[a-z0-9_]+[ \t]+)?by[ \t]+(?:'([^'\n]*)'|"([^"\n]*)")`, []string{"identified"}},
-	{`password[ \t]*=?[ \t]*'([^'\n]*)'`, []string{"password"}},
-	{`(?:accountkey|sharedaccesskey)=([^;\s"']+)`, []string{"accountkey", "sharedaccesskey"}},
+	{`identified[ \t]+(?:with[ \t]+[a-z0-9_]+[ \t]+)?by[ \t]+`, []string{"identified"}, `'"`},
+	{`password[ \t]*=?[ \t]*`, []string{"password"}, `'`},
+	{`(?:accountkey|sharedaccesskey)=([^;\s"']+)`, []string{"accountkey", "sharedaccesskey"}, ""},
 }
 
 func secretAssignment() detector {
 	after := regexp.MustCompile(assignAfterKey)
 	afterSpace := regexp.MustCompile(assignAfterSpaceKey)
 	bare := anchored(assignmentBare)
-	sql := make([]*regexp.Regexp, len(secretSQLPatterns))
-	pats := []string{"anchor:keywords", "value:quoted-by-level-or-bare", assignmentBare,
-		`["']?[A-Za-z0-9_.-]*(?i:` + strings.Join(secretKeyWords, "|") + `)[A-Za-z0-9_.-]*` + strings.TrimPrefix(assignAfterKey, "^"),
-		`[A-Za-z0-9_.-]*(?i:requirepass|masterauth)[A-Za-z0-9_.-]*` + strings.TrimPrefix(assignAfterSpaceKey, "^"),
-	}
-	for i, p := range secretSQLPatterns {
-		sql[i] = anchored(p.body)
-		pats = append(pats, `(?i)\b`+p.body)
+	res := []*regexp.Regexp{after, afterSpace, bare}
+	tables := []string{"anchor:keywords", "key-bytes:[A-Za-z0-9_.-]", "space-separator:requirepass,masterauth",
+		"value:quoted-by-level-or-bare", "ascii-case-insensitive"}
+	for _, p := range secretSQLPatterns {
+		res = append(res, anchored(p.body))
+		tables = append(tables, "sql-quotes:"+p.quotes)
 	}
 	return detector{
 		id:      "secret-assignment",
 		kind:    kindValue,
 		classes: allClasses,
-		canon:   canon(pats...),
+		res:     res,
+		tables:  tables,
 		find: func(s string) ([]span, error) {
 			lower := asciiLower(s)
 			out := secretKeyValues(s, lower, after, afterSpace, bare)
-			for i, re := range sql {
-				out = append(out, literalSpans(lower, secretSQLPatterns[i].literals, re, true, true)...)
+			for i, p := range secretSQLPatterns {
+				re := res[3+i]
+				if p.quotes == "" {
+					out = append(out, literalSpans(lower, p.literals, re, true, true)...)
+					continue
+				}
+				for _, m := range literalSpans(lower, p.literals, re, true, false) {
+					if sp, ok := sqlValueAt(s, m.end, p.quotes); ok {
+						out = append(out, sp)
+					}
+				}
 			}
 			return out, nil
 		},
@@ -733,6 +786,23 @@ func secretAssignment() detector {
 				[]string{"password reset requested"}
 		},
 	}
+}
+
+// sqlValueAt reads the quoted value of an SQL form at s[v:]: it must open
+// with one of quotes (after any backslashes) and close on its line.
+func sqlValueAt(s string, v int, quotes string) (span, bool) {
+	k := v
+	for k < len(s) && s[k] == '\\' {
+		k++
+	}
+	if k >= len(s) || strings.IndexByte(quotes, s[k]) < 0 {
+		return span{}, false
+	}
+	start, end, quoted, closed := quotedValue(s, v)
+	if !quoted || !closed || end <= start {
+		return span{}, false
+	}
+	return span{start: start, end: end}, true
 }
 
 // secretKeyValues finds each key that contains a keyword (the whole run of
@@ -762,6 +832,7 @@ func secretKeyValues(s, lower string, after, afterSpace, bare *regexp.Regexp) []
 			for ke < len(s) && isKeyByte(s[ke]) {
 				ke++
 			}
+			work(ke - ks)
 			covered = ke
 			if seen[ks] {
 				continue

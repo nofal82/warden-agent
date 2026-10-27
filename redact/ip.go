@@ -26,7 +26,8 @@ func publicIP() detector {
 		id:      "public-ip",
 		kind:    kindIP,
 		classes: textClasses,
-		canon:   canon(ipv4Pattern, ipv6Pattern, "netip", "unmap-4in6", "v4/24", "6to4/40", "v6/48", "kept-ranges", "prefix-suffix", "anchor:token-start"),
+		res:     []*regexp.Regexp{v4, v6},
+		tables:  []string{"anchor:token-start", "netip", "unmap-4in6", "kept-ranges", "prefix-suffix", "mapped-suffix-as-ipv4", "escape-before-network-consumed"},
 		find:    func(s string) ([]span, error) { return ipSpans(v4, v6, s), nil },
 		samples: func() ([]string, []string) {
 			return []string{"client 203.0.113.77"}, []string{"client 10.1.2.3"}
@@ -69,6 +70,7 @@ func ipSpans(v4, v6 *regexp.Regexp, s string) []span {
 		for runEnd < len(s) && (isHexByte(s[runEnd]) || s[runEnd] == ':') {
 			runEnd++
 		}
+		work(runEnd - a)
 		if a > 0 && (isAlnum(s[a-1]) || s[a-1] == '.') {
 			return
 		}
@@ -144,35 +146,65 @@ func ipSpan(s string, a, b int, addr netip.Addr) (span, bool) {
 			bits = sixToFourBits
 		}
 	}
-	end := b
-	if n, e, ok := prefixSuffix(s, b, addr.BitLen()); ok && !mapped {
-		if p, err := addr.Prefix(n); err == nil && n <= bits && p.Addr() == addr {
+	end, repl := b, ""
+	if n, e, ok := prefixSuffix(s, b); ok {
+		// The address and its /N go together (R34). A plain address is
+		// kept when N is no finer than the truncation length and every
+		// host bit is zero. A mapped address's /N is read against the
+		// unmapped 32 bits (S2): when it is a valid prefix no finer than
+		// /24, the output is that IPv4 network. Anything else becomes the
+		// truncated network, never with a second suffix.
+		end = e
+		if p, err := addr.Prefix(n); err == nil && n <= bits {
+			switch {
+			case mapped:
+				repl = p.String()
+			case p.Addr() == addr:
+				return span{}, false
+			}
+		}
+	}
+	if repl == "" {
+		p, err := addr.Prefix(bits)
+		if err != nil {
 			return span{}, false
 		}
-		end = e
+		repl = p.String()
 	}
-	p, err := addr.Prefix(bits)
-	if err != nil {
-		return span{}, false
-	}
-	repl := p.String()
-	// The network is written in lowercase. After an odd run of
-	// backslashes, a leading "e" would form the R25a escape "\e" that the
-	// next pass (intake) decodes, so the last backslash is replaced too.
-	if repl[0] == 'e' {
-		n := 0
-		for a-n > 0 && s[a-n-1] == '\\' {
-			n++
-		}
-		if n%2 == 1 {
-			a--
-		}
-	}
-	return span{start: a, end: end, repl: repl}, true
+	return span{start: escapeStart(s, a, repl), end: end, repl: repl}, true
 }
 
-// prefixSuffix reads "/N" after an address.
-func prefixSuffix(s string, i, maxBits int) (int, int, bool) {
+// escapeStart moves the start of a replaced address back over the text
+// that would form an R25a escape with the network written there (OQ15):
+// the network is lowercase and can differ from the address, so "\E::1"
+// would become "\e::/48" and "#::ffff:177.12.2.3" "#177.12.2.0/24", which
+// a second pass (intake) would decode. Only an escape that ends inside the
+// network counts; backslashes are read as pairs from the left.
+func escapeStart(s string, a int, repl string) int {
+	for j := max(a-5, 0); j < a; j++ {
+		if s[j] == '\\' && oddBackslashRunEndsAt(s, j) {
+			continue // the second half of a "\\" pair
+		}
+		if _, n, ok := escapeAt(s[j:a] + repl); ok && n > a-j {
+			return j
+		}
+	}
+	return a
+}
+
+// oddBackslashRunEndsAt reports whether s[j], a backslash, closes a pair:
+// an odd number of backslashes directly precede it.
+func oddBackslashRunEndsAt(s string, j int) bool {
+	n := 0
+	for j-n > 0 && s[j-n-1] == '\\' {
+		n++
+	}
+	return n%2 == 1
+}
+
+// prefixSuffix reads "/N" after an address: a '/' and the run of digits
+// after it (at most three, and not followed by another digit).
+func prefixSuffix(s string, i int) (int, int, bool) {
 	if i >= len(s) || s[i] != '/' {
 		return 0, 0, false
 	}
@@ -184,7 +216,7 @@ func prefixSuffix(s string, i, maxBits int) (int, int, bool) {
 		return 0, 0, false
 	}
 	n, err := strconv.Atoi(s[i+1 : j])
-	if err != nil || n > maxBits {
+	if err != nil {
 		return 0, 0, false
 	}
 	return n, j, true
