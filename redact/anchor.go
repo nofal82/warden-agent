@@ -22,6 +22,11 @@ func anchored(pattern string) *regexp.Regexp {
 // made absolute, or nil.
 func matchAt(re *regexp.Regexp, s string, i int) []int {
 	m := re.FindStringSubmatchIndex(s[i:])
+	if m == nil {
+		work(1)
+	} else {
+		work(1 + m[1])
+	}
 	for k := range m {
 		if m[k] >= 0 {
 			m[k] += i
@@ -35,8 +40,10 @@ func eachIndex(s, lit string, fn func(i int)) {
 	for from := 0; from <= len(s)-len(lit); {
 		i := strings.Index(s[from:], lit)
 		if i < 0 {
+			work(len(s) - from)
 			return
 		}
+		work(i + 1)
 		fn(from + i)
 		from += i + 1
 	}
@@ -92,6 +99,7 @@ func literalSpans(s string, lits []string, re *regexp.Regexp, boundary, group bo
 // least one byte, so a shorter run cannot hold minBytes digits.
 func digitRuns(s string, re *regexp.Regexp, minBytes int) [][]int {
 	var out [][]int
+	work(len(s))
 	for _, m := range re.FindAllStringIndex(s, -1) {
 		if m[1]-m[0] >= minBytes {
 			out = append(out, m)

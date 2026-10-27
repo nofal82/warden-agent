@@ -66,15 +66,16 @@ func letterAt(s string, i int) bool {
 // It is searched from each '@': the local part is the run of up to 64
 // local-part characters before it (what the leftmost match takes), and
 // the domain is matched anchored after it.
-const domainPattern = `^@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.([A-Za-z]{2,24})\b`
+const domainPattern = `@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.([A-Za-z]{2,24})\b`
 
 func email() detector {
-	domain := regexp.MustCompile(domainPattern)
+	domain := anchored(domainPattern)
 	return detector{
 		id:      "email",
 		kind:    kindMarker,
 		classes: allClasses,
-		canon:   canon(`[A-Za-z0-9._%+-]{1,64}`, domainPattern, "last-label-not-unit-suffix"),
+		res:     []*regexp.Regexp{domain},
+		tables:  []string{"anchor:@", "local-part:[A-Za-z0-9._%+-]{1,64}", "last-label-not-unit-suffix"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			for from := 0; ; {
@@ -88,15 +89,16 @@ func email() detector {
 				for a > 0 && i-a < 64 && isLocalPart(s[a-1]) {
 					a--
 				}
+				work(i - a + 1)
 				if a == i {
 					continue
 				}
-				m := domain.FindStringSubmatchIndex(s[i:])
-				if m == nil || isUnitSuffix(s[i+m[2]:i+m[3]]) {
+				m := matchAt(domain, s, i)
+				if m == nil || isUnitSuffix(s[m[2]:m[3]]) {
 					continue
 				}
-				out = append(out, span{start: a, end: i + m[1]})
-				from = i + m[1]
+				out = append(out, span{start: a, end: m[1]})
+				from = m[1]
 			}
 			return out, nil
 		},
@@ -143,7 +145,6 @@ func joined(s string, g, h digitGroup, seps string) bool {
 
 func phone() detector {
 	const intl = `\+[1-9\x{0661}-\x{0669}\x{06F1}-\x{06F9}](?:\)?[ .\-]?\(?` + digitClass + `){7,14}`
-	const jordan = digitClass + `{3}[ \-]?` + digitClass + `{7}`
 	ri := regexp.MustCompile(intl)
 	runs := regexp.MustCompile(digitRunPattern)
 	return detector{
@@ -151,7 +152,8 @@ func phone() detector {
 		kind:    kindMarker,
 		numeric: true,
 		classes: allClasses,
-		canon:   canon(intl, jordan, "jordan-07[789]-digit-boundaries", digitRunPattern),
+		res:     []*regexp.Regexp{ri, runs},
+		tables:  []string{"jordan-mobile:07[789]", "jordan-groups:10|3+7", "jordan-separators: -", "digit-boundaries"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			if strings.IndexByte(s, '+') >= 0 {
@@ -219,26 +221,35 @@ type idRule struct {
 	first    string // allowed first digits; empty for any
 }
 
-func newIDRule(keywords []string, short, first string) (idRule, []string) {
+func newIDRule(keywords []string, short, first string) idRule {
 	r := idRule{short: regexp.MustCompile(short), first: first}
-	pats := make([]string, 0, len(keywords)+2)
 	for _, kw := range keywords {
-		p := keywordPattern(kw)
-		r.keywords = append(r.keywords, regexp.MustCompile(p))
+		r.keywords = append(r.keywords, regexp.MustCompile(keywordPattern(kw)))
 		r.literals = append(r.literals, strings.Fields(strings.ToLower(kw))[0])
-		pats = append(pats, p)
 	}
-	return r, append(pats, short, "first:"+first)
+	return r
+}
+
+// res and tables of an idRule, for the rule-set digest (§4.5).
+func (k idRule) res() []*regexp.Regexp {
+	return append(append([]*regexp.Regexp(nil), k.keywords...), k.short)
+}
+
+func (k idRule) tables() []string {
+	return []string{"whole-word-keyword", "ten-digits-in-window", "short-keyword-direct", "first:" + k.first,
+		"literals:" + strings.Join(k.literals, ",")}
 }
 
 func (k idRule) find(s string) []span {
 	var out []span
 	lower := asciiLower(s)
 	arabic := hasArabic(s)
+	work(len(s))
 	for i, kw := range k.keywords {
 		if !arabic && !strings.Contains(lower, k.literals[i]) {
 			continue // an English keyword's literal, or no Arabic letter at all
 		}
+		work(len(s))
 		for _, m := range kw.FindAllStringIndex(lower, -1) {
 			if letterBefore(s, m[0]) || letterAt(s, m[1]) {
 				continue
@@ -249,6 +260,7 @@ func (k idRule) find(s string) []span {
 	if !containsAny(lower, "nid", "nin") {
 		return out
 	}
+	work(len(s))
 	for _, m := range k.short.FindAllStringSubmatchIndex(lower, -1) {
 		if letterBefore(s, m[2]) || digitAt(s, m[5]) || !k.firstOK(s[m[4]:m[5]]) {
 			continue
@@ -281,6 +293,7 @@ func (k idRule) numbersAfter(s string, from int) []span {
 		}
 		i += size
 	}
+	work(i - from)
 	return out
 }
 
@@ -298,7 +311,7 @@ func (k idRule) firstOK(num string) bool {
 }
 
 func nationalIDJO() detector {
-	rule, pats := newIDRule(
+	rule := newIDRule(
 		[]string{"national id", "national number", "national_no", "الرقم الوطني", "رقم وطني"},
 		`(ni[dn])[:=#\- ]{0,3}(`+digitClass+`{10})`, "")
 	return detector{
@@ -306,7 +319,8 @@ func nationalIDJO() detector {
 		kind:    kindMarker,
 		numeric: true,
 		classes: allClasses,
-		canon:   canon(pats...),
+		res:     rule.res(),
+		tables:  rule.tables(),
 		find:    func(s string) ([]span, error) { return rule.find(s), nil },
 		samples: func() ([]string, []string) {
 			return []string{"national number: " + "1234567890"}, []string{"1234567890", "warning 1761385200"}
@@ -315,7 +329,7 @@ func nationalIDJO() detector {
 }
 
 func nationalIDSA() detector {
-	rule, pats := newIDRule(
+	rule := newIDRule(
 		[]string{"national id", "iqama", "هوية", "الهوية", "رقم الهوية", "إقامة", "الإقامة", "رقم الإقامة", "الرقم الوطني"},
 		`(nid)[:=#\- ]{0,3}(`+digitClass+`{10})`, "12")
 	return detector{
@@ -323,7 +337,8 @@ func nationalIDSA() detector {
 		kind:    kindMarker,
 		numeric: true,
 		classes: allClasses,
-		canon:   canon(pats...),
+		res:     rule.res(),
+		tables:  rule.tables(),
 		find:    func(s string) ([]span, error) { return rule.find(s), nil },
 		samples: func() ([]string, []string) {
 			return []string{"iqama: 2" + "123456789"}, []string{"iqama: 3" + "123456789"}
@@ -332,14 +347,14 @@ func nationalIDSA() detector {
 }
 
 func nationalIDAE() detector {
-	const pattern = digitClass + `{3}-` + digitClass + `{4}-` + digitClass + `{7}-` + digitClass + `|` + digitClass + `{15}`
 	runs := regexp.MustCompile(digitRunPattern)
 	return detector{
 		id:      "national-id-ae",
 		kind:    kindMarker,
 		numeric: true,
 		classes: allClasses,
-		canon:   canon(pattern, "prefix-784", "digit-boundaries", digitRunPattern),
+		res:     []*regexp.Regexp{runs},
+		tables:  []string{"prefix-784", "groups:15|3-4-7-1", "separator:-", "digit-boundaries"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			for _, m := range digitRuns(s, runs, 15) {
@@ -371,7 +386,8 @@ func paymentCard() detector {
 		kind:    kindMarker,
 		numeric: true,
 		classes: allClasses,
-		canon:   canon(pattern, "first-2-6", "13-19-digits", "every-group-end", "luhn", "longest", "no-hex-before"),
+		res:     []*regexp.Regexp{re},
+		tables:  []string{"first-2-6", "13-19-digits", "start-at-every-group-start", "merge-overlaps", "every-group-end", "luhn", "longest", "no-hex-before"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			for _, m := range digitRuns(s, re, 13) {
@@ -385,10 +401,13 @@ func paymentCard() detector {
 	}
 }
 
-// cardsInRun tries every candidate that starts at a group start and ends
-// at a group end (MA10), so an extra group or letters after the number
-// cannot make a real card fail the Luhn check. A candidate may not start
-// directly after a hex letter (it would be part of a longer hex run).
+// cardsInRun tries the candidates that start at the first digit of a
+// group and end at a group end (MA10; S3 as ruled by Nofal, 2026-10-27),
+// so an extra group or letters after the number cannot make a real card
+// fail the Luhn check, a card after a date or a quantity in the same run
+// is found, and a window that starts inside a group is never tried. The
+// run's first group may not follow a hex letter (it would be part of a
+// longer hex run).
 func cardsInRun(s string, a, b int) []span {
 	type group struct{ start, end int }
 	var gs []group
@@ -400,6 +419,7 @@ func cardsInRun(s string, a, b int) []span {
 		gs = append(gs, group{i, j})
 		i = j + 1
 	}
+	work(b - a)
 	var out []span
 	for i := 0; i < len(gs); {
 		best := -1
@@ -416,12 +436,13 @@ func cardsInRun(s string, a, b int) []span {
 				}
 			}
 		}
-		if best < 0 {
-			i++
-			continue
+		// Every group start is tried, also inside an earlier match:
+		// a chance Luhn match that starts at a date must not hide the
+		// card after it. Overlapping matches are merged (R31).
+		if best >= 0 {
+			out = append(out, span{start: gs[i].start, end: gs[best].end})
 		}
-		out = append(out, span{start: gs[i].start, end: gs[best].end})
-		i = best + 1
+		i++
 	}
 	return out
 }
@@ -445,48 +466,45 @@ func luhn(digits []byte) bool {
 	return sum%10 == 0
 }
 
-// ibanLengths is the IBAN length per country (SWIFT IBAN registry).
-var ibanLengths = map[string]int{
-	"AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22,
-	"BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24,
-	"DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20, "EG": 29, "ES": 24, "FI": 18,
-	"FK": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23, "GL": 18, "GR": 27,
-	"GT": 28, "HN": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
-	"IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20,
-	"LU": 20, "LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20,
-	"MR": 27, "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23, "PK": 24,
-	"PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "RU": 33, "SA": 24,
-	"SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "SO": 23, "ST": 25,
-	"SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
-	"YE": 30,
-}
+// ibanPattern is the generic IBAN shape of §4.2 (B1; no country table):
+// two capitals, two digits, then letters or digits, either compact or in
+// groups of four split by single spaces, the last group 1–4 long. The
+// candidate's length without spaces must be 15–34.
+const ibanPattern = `[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)`
 
-const ibanMax = 34
+const (
+	ibanMin    = 15
+	ibanMax    = 34
+	ibanWindow = 45 // longest shape match (44 bytes) and one byte after it
+)
 
 func iban() detector {
-	const pattern = `[A-Z]{2}[0-9]{2}[A-Z0-9 ]{11,40}`
+	re := anchored(ibanPattern)
 	return detector{
 		id:      "iban",
 		kind:    kindMarker,
 		classes: allClasses,
-		canon:   canon(pattern, "every-country-code-start-on-word-boundary", "every-group-end", "country-length", "mod97"),
+		res:     []*regexp.Regexp{re},
+		tables:  []string{"start-on-word-boundary", "every-group-end", "end-on-word-boundary", "window:45", "length:15-34", "mod97"},
 		find: func(s string) ([]span, error) {
-			// A candidate starts at two capitals and two digits on a word
-			// boundary. The pattern runs anchored at every such start
-			// (MA10), so an earlier IBAN-shaped token cannot end the search
-			// window inside a real IBAN (security review H2). Each match is
-			// at most 44 bytes, so the scan stays linear.
+			// The pattern runs anchored at every start of two capitals and
+			// two digits on a word boundary (MA10), including starts inside
+			// an earlier match: an IBAN-shaped token whose chance mod 97 end
+			// falls inside a real IBAN must not hide that IBAN's tail
+			// (security review H2). Overlapping matches are merged (R31).
+			// Each match is at most 44 bytes, so the scan stays linear.
 			var out []span
 			for i := 0; i+4 <= len(s); i++ {
 				if !isUpper(s[i]) || !isUpper(s[i+1]) || !isDigitByte(s[i+2]) || !isDigitByte(s[i+3]) {
 					continue
 				}
-				if i > 0 && (isAlnum(s[i-1]) || s[i-1] == '_') {
+				if i > 0 && isWordByte(s[i-1]) {
 					continue
 				}
-				if sp, ok := ibanAt(s, i); ok {
+				// The pattern never reads past 44 bytes, so the regexp is
+				// handed only that window, not the rest of the input.
+				if sp, ok := ibanAt(s, matchAt(re, s[:min(len(s), i+ibanWindow)], i)); ok {
 					out = append(out, sp)
-					i = sp.end - 1
 				}
 			}
 			return out, nil
@@ -498,35 +516,38 @@ func iban() detector {
 	}
 }
 
-// ibanAt tries the candidate that starts at p, whose first four
-// characters are checked (MA10): the iban pattern's anchored match is the
-// run of [A-Z0-9 ] after them, at most 40 long and at least 11, and every
-// end of it at a group boundary is tried. A candidate whose length without
-// spaces is the country's IBAN length and passes mod 97 is an IBAN. The
-// walk stops once the length without spaces passes the country's length,
-// as no later end can match.
-func ibanAt(s string, p int) (span, bool) {
-	want, known := ibanLengths[s[p:p+2]]
-	if !known {
+// ibanAt checks the ends of the shape match m (MA10): the whole match when
+// compact, or every group end when grouped, longest first. An end must be
+// on a word boundary; a candidate whose length without spaces is 15–34
+// and that passes mod 97 is an IBAN.
+func ibanAt(s string, m []int) (span, bool) {
+	if m == nil {
 		return span{}, false
 	}
-	b := p + 4
-	for b < len(s) && b-p-4 < 40 && (isUpper(s[b]) || isDigitByte(s[b]) || s[b] == ' ') {
-		b++
-	}
-	if b-p-4 < 11 {
-		return span{}, false
-	}
-	var buf [ibanMax]byte
+	p := m[0]
+	var buf [ibanMax + 8]byte
+	var ends []int // candidate ends, and the length without spaces at each
 	n := 0
-	for e := p; e < b && n < want; e++ {
+	for e := p; e < m[1]; e++ {
 		if s[e] == ' ' {
 			continue
 		}
+		if n == len(buf) {
+			break
+		}
 		buf[n] = s[e]
 		n++
-		if n == want && (e+1 == b || s[e+1] == ' ') && ibanMod97(buf[:n]) {
-			return span{start: p, end: e + 1}, true
+		if e+1 == m[1] || s[e+1] == ' ' {
+			ends = append(ends, e+1, n)
+		}
+	}
+	for k := len(ends) - 2; k >= 0; k -= 2 {
+		end, l := ends[k], ends[k+1]
+		if l < ibanMin || l > ibanMax || (end < len(s) && isWordByte(s[end])) {
+			continue
+		}
+		if ibanMod97(buf[:l]) {
+			return span{start: p, end: end}, true
 		}
 	}
 	return span{}, false

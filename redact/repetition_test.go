@@ -14,12 +14,15 @@ func repetitionEvent(unit string) string {
 	return strings.TrimSuffix(strings.Repeat(line+"\n", MaxEventInput/(len(line)+1)), "\n")
 }
 
-// The check is on growth, not only wall time, so it holds under the race
-// detector and coverage too: four times the input must cost well under
-// sixteen times the time (quadratic), and an uninstrumented build must
-// also stay inside ItemDeadline.
-func TestHomogeneousRepetitionIsLinear(t *testing.T) {
-	units := map[string]string{
+// S1 (human Go reviewer, 13th review): the check is on work, not wall
+// time, so it is deterministic under the race detector, coverage and a
+// loaded machine. Every detector's scanning helper reports the bytes each
+// step examined through hooks.work; a full event of n identical lines must
+// cost at most 2n times one line (linear, with slack for line ends), and
+// one line must cost something (the hook is wired). The wall-clock bound
+// of a whole event stays in TestWorstCaseTime.
+func repetitionUnits() map[string]string {
+	return map[string]string{
 		"jwt":                  "eyJ",
 		"jwt-tail":             "eyJ" + strings.Repeat("A", 8) + ".",
 		"url-credentials":      "a://",
@@ -31,35 +34,88 @@ func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 		"cookie-header":        "cookie:",
 		"vendor-token":         "xoxa-",
 		"vendor-sk":            "sk-",
+		"vendor-sk-ant":        "sk-" + "ant-",
 		"email":                "a@a.",
 		"card":                 "4111 ",
 		"iban":                 "GB82 ",
+		"sql-identified":       "IDENTIFIED BY '",
+		"sql-password":         "password='",
+		"rsyslog-hash":         "#",
+		"escape-before-ip":     bs + "E::",
 	}
+}
+
+func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 	red := New(WithClock(frozenClock))
-	timeOf := func(name, in string) time.Duration {
-		best := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			_, _, err := red.Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, in, nil)
-			best = min(best, time.Since(start))
-			if err != nil && !isKnownErr(err) {
-				t.Fatalf("%s: %v", name, err)
-			}
+	if err := red.Err(); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var work int64
+	setWorkHook(t, func(n int) {
+		if n < 0 {
+			t.Errorf("work hook called with %d bytes", n)
 		}
-		return best
+		work += int64(n)
+	})
+	workOf := func(name, in string) int64 {
+		work = 0
+		_, _, err := red.Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, in, nil)
+		if err != nil && !isKnownErr(err) {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return work
 	}
 	instrumented := raceEnabled || testing.CoverMode() != ""
-	for name, unit := range units {
+	for name, unit := range repetitionUnits() {
 		full := repetitionEvent(unit)
 		line := full[:strings.IndexByte(full, '\n')]
-		tLine, tFull := timeOf(name, line), timeOf(name, full)
-		lines := float64(strings.Count(full, "\n") + 1)
-		if ratio := float64(tFull) / float64(max(tLine, time.Microsecond)); ratio > 2*lines {
-			t.Errorf("%s: %v for %d bytes, %v for one line: %.1fx for %.0fx the input (quadratic?)",
-				name, tFull, len(full), tLine, ratio, lines)
+		lines := int64(strings.Count(full, "\n") + 1)
+		wLine, wFull := workOf(name, line), workOf(name, full)
+		if wLine <= 0 {
+			t.Errorf("%s: one line reported no work: the work hook is not wired into the detectors", name)
+			continue
 		}
-		if !instrumented && tFull > ItemDeadline {
-			t.Errorf("%s: %v for a %d-byte event, over %v", name, tFull, len(full), ItemDeadline)
+		if wFull > 2*lines*wLine {
+			t.Errorf("%s: %d bytes of work for %d lines, %d for one line: over %dx (quadratic?)",
+				name, wFull, lines, wLine, 2*lines)
+		}
+		// An uninstrumented build also stays inside the item deadline.
+		if !instrumented {
+			start := time.Now()
+			_, _, _ = red.Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, full, nil)
+			if el := time.Since(start); el > ItemDeadline {
+				t.Errorf("%s: %v for a %d-byte event, over %v", name, el, len(full), ItemDeadline)
+			}
+		}
+	}
+}
+
+// The work hook sees every detector: each one reports some work on a
+// line that holds its trigger, so a detector cannot escape the S1 check
+// by not calling the hook.
+func TestWorkHookCoversEveryDetector(t *testing.T) {
+	var cur string
+	got := map[string]int64{}
+	old := hooks
+	t.Cleanup(func() { hooks = old })
+	hooks.detect = func(id string, _ int) { cur = id }
+	hooks.work = func(n int) { got[cur] += int64(n) }
+	k := getKeys(t)
+	in := strings.Join([]string{
+		k.rsaPEM, b64BeginPrefix() + randFrom(alphaAlnum, 40), wdnToken(), akia(),
+		"aws_secret_access_key = " + randFrom(alphaAWSSecret, 40), "gh" + "p_" + randFrom(alphaAlnum, 36),
+		makeJWT(), "postgresql://app:" + randFrom(alphaAlnum, 8) + "@db/x", "https://h/?token=" + randFrom(alphaAlnum, 8),
+		"Authorization: Bearer " + randFrom(alphaAlnum, 16), "Cookie: s=" + randFrom(alphaAlnum, 8),
+		"DB_PASSWORD=" + randFrom(alphaAlnum, 8), "mail a@mail.example", "+962 7" + randDigits(8),
+		"national number: " + joDigits(), "iqama: " + saDigits(), "784" + randDigits(12),
+		"card " + makeCard("4", 16), "iban " + gbIBAN(), "client 203.0.113.77",
+	}, "\n")
+	if _, _, err := New(WithClock(frozenClock)).Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, in, nil); err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	for _, id := range specDetectorIDs {
+		if got[id] <= 0 {
+			t.Errorf("%s reported no work through hooks.work", id)
 		}
 	}
 }

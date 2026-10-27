@@ -7,6 +7,7 @@ package redact
 // The time bound is checked once, deterministically, in TestWorstCaseTime.
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,16 @@ func fuzzSeeds() []string {
 		Marker("aws-access-key-id"), "redacted-email", ShortMarker, LineDroppedText, ReleaseVersionMarker,
 		"1.4.2-rc.1+build.7", "[REDACTED-", "redacted-aws", strings.Repeat("x ", 2000),
 		strings.Repeat(r(0x202E)+r(0xE0041)+"a", 100), strings.Repeat("\x1b[", 500),
+		// 13th review: R28a folds, R28b depth, S2 suffixes, OQ15 escapes,
+		// OQ16 versions, OQ17 quotes, S3 cards, S4 sk- units, B1 IBANs, #14.
+		"pa" + r(0x017F) + r(0x017F) + "word=" + randFrom(alphaAlnum, 12), "to" + r(0x212A) + "en=" + randFrom(alphaAlnum, 12),
+		nestedBackslash(NormMaxPasses-1, "0026"), nestedBackslash(NormMaxPasses, "0026"), "#0" + r(0x01) + "33[31m",
+		"::ffff:203.0.113.77/24abc", "::ffff:203.0.113.77/120", "203.0.113.77/33", "::ffff:203.0.113.77/0",
+		`x \E::1 y`, `x \\\E::1 y`, `x #::ffff:177.12.2.3 y`, "build 1.2.3.4 ok",
+		"IDENTIFIED BY '" + randFrom(alphaAlnum, 6) + bs + "'" + randFrom(alphaAlnum, 6) + "'", "password='a''b' user='app'",
+		"ref 42 " + makeCard("4", 16) + " ok", makeCard("4", 16) + " " + makeCard("5", 16),
+		"sk-" + "ant-" + "api-gateway-production.service", "iban " + groupFours(makeIBAN("MA", "1"+randDigits(23))) + " X",
+		"/" + "wdn1" + "_" + strings.Repeat("0", 43), "redacted-warden-enrollment-token", "DB_PASSWORD=" + Marker("public-ip"),
 	}
 }
 
@@ -56,7 +67,18 @@ func FuzzNormalize(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string, ci uint8) {
 		c := allNormClasses[int(ci)%len(allNormClasses)]
 		defer catchPanic(t, "Normalize")
-		out, counts := Normalize(c, s)
+		out, counts, err := Normalize(c, s)
+		if err != nil {
+			// R28b: only the pass cap fails, and then nothing is returned.
+			if !errors.Is(err, ErrInternal) || out != "" || counts != (NormCounts{}) {
+				t.Fatalf("%s: error %v with output or counts", className(c), err)
+			}
+			return
+		}
+		// R28b, AC72: the output is a fixed point in every class.
+		if again, n2, err := Normalize(c, out); err != nil || again != out || n2 != (NormCounts{}) {
+			t.Fatalf("%s: output is not a fixed point: (%q, %v, %v)", className(c), again, n2, err)
+		}
 		if !utf8.ValidString(out) {
 			t.Fatalf("%s: invalid UTF-8 output", className(c))
 		}
@@ -90,7 +112,10 @@ func FuzzDetectors(f *testing.F) {
 		if len(rules) == 0 {
 			t.Fatal("no rules")
 		}
-		norm, _ := Normalize(EText, s)
+		norm, _, err := Normalize(EText, s)
+		if err != nil {
+			norm = ""
+		}
 		for _, d := range rules {
 			func() {
 				defer catchPanic(t, d.id)
@@ -192,6 +217,20 @@ func FuzzRedactSmallLimit(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string, n uint8) {
 		fuzzRedactOne(t, Field{Class: EText, MaxBytes: int(n)}, s)
 		fuzzRedactOne(t, Field{Class: TName, MaxBytes: int(n), DBUser: n%2 == 0}, s)
+	})
+}
+
+// FuzzRedactTPathSmallLimit exercises T-PATH with small output limits, with
+// and without the HomeRoot user-name rule (issue #14: a marker written by
+// the first pass must not be pseudonymised by the second).
+func FuzzRedactTPathSmallLimit(f *testing.F) {
+	for i, s := range fuzzSeeds() {
+		f.Add(s, uint8(i))
+	}
+	f.Add("/"+"wdn1"+"_"+strings.Repeat("0", 43), uint8(32))
+	f.Add("/"+"wdn1"+"_"+strings.Repeat("0", 43), uint8(8))
+	f.Fuzz(func(t *testing.T, s string, n uint8) {
+		fuzzRedactOne(t, Field{Class: TPath, MaxBytes: int(n), HomeRoot: n%2 == 0}, s)
 	})
 }
 

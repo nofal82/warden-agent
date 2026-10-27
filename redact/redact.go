@@ -34,7 +34,7 @@ const (
 
 // RulesVersion is REDACT_RULES_VERSION (§4.5). Raise it on every change to
 // the rule table.
-const RulesVersion uint32 = 1
+const RulesVersion uint32 = 2
 
 // Fixed markers of §4.3. A detector marker is "[REDACTED-<id>]" (Marker),
 // "redacted-<id>" in T-NAME and T-PATH, and "REDACTED-<id>" in unit names.
@@ -80,6 +80,7 @@ const (
 	NormTagOrFiller
 	NormLineSeparator
 	NormControl
+	NormCaseFold
 	numNormKinds
 )
 
@@ -139,9 +140,14 @@ func newRedactor(rules []detector, opts ...Option) *Redactor {
 		r.cfg.now = time.Now
 	}
 	// Known detectors: the compiled table's, and those of this rule set.
-	ids := Detectors()
-	for _, d := range rules {
-		ids = append(ids, d.id)
+	// public-ip writes a network, never a marker, so it has none (§4.3).
+	var ids []string
+	for _, set := range [][]detector{ruleTable(), rules} {
+		for _, d := range set {
+			if d.kind != kindIP {
+				ids = append(ids, d.id)
+			}
+		}
 	}
 	r.markers = markerSet(ids)
 	if !selfTest(rules) {
@@ -215,7 +221,7 @@ func (r *Redactor) RedactReleaseVersion(ctx context.Context, in string) (out str
 	norm, matched, rep, err := r.scan(ctx, in, ReleaseVersionMaxBytes, modeRelease)
 	switch {
 	case err != nil:
-		return ReleaseVersionMarker, Report{}, err
+		return ReleaseVersionMarker, rep, err
 	case matched:
 		return ReleaseVersionMarker, rep, nil
 	}
@@ -234,7 +240,8 @@ func (r *Redactor) Scan(ctx context.Context, in string) (matched bool, err error
 }
 
 // scan normalises and detects without replacing (R16, R18). It returns
-// the normalised text.
+// the normalised text, and on an error the report so far, so the caller
+// can still count what was done (R16).
 func (r *Redactor) scan(ctx context.Context, in string, limit int, m mode) (string, bool, Report, error) {
 	if r.err != nil {
 		return "", false, Report{}, ErrRulesUnavailable
@@ -245,11 +252,11 @@ func (r *Redactor) scan(ctx context.Context, in string, limit int, m mode) (stri
 	ps := r.newPass(ctx, Field{Class: NPatterned, MaxBytes: limit}, m)
 	s, err := normalise(NPatterned, in, &ps.rep.Normalised, ps.check)
 	if err != nil {
-		return "", false, Report{}, err
+		return "", false, ps.rep, err
 	}
 	hits, err := ps.detect(s)
 	if err != nil {
-		return "", false, Report{}, err
+		return "", false, ps.rep, err
 	}
 	for _, h := range hits {
 		if ps.rep.Replaced == nil {
@@ -288,9 +295,27 @@ func (r *Redactor) run(ctx context.Context, f Field, m mode, in []string, p *Pse
 	}
 	out := make([]string, len(parts))
 	for i, pt := range parts {
+		if err := ps.normalisedAgain(pt.text); err != nil {
+			return nil, Report{}, err
+		}
 		out[i] = pt.text
 	}
 	return out, ps.rep, nil
+}
+
+// normalisedAgain is the last step of the post-check (R32): in E-TEXT and
+// T-TEXT an output that normalisation would change again would be read
+// differently at intake (R3), so the item is dropped.
+func (ps *pass) normalisedAgain(out string) error {
+	if ps.class != EText && ps.class != TText {
+		return nil
+	}
+	// One pass that changes nothing is the fixed point (R28b).
+	var n NormCounts
+	if normalisePass(ps.class, out, &n) != out {
+		return ErrPostCheck
+	}
+	return nil
 }
 
 // limitInput applies R39 before anything else: an extract loses lines

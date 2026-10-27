@@ -45,10 +45,11 @@ var inboundRootNames = []protoreflect.FullName{
 }
 
 // The violation lines generateClassTable reports.
-func vNoClass(f string) string     { return f + ": no redact_class" }
-func vUnspecified(f string) string { return f + ": redact_class UNSPECIFIED" }
-func vInbound(f string) string     { return f + ": redact_class on a control-plane-to-agent field" }
-func vBoth(m string) string        { return m + ": reached from both directions" }
+func vNoClass(f string) string      { return f + ": no redact_class" }
+func vUnspecified(f string) string  { return f + ": redact_class UNSPECIFIED" }
+func vInbound(f string) string      { return f + ": redact_class on a control-plane-to-agent field" }
+func vBoth(m string) string         { return m + ": reached from both directions" }
+func vMessageTyped(f string) string { return f + ": redact_class on a message-typed field" }
 func vNonString(f string, c wardenv1.RedactFieldClass) string {
 	return f + ": class " + c.String() + " on a non-string field outside §4.1"
 }
@@ -824,6 +825,47 @@ func classMutations() []classMutation {
 			want: []string{vBoth("warden.agentapi.v1.MessageAck")},
 		},
 	)
+
+	// A redact_class on a message-typed field fails whatever its value: a
+	// message field has no class of its own, its fields carry theirs
+	// (agent-api §4.10.1 rule 3; Nofal, 2026-10-27). The field gets no
+	// entry, and the message's own fields keep theirs.
+	for _, p := range []struct {
+		file       protoreflect.FileDescriptor
+		msg, field string
+		class      wardenv1.RedactFieldClass
+	}{
+		{ctStream, "HealthReport", "redact_drops", clsX},
+		{ctStream, "HealthReport", "redact_drops", clsI},
+		{ctStream, "AgentMessage", "health", clsX},
+		{ctStream, "AgentMessage", "health", clsU},
+		{ctOutbox, "SignedReplyReport", "primitive_result", clsX},
+		{ctOutbox, "SignedReplyReport", "primitive_result", clsTText},
+		{ctOutbox, "SignedReplyReport", "primitive_result", clsS},
+		{ctTelemetry, "TelemetryBatch", "log_events", clsEText},
+		{ctTelemetry, "TelemetryBatch", "log_events", clsX},
+		{ctTelemetry, "MetricSample", "labels", clsLValue},
+		{ctPrimitive, "PrimitiveResult", "result", clsTName},
+		{ctPrimitive, "TypedResult", "fs_usage", clsX},
+		{ctPrimitive, "TypedResult", "fs_usage", clsNPatterned},
+		{ctStream, "HealthReport", "redact_drops", wardenv1.RedactFieldClass_REDACT_FIELD_CLASS_UNSPECIFIED},
+	} {
+		full := string(p.file.Package()) + "." + p.msg + "." + p.field
+		cases = append(cases, classMutation{
+			name:   p.class.String() + " on message-typed " + p.msg + "." + p.field,
+			edit:   setClassOn(p.file, p.msg, p.field, p.class),
+			want:   []string{vMessageTyped(full)},
+			absent: []protoreflect.FullName{protoreflect.FullName(full)},
+		})
+	}
+	cases = append(cases, classMutation{
+		name: "X on message-typed HealthReport.redact_drops keeps the nested classes",
+		edit: setClassOn(ctStream, "HealthReport", "redact_drops", clsX),
+		want: []string{vMessageTyped("warden.agentapi.v1.HealthReport.redact_drops")},
+		present: map[protoreflect.FullName]wardenv1.RedactFieldClass{
+			"warden.agentapi.v1.RedactDropCount.dropped": clsX,
+		},
+	})
 
 	// redact_class on control-plane-to-agent fields, at every depth
 	// (§4.10.1 reading 3).

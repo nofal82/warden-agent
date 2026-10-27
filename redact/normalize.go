@@ -7,27 +7,87 @@ import (
 
 const esc = 0x1b
 
-// Normalize applies the textual escapes of R25a (EText and TText only)
-// and R25–R28 for class c (§4.4).
-func Normalize(c Class, in string) (string, NormCounts) {
-	var n NormCounts
-	out, _ := normalise(c, in, &n, nil)
-	return out, n
+// The normalisation tables of R25a–R28b. Each is data the code reads, so
+// the rule-set digest covers it (R43, §4.5).
+var (
+	// simpleEscapes are the fixed R25a escapes and the byte each decodes
+	// to. "\\" is not one: it stays as text, read as a pair from the left.
+	simpleEscapes = []struct {
+		text string
+		b    byte
+	}{{`\/`, '/'}, {`\e`, esc}, {`\x1b`, esc}, {`\x1B`, esc}}
+	// rsyslogEscapes are the "#ddd" octal escapes decoded (000–037, 177).
+	rsyslogEscapes = func() []string {
+		var out []string
+		for v := 0; v < 0x20; v++ {
+			out = append(out, string([]byte{'0', byte('0' + v>>3), byte('0' + v&7)}))
+		}
+		return append(out, "177")
+	}()
+	bidiRanges      = []runeRange{{0x061c, 0x061c}, {0x200e, 0x200f}, {0x202a, 0x202e}, {0x2066, 0x2069}}
+	zeroWidthRanges = []runeRange{{0x00ad, 0x00ad}, {0x200b, 0x200d}, {0x2060, 0x2064}, {0xfeff, 0xfeff}}
+	tagFillerRanges = []runeRange{{0x034f, 0x034f}, {0x115f, 0x1160}, {0x180e, 0x180e}, {0x3164, 0x3164},
+		{0xfe00, 0xfe0f}, {0xffa0, 0xffa0}, {0xfff9, 0xfffb}, {0xe0000, 0xe007f}}
+	// lineEnds are the R27 line ends other than LF (CR LF counts as one).
+	lineEnds = []rune{'\r', 0x2028, 0x2029}
+	// caseFolds is R28a: every non-ASCII character whose simple
+	// case-folding orbit holds an ASCII letter, and that letter in
+	// lowercase. A test checks it against unicode.SimpleFold.
+	caseFolds = []struct {
+		r  rune
+		to byte
+	}{{0x017f, 's'}, {0x212a, 'k'}}
+)
+
+// unicodeEscapeMax is the highest code point a \u00XX escape decodes
+// (R25a: ASCII only).
+const unicodeEscapeMax = 0x7f
+
+// NormMaxPasses is REDACT_NORM_MAX_PASSES (R28b, §7): the confirming pass
+// included, at most this many passes run.
+const NormMaxPasses = 8
+
+type runeRange struct{ lo, hi rune }
+
+func inRanges(r rune, rs []runeRange) bool {
+	for _, x := range rs {
+		if r >= x.lo && r <= x.hi {
+			return true
+		}
+	}
+	return false
 }
 
-// normalise repeats one pass until nothing changes. A single pass is not
-// enough: removing a control character can join the halves of an escape
-// ("#0\x0133"), and a decoded "\" starts a new one. Every pass after
-// the first that changes the text makes it shorter, so the loop ends;
-// check (the item deadline, R36) bounds a crafted deep nesting.
+// Normalize applies the textual escapes of R25a (EText and TText only)
+// and R25–R28a for class c, to a fixed point (R28b, §4.4). An item that
+// still changes after NormMaxPasses passes is an error (ErrInternal).
+func Normalize(c Class, in string) (string, NormCounts, error) {
+	var n NormCounts
+	out, err := normalise(c, in, &n, nil)
+	if err != nil {
+		return "", NormCounts{}, err
+	}
+	return out, n, nil
+}
+
+// normalise repeats one pass until a pass changes nothing (R28b). A single
+// pass is not enough: removing a control character can join the halves of
+// an escape ("#0\x0133"), and a decoded "\" starts a new one. Each pass
+// counts only the changes it makes. The confirming pass counts toward
+// NormMaxPasses, so a crafted alternation fails fast (ErrInternal, reason
+// ERROR) instead of using the item deadline; check (R36) runs between
+// passes.
 func normalise(c Class, s string, n *NormCounts, check func() error) (string, error) {
 	if hooks.normalise != nil {
 		hooks.normalise(c, len(s))
 	}
-	for {
+	for pass := 1; ; pass++ {
 		next := normalisePass(c, s, n)
 		if next == s {
 			return s, nil
+		}
+		if pass == NormMaxPasses {
+			return "", ErrInternal
 		}
 		s = next
 		if check != nil {
@@ -53,8 +113,8 @@ func normalisePass(c Class, s string, n *NormCounts) string {
 		if r < 0x20 {
 			return !keepLines || (r != '\n' && r != '\t')
 		}
-		return r == 0x7f || (r >= 0x80 && (r <= 0x9f || r == 0x2028 || r == 0x2029 ||
-			isBidi(r) || isZeroWidth(r) || isTagOrFiller(r)))
+		return r == 0x7f || (r >= 0x80 && (r <= 0x9f || isLineEnd(r) ||
+			isBidi(r) || isZeroWidth(r) || isTagOrFiller(r) || caseFold(r) != 0))
 	}
 	if strings.IndexFunc(s, special) < 0 {
 		return s
@@ -76,13 +136,10 @@ func normalisePass(c Class, s string, n *NormCounts) string {
 			i = skipEscape(s, i)
 			n[NormEscape]++
 			continue
-		case r == '\r':
-			if i+1 < len(s) && s[i+1] == '\n' {
+		case isLineEnd(r):
+			if r == '\r' && i+1 < len(s) && s[i+1] == '\n' {
 				size = 2
 			}
-			n[NormLineSeparator]++
-			lineBreak(&b, keepLines)
-		case r == 0x2028 || r == 0x2029:
 			n[NormLineSeparator]++
 			lineBreak(&b, keepLines)
 		case r == '\n' || r == '\t':
@@ -99,6 +156,9 @@ func normalisePass(c Class, s string, n *NormCounts) string {
 			n[NormTagOrFiller]++
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			n[NormControl]++
+		case caseFold(r) != 0:
+			n[NormCaseFold]++
+			b.WriteByte(caseFold(r))
 		default:
 			b.WriteString(s[i : i+size])
 		}
@@ -186,40 +246,15 @@ func decodeEscapes(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
-		if s[i] == '\\' && i+1 < len(s) {
-			switch s[i+1] {
-			case '\\':
-				b.WriteString(`\\`)
-				i += 2
-				continue
-			case '/':
-				b.WriteByte('/')
-				i += 2
-				continue
-			case 'e':
-				b.WriteByte(esc)
-				i += 2
-				continue
-			case 'x':
-				if i+4 <= len(s) && strings.EqualFold(s[i+2:i+4], "1b") {
-					b.WriteByte(esc)
-					i += 4
-					continue
-				}
-			case 'u':
-				if v, ok := asciiEscape(s[i+2:]); ok {
-					b.WriteByte(v)
-					i += 6
-					continue
-				}
-			}
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '\\' {
+			b.WriteString(`\\`)
+			i += 2
+			continue
 		}
-		if s[i] == '#' {
-			if v, ok := rsyslogEscape(s[i+1:]); ok {
-				b.WriteByte(v)
-				i += 4
-				continue
-			}
+		if v, n, ok := escapeAt(s[i:]); ok {
+			b.WriteByte(v)
+			i += n
+			continue
 		}
 		b.WriteByte(s[i])
 		i++
@@ -227,37 +262,59 @@ func decodeEscapes(s string) string {
 	return b.String()
 }
 
-// asciiEscape decodes the four hex digits of a \uXXXX escape when the code
-// point is U+0000–U+007F.
-func asciiEscape(s string) (byte, bool) {
-	if len(s) < 4 || s[0] != '0' || s[1] != '0' {
-		return 0, false
+// escapeAt decodes the R25a escape at the start of s: its byte and its
+// length. A "\\" pair is not an escape; the caller reads pairs from the
+// left.
+func escapeAt(s string) (byte, int, bool) {
+	switch {
+	case strings.HasPrefix(s, `\u`):
+		if v, ok := asciiEscape(s[2:]); ok {
+			return v, 6, true
+		}
+	case strings.HasPrefix(s, "#"):
+		if v, ok := rsyslogEscape(s[1:]); ok {
+			return v, 4, true
+		}
 	}
-	hi, ok1 := hexValue(s[2])
-	lo, ok2 := hexValue(s[3])
-	if !ok1 || !ok2 || hi > 7 {
-		return 0, false
+	for _, e := range simpleEscapes {
+		if strings.HasPrefix(s, e.text) {
+			return e.b, len(e.text), true
+		}
 	}
-	return hi<<4 | lo, true
+	return 0, 0, false
 }
 
-// rsyslogEscape decodes rsyslog's "#ddd" octal escape for 000–037 and 177.
+// asciiEscape decodes the four hex digits of a \uXXXX escape when the code
+// point is at most unicodeEscapeMax.
+func asciiEscape(s string) (byte, bool) {
+	if len(s) < 4 {
+		return 0, false
+	}
+	v := 0
+	for k := 0; k < 4; k++ {
+		h, ok := hexValue(s[k])
+		if !ok {
+			return 0, false
+		}
+		v = v<<4 | int(h)
+	}
+	if v > unicodeEscapeMax {
+		return 0, false
+	}
+	return byte(v), true
+}
+
+// rsyslogEscape decodes rsyslog's "#ddd" octal escapes of rsyslogEscapes.
 func rsyslogEscape(s string) (byte, bool) {
 	if len(s) < 3 {
 		return 0, false
 	}
-	for k := 0; k < 3; k++ {
-		if s[k] < '0' || s[k] > '7' {
-			return 0, false
+	for _, e := range rsyslogEscapes {
+		if s[:3] == e {
+			return (s[0]-'0')<<6 | (s[1]-'0')<<3 | (s[2] - '0'), true
 		}
 	}
-	if s[:3] == "177" {
-		return 0x7f, true
-	}
-	if s[0] != '0' || s[1] > '3' {
-		return 0, false
-	}
-	return (s[1]-'0')<<3 | (s[2] - '0'), true
+	return 0, false
 }
 
 func hexValue(c byte) (byte, bool) {
@@ -272,18 +329,27 @@ func hexValue(c byte) (byte, bool) {
 	return 0, false
 }
 
-func isBidi(r rune) bool {
-	return r == 0x061c || r == 0x200e || r == 0x200f ||
-		(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
-}
-
-func isZeroWidth(r rune) bool {
-	return (r >= 0x200b && r <= 0x200d) || (r >= 0x2060 && r <= 0x2064) ||
-		r == 0xfeff || r == 0x00ad
-}
-
+func isBidi(r rune) bool      { return inRanges(r, bidiRanges) }
+func isZeroWidth(r rune) bool { return inRanges(r, zeroWidthRanges) }
 func isTagOrFiller(r rune) bool {
-	return (r >= 0xe0000 && r <= 0xe007f) || r == 0x180e || r == 0x034f ||
-		(r >= 0xfe00 && r <= 0xfe0f) || r == 0x115f || r == 0x1160 ||
-		r == 0x3164 || r == 0xffa0 || (r >= 0xfff9 && r <= 0xfffb)
+	return inRanges(r, tagFillerRanges)
+}
+
+func isLineEnd(r rune) bool {
+	for _, x := range lineEnds {
+		if r == x {
+			return true
+		}
+	}
+	return false
+}
+
+// caseFold returns the ASCII letter r folds to (R28a), or 0.
+func caseFold(r rune) byte {
+	for _, f := range caseFolds {
+		if r == f.r {
+			return f.to
+		}
+	}
+	return 0
 }

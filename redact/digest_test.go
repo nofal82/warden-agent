@@ -9,7 +9,7 @@ import (
 	"go/format"
 	"io/fs"
 	"os"
-	"sort"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,29 +21,40 @@ import (
 // canonical rule table and fails when the constant has drifted.
 var updateDigest = flag.Bool("update-digest", false, "rewrite rules_digest.go")
 
-// canonicalRuleTable serialises everything that decides what matches:
-// the version, every detector's ID, flags, patterns and validator names in
-// §4.2 order, and the validator tables and limits the code reads.
-func canonicalRuleTable() string {
+// canonicalRuleTable serialises everything that decides what matches, as
+// the detectors run it (R43, §4.5, S5): the version; per detector in §4.2
+// order its ID and flags, the source (regexp.String) of every compiled
+// expression its find runs, and its validators' names, parameters and
+// tables; the package validator tables, limits and boundary sets; and the
+// normalisation tables of R25a–R28b with REDACT_NORM_MAX_PASSES. Nothing
+// here is a hand-written description of a detector.
+func canonicalRuleTable(rules []detector) string {
+	return canonicalTable(rules, NormMaxPasses)
+}
+
+// canonicalTable takes the pass cap as a parameter only so the drift test
+// can show that the cap is hashed: NormMaxPasses is a constant and cannot
+// be mutated by a test.
+func canonicalTable(rules []detector, maxPasses int) string {
 	var b strings.Builder
 	field := func(name, v string) { fmt.Fprintf(&b, "%s=%d:%s\n", name, len(v), v) }
 	field("version", fmt.Sprint(RulesVersion))
-	for _, d := range ruleTable() {
+	for _, d := range rules {
 		field("detector", d.id)
 		field("kind", fmt.Sprint(d.kind))
 		field("extend", fmt.Sprint(d.extend))
 		field("numeric", fmt.Sprint(d.numeric))
 		field("classes", fmt.Sprint(d.classes))
-		field("canon", d.canon)
+		field("res", fmt.Sprint(len(d.res)))
+		for _, re := range d.res {
+			field("re", re.String())
+		}
+		field("tables", fmt.Sprint(len(d.tables)))
+		for _, tb := range d.tables {
+			field("table", tb)
+		}
 	}
-	countries := make([]string, 0, len(ibanLengths))
-	for c := range ibanLengths {
-		countries = append(countries, c)
-	}
-	sort.Strings(countries)
-	for _, c := range countries {
-		field("iban-length", fmt.Sprintf("%s%d", c, ibanLengths[c]))
-	}
+	// Validator tables, limits and boundary sets.
 	field("iban-max", fmt.Sprint(ibanMax))
 	field("unit-suffixes", strings.Join(unitSuffixes, ","))
 	field("aws-prefixes", strings.Join(awsKeyPrefixes, ","))
@@ -51,6 +62,9 @@ func canonicalRuleTable() string {
 	field("url-secret-params", strings.Join(urlSecretParams, ","))
 	for _, v := range vendorPatterns {
 		field("vendor", v.body+"|"+strings.Join(v.literals, ","))
+	}
+	for _, p := range secretSQLPatterns {
+		field("secret-sql", p.body+"|"+strings.Join(p.literals, ","))
 	}
 	for _, p := range keptPrefixes {
 		field("ip-kept", p.String())
@@ -64,9 +78,33 @@ func canonicalRuleTable() string {
 	field("token-boundary", extendBoundaries)
 	field("home-start", homeStartBefore)
 	field("home-name-end", homeNameEnd)
-	field("protected", pseudonymRe.String()+"|"+uuidRe.String()+"|"+hexRunRe.String())
+	for _, re := range []*regexp.Regexp{pseudonymRe, uuidRe, hexRunRe, unitNamePattern} {
+		field("module-re", re.String())
+	}
 	field("limits", fmt.Sprint(MaxEventInput, MaxLine, ItemDeadline))
+	// Normalisation tables (R25a–R28b).
+	for _, e := range simpleEscapes {
+		field("escape", fmt.Sprintf("%s>%d", e.text, e.b))
+	}
+	field("unicode-escape-max", fmt.Sprint(unicodeEscapeMax))
+	field("rsyslog-escapes", strings.Join(rsyslogEscapes, ","))
+	field("bidi", runeRanges(bidiRanges))
+	field("zero-width", runeRanges(zeroWidthRanges))
+	field("tag-filler", runeRanges(tagFillerRanges))
+	field("line-ends", fmt.Sprint(lineEnds))
+	for _, f := range caseFolds {
+		field("case-fold", fmt.Sprintf("%U>%c", f.r, f.to))
+	}
+	field("norm-max-passes", fmt.Sprint(maxPasses))
 	return b.String()
+}
+
+func runeRanges(rs []runeRange) string {
+	var parts []string
+	for _, x := range rs {
+		parts = append(parts, fmt.Sprintf("%U-%U", x.lo, x.hi))
+	}
+	return strings.Join(parts, ",")
 }
 
 func digestOf(table string) string {
@@ -75,7 +113,7 @@ func digestOf(table string) string {
 }
 
 func TestRulesDigestIsCurrent(t *testing.T) {
-	want := digestOf(canonicalRuleTable())
+	want := digestOf(canonicalRuleTable(ruleTable()))
 	if *updateDigest {
 		if rulesDigestHex != want && rulesDigestVersion == RulesVersion {
 			t.Fatalf("the rule table changed: raise RulesVersion (now %d) before regenerating the digest (R43)", RulesVersion)

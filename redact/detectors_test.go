@@ -109,8 +109,10 @@ func TestDetectorIDsAndOrder(t *testing.T) {
 }
 
 func TestRulesIdentity(t *testing.T) {
-	if RulesVersion != 1 {
-		t.Errorf("RulesVersion = %d, want 1", RulesVersion)
+	// Raised from 1 by the 13th review's rule changes (R28a, B1, S2,
+	// OQ15-OQ17; R43, AC73).
+	if RulesVersion < 2 {
+		t.Errorf("RulesVersion = %d, want at least 2", RulesVersion)
 	}
 	d1, d2 := RulesDigest(), RulesDigest()
 	if d1 == ([32]byte{}) {
@@ -574,8 +576,10 @@ func TestPaymentCard(t *testing.T) {
 	v16 := makeCard("4", 16)
 	var extra string
 	for {
+		// No candidate from any group start (S3) may take the extra group.
 		extra = randDigits(3)
-		if !luhnValid(v16 + extra) {
+		if cleanLayout(append(strings.Split(group(v16, " ", 4, 4, 4, 4), " "), extra), map[int]int{0: 3}) &&
+			!luhnValid(v16+extra) {
 			break
 		}
 	}
@@ -615,8 +619,10 @@ func TestUUIDExclusion(t *testing.T) {
 
 func TestIBAN(t *testing.T) {
 	m := Marker("iban")
-	gb, jo := gbIBAN(), joIBAN()
-	de := makeIBAN("DE", randDigits(18))
+	// stableIBAN: no group-boundary prefix of the value or of its broken
+	// form passes mod 97 by chance (the generic detector tries every end).
+	gb, jo := stableIBAN(gbIBAN), stableIBAN(joIBAN)
+	de := stableIBAN(func() string { return makeIBAN("DE", "1"+randDigits(17)) })
 	gbLong := makeIBAN("GB", "WEST"+"1"+randDigits(14))
 	runE(t, []ecase{
 		{"GB compact", "iban " + gb + " ok.", "iban " + m + " ok.", "iban"},
@@ -627,7 +633,9 @@ func TestIBAN(t *testing.T) {
 		{"DE compact", "iban " + de + " ok.", "iban " + m + " ok.", "iban"},
 		same("mod-97-invalid", "iban "+ibanBreak(gb)+" ok."),
 		same("mod-97-invalid grouped", "iban "+groupFours(ibanBreak(gb))+" ok."),
-		same("wrong length for country", "iban "+gbLong+" ok."),
+		// B1: no per-country length; a GB value of 23 characters with valid
+		// check digits is an IBAN for the generic detector.
+		{"GB of another length (no country table)", "iban " + gbLong + " ok.", "iban " + m + " ok.", "iban"},
 		same("lower case", "iban "+strings.ToLower(gb)+" ok."),
 	})
 }

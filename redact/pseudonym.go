@@ -51,6 +51,13 @@ const homeStartBefore = " \t\n\"'`=:([,;"
 // (ruling on issue #9, point 4).
 const homeNameEnd = "/ \t\n\"'`,;:()[]{}<>=&|"
 
+// markerPrefix reports whether s is an exact marker followed by a
+// character that ends a name.
+func (ps *pass) markerPrefix(s string) bool {
+	i := strings.IndexAny(s, homeNameEnd)
+	return i > 0 && ps.r.isMarkerText(s[:i])
+}
+
 // userNames applies R12a to one normalised field: it returns the text and
 // the segments it inserted (markers may be shortened at a cut, R40).
 func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
@@ -67,7 +74,10 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 		if name == "" {
 			return
 		}
-		if isPseudonym(name) || name == UserNameMarker || name == NameUserNameMarker {
+		// A pseudonym or an exact marker is output of an earlier pass, not a
+		// name (§4.3; issue #14: "redacted-warden-enrollment-token" as the
+		// first component of a /home path).
+		if ps.r.isMarkerText(name) {
 			// Kept as it is, but still a unit the output limit may not cut
 			// (R40), or a cut half would read as a raw name next time.
 			segs = append(segs, seg{start: b.Len(), end: b.Len() + len(name), marker: !isPseudonym(name)})
@@ -93,7 +103,14 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 		if i := strings.IndexByte(s, '/'); i >= 0 {
 			first = s[:i]
 		}
-		replace(first, labelHomeUser)
+		if ps.markerPrefix(first) {
+			// An earlier pass put a marker here (issue #14: a token
+			// extended over the leading "/" gives
+			// "redacted-warden-enrollment-token x"): output, not a name.
+			b.WriteString(first)
+		} else {
+			replace(first, labelHomeUser)
+		}
 		s = s[len(first):]
 	}
 	const home = "/home/"

@@ -27,9 +27,13 @@ func TestMarkerLookalikesAreRedacted(t *testing.T) {
 }
 
 // Every real marker after a key is still kept (the other side of the
-// rule; the benign corpus checks every class).
+// rule; the benign corpus checks every class). public-ip writes no marker,
+// so its marker-shaped texts are values (13th review nit; TestPublicIPMarkerIsNotExact).
 func TestRealMarkersAfterKeyKept(t *testing.T) {
 	for _, id := range Detectors() {
+		if id == "public-ip" {
+			continue
+		}
 		for _, m := range []string{Marker(id), "redacted-" + id, "REDACTED-" + id, "REDACTED-" + id + ".service"} {
 			in := "DB_PASSWORD=" + m
 			if out, _ := redactE(t, in); out != in {

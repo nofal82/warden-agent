@@ -218,6 +218,7 @@ func extendSpan(s string, sp span, valueOnly bool) span {
 	for sp.end < len(s) && !tokenBoundary(s[sp.end]) {
 		sp.end++
 	}
+	work(sp.end - sp.start)
 	return sp
 }
 
@@ -264,8 +265,17 @@ func protectedSpan(s string, d *detector, sp span) bool {
 	for b < len(s) && isTokenHex(s[b]) {
 		b++
 	}
+	work(b - a)
 	token := s[a:b]
-	if within(pseudonymRe.FindAllStringIndex(token, -1), a, sp) {
+	pseudonyms := pseudonymRe.FindAllStringIndex(token, -1)
+	if within(pseudonyms, a, sp) {
+		return true
+	}
+	// A number never starts or ends inside a pseudonym: its hex can be all
+	// digits, and a match that took part of it would leave "u-" and a
+	// marker, which the next pass reads as a user name. A real number
+	// after the pseudonym starts its own group and is tried on its own.
+	if d.numeric && overlaps(pseudonyms, a, sp) {
 		return true
 	}
 	if d.kind != kindValue && within(uuidRe.FindAllStringIndex(token, -1), a, sp) {
@@ -276,6 +286,15 @@ func protectedSpan(s string, d *detector, sp span) bool {
 
 // isTokenHex is a character of a UUID, a hex run or a pseudonym.
 func isTokenHex(c byte) bool { return isHexByte(c) || c == '-' || c == 'u' }
+
+func overlaps(spans [][]int, off int, sp span) bool {
+	for _, o := range spans {
+		if sp.start < o[1]+off && sp.end > o[0]+off {
+			return true
+		}
+	}
+	return false
+}
 
 func within(spans [][]int, off int, sp span) bool {
 	for _, o := range spans {

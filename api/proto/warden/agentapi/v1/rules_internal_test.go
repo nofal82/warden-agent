@@ -122,3 +122,86 @@ func TestCheckRulesOnContract(t *testing.T) {
 		t.Fatalf("unitIDRule() = %+v, %v", rule, err)
 	}
 }
+
+// TestRefusedItemsCounted: every item refused because its rule cannot be
+// built (the source returns an error, or panics) is counted, so a broken
+// rule shows as refusals in the local health output, never as silence
+// (agent-api §4.10.1 M1 limitation; Nofal, 2026-10-27). A valid value and
+// an ordinary invalid value under a good rule are not refusals of this
+// kind and are not counted.
+func TestRefusedItemsCounted(t *testing.T) {
+	broken := map[string]func() (stringRule, error){
+		"nil field": newRuleSource(func() protoreflect.FieldDescriptor { return nil }),
+		"panicking descriptor": newRuleSource(func() protoreflect.FieldDescriptor {
+			panic("descriptor unavailable")
+		}),
+		"panicking rule source": func() (stringRule, error) { panic("rule unavailable") },
+	}
+	for name, opts := range brokenRuleCases {
+		fd := ruleField(t, opts)
+		broken["options: "+name] = newRuleSource(func() protoreflect.FieldDescriptor { return fd })
+	}
+	for name, source := range broken {
+		t.Run(name, func(t *testing.T) {
+			for i, s := range []string{"nginx.service", "", "../x"} {
+				before := RefusedItems()
+				if validUnitID(source, s) {
+					t.Fatalf("validUnitID(%q) = true with a broken rule", s)
+				}
+				if got := RefusedItems() - before; got != 1 {
+					t.Errorf("item %d: RefusedItems grew by %d, want 1", i, got)
+				}
+			}
+		})
+	}
+
+	good := unitIDRule
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"nginx.service", true},
+		{"getty@tty1.service", true},
+		{"../etc/shadow", false},
+		{"", false},
+		{"a;b.service", false},
+		{string(make([]byte, 300)), false},
+	} {
+		before := RefusedItems()
+		if got := validUnitID(good, c.in); got != c.want {
+			t.Errorf("validUnitID(%q) = %v, want %v", c.in, got, c.want)
+		}
+		if d := RefusedItems() - before; d != 0 {
+			t.Errorf("validUnitID(%q) with a good rule grew RefusedItems by %d", c.in, d)
+		}
+	}
+	before := RefusedItems()
+	_ = ValidUnitID("nginx.service")
+	_ = ValidUnitID("../x")
+	if d := RefusedItems() - before; d != 0 {
+		t.Errorf("ValidUnitID with the contract's rule grew RefusedItems by %d", d)
+	}
+}
+
+// TestRefusedItemsConcurrent: the count is exact under concurrent
+// refusals (the agent validates on more than one goroutine).
+func TestRefusedItemsConcurrent(t *testing.T) {
+	source := newRuleSource(func() protoreflect.FieldDescriptor { return nil })
+	const workers, each = 16, 200
+	before := RefusedItems()
+	done := make(chan struct{})
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < each; i++ {
+				validUnitID(source, "nginx.service")
+			}
+		}()
+	}
+	for w := 0; w < workers; w++ {
+		<-done
+	}
+	if got := RefusedItems() - before; got != workers*each {
+		t.Errorf("RefusedItems grew by %d, want %d", got, workers*each)
+	}
+}

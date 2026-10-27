@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -80,14 +81,25 @@ func ValidUnitID(s string) bool {
 	return validUnitID(unitIDRule, s)
 }
 
+// refusedItems counts the items refused because a rule could not be
+// built, so a broken rule shows as refusals in the local health output,
+// never as silence (agent-api §4.10.1).
+var refusedItems atomic.Uint64
+
+// RefusedItems returns how many items were refused because their
+// option-derived rule could not be built.
+func RefusedItems() uint64 { return refusedItems.Load() }
+
 func validUnitID(source func() (stringRule, error), s string) (ok bool) {
 	defer func() {
 		if recover() != nil {
+			refusedItems.Add(1)
 			ok = false // refuse this item, keep the agent running
 		}
 	}()
 	rule, err := source()
 	if err != nil {
+		refusedItems.Add(1)
 		return false
 	}
 	return len(s) <= rule.maxBytes &&
