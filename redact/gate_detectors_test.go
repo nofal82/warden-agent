@@ -10,81 +10,118 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// S3 (§4.2 payment-card, MA10): candidates start only at the run's first
-// digit; after an accepted card the next candidate starts at the first
-// group after it. A run is digit groups split by single spaces or '-'.
+// S3 (§4.2 payment-card, MA10; Nofal, 2026-10-27): a candidate starts at
+// the first digit of a digit group (never inside one, never after a hex
+// letter) and ends on a group end. A run is digit groups split by single
+// spaces or '-', so a card after a date, a time or a quantity in the same
+// run is still found.
 
-// cardAfterGroup returns a first group g (leadLen digits, its first digit
-// from first) and a 16-digit card c laid out by sizes, such that no
-// candidate from the run's first digit passes Luhn: g followed by any whole
-// number of the card's groups is invalid at every length 13-19. Without S3
-// the card itself (a later group) would match. Both are drawn again until
-// that holds: a fixed g can make every g+c valid (Luhn is additive).
-func cardAfterGroup(first string, leadLen int, sizes ...int) (g, c, laid string) {
-	for {
-		g = randDigitsLead(first, leadLen)
-		c = makeCard("4", 16)
-		laid = group(c, " ", sizes...)
-		ok := true
-		acc := g
-		for _, part := range strings.Split(laid, " ") {
-			acc += part
-			if len(acc) >= 13 && len(acc) <= 19 && luhnValid(acc) {
-				ok = false
+// cleanLayout reports that the only Luhn-valid candidates in groups (13–19
+// digits from a group start whose first digit is 2–6, S3) are the cards
+// that start at the indexes in want and end where expected, so a chance
+// match across neighbouring groups cannot widen the expected output.
+func cleanLayout(groups []string, want map[int]int) bool {
+	for i, g := range groups {
+		if g[0] < '2' || g[0] > '6' {
+			continue
+		}
+		acc := ""
+		for j := i; j < len(groups); j++ {
+			acc += groups[j]
+			if len(acc) > 19 {
+				break
+			}
+			if len(acc) >= 13 && luhnValid(acc) && want[i] != j {
+				return false
 			}
 		}
-		if ok {
-			return g, c, laid
+	}
+	return true
+}
+
+// cardsLaid draws Luhn-valid cards (first digit from firsts, 16 digits,
+// laid out by sizes) between fixed groups until cleanLayout holds, and
+// returns the groups of each card joined by sep. lead and tail are digit
+// groups around them; lead's groups are drawn by leadDraw when given.
+func cardsLaid(lead func() []string, tail []string, sep string, sizes []int, firsts ...string) (leads []string, cards []string, laid []string) {
+	for {
+		leads = nil
+		if lead != nil {
+			leads = lead()
+		}
+		groups := append([]string(nil), leads...)
+		want := map[int]int{}
+		cards, laid = nil, nil
+		for _, f := range firsts {
+			c := makeCard(f, 16)
+			cg := strings.Split(group(c, " ", sizes...), " ")
+			want[len(groups)] = len(groups) + len(cg) - 1
+			groups = append(groups, cg...)
+			cards = append(cards, c)
+			laid = append(laid, strings.Join(cg, sep))
+		}
+		groups = append(groups, tail...)
+		if cleanLayout(groups, want) {
+			return leads, cards, laid
 		}
 	}
 }
 
-func TestPaymentCardCandidatesFromRunStart(t *testing.T) {
+func fixed(gs ...string) func() []string { return func() []string { return gs } }
+
+func TestPaymentCardCandidatesFromGroupStart(t *testing.T) {
 	m := Marker("payment-card")
-	c1, c2 := makeCard("4", 16), makeCard("5", 16)
 	var extra string
+	_, c, lay := cardsLaid(nil, nil, " ", []int{4, 4, 4}, "4")
 	for {
 		extra = randDigits(3)
-		if !luhnValid(c1 + extra) {
+		if cleanLayout(append(strings.Split(lay[0], " "), extra), map[int]int{0: 3}) {
 			break
 		}
 	}
+	_, two, _ := cardsLaid(nil, nil, " ", nil, "4", "5")
+	_, _, twoG := cardsLaid(nil, nil, " ", []int{4, 4, 4}, "4", "5")
+	_, date, _ := cardsLaid(fixed("2026", "10", "27"), nil, " ", nil, "4")
+	_, _, dateG := cardsLaid(fixed("2026", "10", "27"), nil, " ", []int{4, 4, 4}, "4")
+	_, tm, _ := cardsLaid(fixed("10", "12", "01"), nil, " ", nil, "4")
+	_, _, qtyG := cardsLaid(fixed("1"), nil, " ", []int{4, 4, 4}, "4")
 	runE(t, []ecase{
-		{"extra group after the card (MA10)", "card " + group(c1, " ", 4, 4, 4) + " " + extra + " ok.", "card " + m + " " + extra + " ok.", "payment-card"},
-		{"compact card then an extra group", "card " + c1 + " " + extra + " ok.", "card " + m + " " + extra + " ok.", "payment-card"},
-		{"letters right after", "card " + c1 + "XYZ ok.", "card " + m + "XYZ ok.", "payment-card"},
-		{"two cards joined by a space", "cards " + c1 + " " + c2 + " ok.", "cards " + m + " " + m + " ok.", "payment-card"},
-		{"two cards joined by a dash", "cards " + c1 + "-" + c2 + " ok.", "cards " + m + "-" + m + " ok.", "payment-card"},
-		{"two grouped cards", "cards " + group(c1, " ", 4, 4, 4) + " " + group(c2, " ", 4, 4, 4) + " ok.", "cards " + m + " " + m + " ok.", "payment-card"},
+		{"extra group after the card (MA10)", "card " + lay[0] + " " + extra + " ok.", "card " + m + " " + extra + " ok.", "payment-card"},
+		{"compact card then an extra group", "card " + c[0] + " " + extra + " ok.", "card " + m + " " + extra + " ok.", "payment-card"},
+		{"letters right after", "card " + c[0] + "XYZ ok.", "card " + m + "XYZ ok.", "payment-card"},
+		{"two cards joined by a space", "cards " + two[0] + " " + two[1] + " ok.", "cards " + m + " " + m + " ok.", "payment-card"},
+		{"two cards joined by a dash", "cards " + two[0] + "-" + two[1] + " ok.", "cards " + m + "-" + m + " ok.", "payment-card"},
+		{"two grouped cards", "cards " + twoG[0] + " " + twoG[1] + " ok.", "cards " + m + " " + m + " ok.", "payment-card"},
+		{"after a date", "2026-10-27 " + date[0] + " ok.", "2026-10-27 " + m + " ok.", "payment-card"},
+		{"grouped after a date", "2026-10-27 " + dateG[0] + " ok.", "2026-10-27 " + m + " ok.", "payment-card"},
+		{"after a time", "10:12:01 " + tm[0] + " ok.", "10:12:01 " + m + " ok.", "payment-card"},
+		{"after a quantity", "qty 1 " + qtyG[0] + " ok.", "qty 1 " + m + " ok.", "payment-card"},
 	})
-	// A Luhn-valid 16-digit window that starts at a later group of a run
-	// with no card at its start is not a card.
 	var cases []ecase
 	for _, lead := range []struct {
 		first string
 		n     int
-	}{{"4", 2}, {"3", 1}, {"6", 2}, {"5", 3}, {"2", 2}} {
-		g, c, _ := cardAfterGroup(lead.first, lead.n)
+	}{{"4", 2}, {"3", 1}, {"6", 2}, {"5", 3}, {"2", 2}, {"1", 2}} {
+		draw := func() []string { return []string{randDigitsLead(lead.first, lead.n)} }
+		g, c, _ := cardsLaid(draw, nil, " ", nil, "4")
 		cases = append(cases,
-			same("compact card after group "+g+" and a space", "ref "+g+" "+c+" ok."),
-			same("compact card after group "+g+" and a dash", "ref "+g+"-"+c+" ok."),
+			ecase{"compact card after group " + g[0] + " and a space", "ref " + g[0] + " " + c[0] + " ok.", "ref " + g[0] + " " + m + " ok.", "payment-card"},
+			ecase{"compact card after group " + g[0] + " and a dash", "ref " + g[0] + "-" + c[0] + " ok.", "ref " + g[0] + "-" + m + " ok.", "payment-card"},
 		)
-		g, _, grouped := cardAfterGroup(lead.first, lead.n, 4, 4, 4)
-		cases = append(cases, same("grouped card after group "+g, "ref "+g+" "+grouped+" ok."))
+		g, _, grouped := cardsLaid(draw, nil, " ", []int{4, 4, 4}, "4")
+		cases = append(cases, ecase{"grouped card after group " + g[0], "ref " + g[0] + " " + grouped[0] + " ok.", "ref " + g[0] + " " + m + " ok.", "payment-card"})
 	}
-	g, c, _ := cardAfterGroup("1", 2)
-	cases = append(cases, same("card after a group starting with 1", "ref "+g+" "+c+" ok."))
 	runE(t, cases)
 }
 
 // The rule is the same in every class the detector runs in.
 func TestPaymentCardLaterGroupAllClasses(t *testing.T) {
-	g, c, _ := cardAfterGroup("4", 2)
-	in := "ref " + g + " " + c + " ok"
+	g, c, _ := cardsLaid(func() []string { return []string{randDigitsLead("4", 2)} }, nil, " ", nil, "4")
+	in := "ref " + g[0] + " " + c[0] + " ok"
 	for _, cl := range scannedClasses {
 		out, rep := mustRedact(t, fieldFor(cl), in, nil)
-		if rep.Replaced["payment-card"] != 0 || out != in {
-			t.Errorf("%s: %q changed to %q", className(cl), in, out)
+		if rep.Replaced["payment-card"] != 1 || strings.Contains(out, c[0]) {
+			t.Errorf("%s: %q became %q", className(cl), in, out)
 		}
 	}
 }

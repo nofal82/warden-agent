@@ -576,8 +576,10 @@ func TestPaymentCard(t *testing.T) {
 	v16 := makeCard("4", 16)
 	var extra string
 	for {
+		// No candidate from any group start (S3) may take the extra group.
 		extra = randDigits(3)
-		if !luhnValid(v16 + extra) {
+		if cleanLayout(append(strings.Split(group(v16, " ", 4, 4, 4, 4), " "), extra), map[int]int{0: 3}) &&
+			!luhnValid(v16+extra) {
 			break
 		}
 	}

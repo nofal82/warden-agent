@@ -401,12 +401,13 @@ func paymentCard() detector {
 	}
 }
 
-// cardsInRun tries the candidates that start at the run's first digit
-// and end at a group end (MA10, S3), so an extra group or letters after the
-// number cannot make a real card fail the Luhn check, and a window inside
-// a longer number is never tried. After a card, the next group starts the
-// rest of the run. A run may not start directly after a hex letter (it
-// would be part of a longer hex run).
+// cardsInRun tries the candidates that start at the first digit of a
+// group and end at a group end (MA10; S3 as ruled by Nofal, 2026-10-27),
+// so an extra group or letters after the number cannot make a real card
+// fail the Luhn check, a card after a date or a quantity in the same run
+// is found, and a window that starts inside a group is never tried. The
+// run's first group may not follow a hex letter (it would be part of a
+// longer hex run).
 func cardsInRun(s string, a, b int) []span {
 	type group struct{ start, end int }
 	var gs []group
@@ -419,13 +420,11 @@ func cardsInRun(s string, a, b int) []span {
 		i = j + 1
 	}
 	work(b - a)
-	if a > 0 && isHexByte(s[a-1]) {
-		return nil
-	}
 	var out []span
 	for i := 0; i < len(gs); {
 		best := -1
-		if first := s[gs[i].start]; first >= '2' && first <= '6' {
+		first := s[gs[i].start]
+		if (i > 0 || a == 0 || !isHexByte(s[a-1])) && first >= '2' && first <= '6' {
 			var digits []byte
 			for j := i; j < len(gs); j++ {
 				digits = append(digits, s[gs[j].start:gs[j].end]...)
@@ -437,11 +436,13 @@ func cardsInRun(s string, a, b int) []span {
 				}
 			}
 		}
-		if best < 0 {
-			break
+		// Every group start is tried, also inside an earlier match:
+		// a chance Luhn match that starts at a date must not hide the
+		// card after it. Overlapping matches are merged (R31).
+		if best >= 0 {
+			out = append(out, span{start: gs[i].start, end: gs[best].end})
 		}
-		out = append(out, span{start: gs[i].start, end: gs[best].end})
-		i = best + 1
+		i++
 	}
 	return out
 }
@@ -472,8 +473,9 @@ func luhn(digits []byte) bool {
 const ibanPattern = `[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)`
 
 const (
-	ibanMin = 15
-	ibanMax = 34
+	ibanMin    = 15
+	ibanMax    = 34
+	ibanWindow = 45 // longest shape match (44 bytes) and one byte after it
 )
 
 func iban() detector {
@@ -499,7 +501,9 @@ func iban() detector {
 				if i > 0 && isWordByte(s[i-1]) {
 					continue
 				}
-				if sp, ok := ibanAt(s, matchAt(re, s, i)); ok {
+				// The pattern never reads past 44 bytes, so the regexp is
+				// handed only that window, not the rest of the input.
+				if sp, ok := ibanAt(s, matchAt(re, s[:min(len(s), i+ibanWindow)], i)); ok {
 					out = append(out, sp)
 				}
 			}

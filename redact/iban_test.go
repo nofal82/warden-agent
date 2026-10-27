@@ -42,7 +42,9 @@ func stableIBAN(build func() string) string {
 		v := build()
 		// The tests also append " X": when v ends on a full group, "v X"
 		// is a longer candidate of its own (MA, 28 characters).
-		if ibanValid(v) && !chanceCandidate(v, true) && !chanceCandidate(ibanBreak(v), false) && !ibanValid(v+"X") {
+		if ibanValid(v) && !chanceCandidate(v, true) && !chanceCandidate(ibanBreak(v), false) && !ibanValid(v+"X") &&
+			!chanceCandidate(v[4:]+"X", false) && // a later start ending on " X"
+			cardFree(v) && cardFree(ibanBreak(v)) {
 			return v
 		}
 	}
@@ -53,10 +55,23 @@ func stableIBAN(build func() string) string {
 func stableZZ(n int) string {
 	for {
 		v := zzIBAN(n - 4)
-		if !chanceCandidate(v, false) {
+		if !chanceCandidate(v, false) && cardFree(v) {
 			return v
 		}
 	}
+}
+
+// cardFree reports that neither v nor its groups of four hold a chance
+// payment-card match (every digit group start is a card candidate, S3),
+// which would merge with the IBAN under the earlier payment-card marker.
+func cardFree(v string) bool {
+	d := paymentCard()
+	for _, s := range []string{v, groupFours(v)} {
+		if spans, _ := d.find(s); len(spans) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // chanceCandidate reports a mod-97-valid candidate inside v's groups of

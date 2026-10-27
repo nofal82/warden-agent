@@ -789,7 +789,8 @@ func secretAssignment() detector {
 }
 
 // sqlValueAt reads the quoted value of an SQL form at s[v:]: it must open
-// with one of quotes (after any backslashes) and close on its line.
+// with one of quotes (after any backslashes). A value that does not close
+// on its line runs to the line end (recall first, R33).
 func sqlValueAt(s string, v int, quotes string) (span, bool) {
 	k := v
 	for k < len(s) && s[k] == '\\' {
@@ -799,10 +800,13 @@ func sqlValueAt(s string, v int, quotes string) (span, bool) {
 		return span{}, false
 	}
 	start, end, quoted, closed := quotedValue(s, v)
-	if !quoted || !closed || end <= start {
+	if !quoted {
 		return span{}, false
 	}
-	return span{start: start, end: end}, true
+	if !closed {
+		end = lineEnd(s, start)
+	}
+	return span{start: start, end: end}, end > start
 }
 
 // secretKeyValues finds each key that contains a keyword (the whole run of

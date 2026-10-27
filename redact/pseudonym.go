@@ -51,6 +51,13 @@ const homeStartBefore = " \t\n\"'`=:([,;"
 // (ruling on issue #9, point 4).
 const homeNameEnd = "/ \t\n\"'`,;:()[]{}<>=&|"
 
+// markerPrefix reports whether s is an exact marker followed by a
+// character that ends a name.
+func (ps *pass) markerPrefix(s string) bool {
+	i := strings.IndexAny(s, homeNameEnd)
+	return i > 0 && ps.r.isMarkerText(s[:i])
+}
+
 // userNames applies R12a to one normalised field: it returns the text and
 // the segments it inserted (markers may be shortened at a cut, R40).
 func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
@@ -92,14 +99,18 @@ func (ps *pass) userNames(s string, p *Pseudonymizer) (string, []seg) {
 		replace(s, labelDBUser)
 		return b.String(), segs
 	case ps.f.HomeRoot && ps.class == TPath:
-		// The first component's name ends where a /home/ name ends, so a
-		// marker that an earlier pass put there is read alone, as an exact
-		// marker (issue #14: "redacted-warden-enrollment-token x").
 		first := s
-		if i := strings.IndexAny(s, homeNameEnd); i >= 0 {
+		if i := strings.IndexByte(s, '/'); i >= 0 {
 			first = s[:i]
 		}
-		replace(first, labelHomeUser)
+		if ps.markerPrefix(first) {
+			// An earlier pass put a marker here (issue #14: a token
+			// extended over the leading "/" gives
+			// "redacted-warden-enrollment-token x"): output, not a name.
+			b.WriteString(first)
+		} else {
+			replace(first, labelHomeUser)
+		}
 		s = s[len(first):]
 	}
 	const home = "/home/"

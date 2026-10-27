@@ -212,11 +212,22 @@ func isUnitSuffix(word string) bool {
 	return false
 }
 
+// startsWithUnitSuffix reports whether s starts with a unit suffix that
+// ends the name: ".service" is one, ".services.example.com" or ".paths"
+// is not.
 func startsWithUnitSuffix(s string) bool {
 	for _, u := range unitSuffixes {
-		if strings.HasPrefix(s, "."+u) {
+		rest, ok := strings.CutPrefix(s, "."+u)
+		// A '.' after the suffix ends a sentence unless a name goes on.
+		rest = strings.TrimPrefix(rest, ".")
+		if ok && (rest == "" || !isUnitNameByte(rest[0])) {
 			return true
 		}
 	}
 	return false
+}
+
+// isUnitNameByte is a character the unit-name pattern allows.
+func isUnitNameByte(c byte) bool {
+	return isAlnum(c) || strings.IndexByte(":_.@-", c) >= 0
 }
