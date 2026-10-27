@@ -118,6 +118,18 @@ var v1Enums = enumTable{
 		"POSTGRES_SKIPPED_DATABASES", "POSTGRES_LOGIN_EVENT_TRIGGER"},
 }
 
+// preM1Enums: the warden.v1 enums of the pre-M1 files that the agent API
+// reaches or the executor checks (Go reviewer, PR #16): Engine, WebServer
+// and Signal (typed-action-catalog §4.1, typed_request.proto) and
+// AutonomyLevel (action-envelope §4.2, PolicyDecision field 2, L0–L3,
+// envelope.proto).
+var preM1Enums = enumTable{
+	"Engine":        {"MYSQL", "POSTGRESQL", "MONGODB"},
+	"WebServer":     {"NGINX", "APACHE"},
+	"Signal":        {"TERM", "KILL"},
+	"AutonomyLevel": {"L0", "L1", "L2", "L3"},
+}
+
 // upperSnake turns an enum name into its value prefix: AdminToolCode is
 // ADMIN_TOOL_CODE (agent-api §4).
 func upperSnake(name string) string {
@@ -191,6 +203,22 @@ func TestNewV1EnumValues(t *testing.T) {
 	}
 }
 
+// TestPreM1EnumValues: Engine, WebServer, Signal and AutonomyLevel have
+// exactly the spec's values and numbers. Only these rows are compared:
+// ProcessOrder, DbQuery and FileDeleteRoot, the other pre-M1 enums, have
+// no row here yet.
+func TestPreM1EnumValues(t *testing.T) {
+	var eds []protoreflect.EnumDescriptor
+	for _, ed := range allEnums(packageFiles(t, wardenPkg)) {
+		if _, ok := preM1Enums[string(ed.Name())]; ok {
+			eds = append(eds, ed)
+		}
+	}
+	for _, v := range enumViolations(wardenPkg, eds, preM1Enums) {
+		t.Error(v)
+	}
+}
+
 // TestEnumCounts pins the counts the issue calls out, so a value dropped
 // from both the table and the .proto is still caught.
 func TestEnumCounts(t *testing.T) {
@@ -212,6 +240,10 @@ func TestEnumCounts(t *testing.T) {
 		{v1Enums, "IpcRefusalCode", 6},
 		{v1Enums, "DbCondition", 6},
 		{v1Enums, "RedactFieldClass", 10},
+		{preM1Enums, "Engine", 3},
+		{preM1Enums, "WebServer", 2},
+		{preM1Enums, "Signal", 2},
+		{preM1Enums, "AutonomyLevel", 4},
 	}
 	for _, c := range cases {
 		if got := len(c.table[c.name]); got != c.max {
