@@ -63,6 +63,33 @@ type detector struct {
 	tables []string
 }
 
+// numParams are the numeric parameters of the §4.2 validators.
+type numParams struct {
+	IBANMin, IBANMax             int    // non-space characters of an IBAN
+	CardMinDigits, CardMaxDigits int    // digits of a payment card
+	CardFirst                    string // first digits a card may start with
+	AEPrefix                     string // Emirates ID prefix
+	AEDigits                     int    // Emirates ID digits
+	AEGroups                     []int  // dashed Emirates ID groups after the prefix
+	JOMobilePrefix               string // Jordanian mobile number prefix
+	JOMobileThird                string // its allowed third digits
+	JOMobileDigits               int    // its digits
+	JOMobileSplit                int    // digits of its first group when split 3+7
+	NationalIDDigits             int    // digits of a Jordanian or Saudi national number
+}
+
+// validatorParams is read by the validators at run time and hashed as a
+// whole by the rule-set digest, so the digest covers the values the code
+// uses rather than a description written beside them (§4.5, S5; human Go
+// reviewer, 14th review). It is never written outside tests.
+var validatorParams = numParams{
+	IBANMin: 15, IBANMax: 34,
+	CardMinDigits: 13, CardMaxDigits: 19, CardFirst: "23456",
+	AEPrefix: "784", AEDigits: 15, AEGroups: []int{4, 7, 1},
+	JOMobilePrefix: "07", JOMobileThird: "789", JOMobileDigits: 10, JOMobileSplit: 3,
+	NationalIDDigits: 10,
+}
+
 // hooks are test seams; nil in production.
 var hooks struct {
 	detect    func(id string, n int) // before each detector call, with its input length

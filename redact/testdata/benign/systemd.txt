@@ -14,3 +14,4 @@ Oct 25 10:15:42 web1 systemd[1]: warden-agent.service: Scheduled restart job, re
 Oct 25 10:15:43 web1 systemd[1]: Started cron.service - Regular background program processing daemon.
 Oct 25 10:15:44 web1 CRON[5120]: (root) CMD (test -x /usr/sbin/anacron || run-parts --report /etc/cron.daily)
 Oct 25 10:15:45 web1 systemd[1]: apt-daily.timer: Adding 7h 12min 3.120s random time.
+smartd[812]: Device: /dev/sdb [SAT], HD20 4UI 1T01 PROD SER S2H7 JD2B 5011 82, WWN:5-0014ee-2b8f1c2d4

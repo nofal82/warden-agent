@@ -10,3 +10,5 @@
 [  302.000000] eth1: link up, 00:1a:2b:3c:4d:5e
 [  303.000000] nvme0n1: p1 p2 p3
 [  304.000000] TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+ata1.00: ATA-10: WD40EFRX 68N32N0 WD WCC7K4ZJ1234, 82.00A82, max UDMA/133
+scsi 0:0:0:0: Direct-Access     ST40 00NM 0035 1V4107 SN04  PQ: 0 ANSI: 6

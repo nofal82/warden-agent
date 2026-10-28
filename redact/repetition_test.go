@@ -3,7 +3,6 @@ package redact
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // Security review H1: one crafted line repeated across a maximum-size
@@ -20,7 +19,9 @@ func repetitionEvent(unit string) string {
 // step examined through hooks.work; a full event of n identical lines must
 // cost at most 2n times one line (linear, with slack for line ends), and
 // one line must cost something (the hook is wired). The wall-clock bound
-// of a whole event stays in TestWorstCaseTime.
+// of a whole event is held only by TestWorstCaseTime (fuzz_test.go): an
+// uninstrumented wall-clock check here was a second, flaky copy of it
+// (issue #24 item 2).
 func repetitionUnits() map[string]string {
 	return map[string]string{
 		"jwt":                  "eyJ",
@@ -38,10 +39,14 @@ func repetitionUnits() map[string]string {
 		"email":                "a@a.",
 		"card":                 "4111 ",
 		"iban":                 "GB82 ",
-		"sql-identified":       "IDENTIFIED BY '",
-		"sql-password":         "password='",
-		"rsyslog-hash":         "#",
-		"escape-before-ip":     bs + "E::",
+		// Issue #24 item 1: runs may be split by any number of spaces, so
+		// a start followed by long space gaps must not rescan them.
+		"iban-spaces":      "GB82" + strings.Repeat(" ", 40),
+		"iban-short-runs":  "GB82 A ",
+		"sql-identified":   "IDENTIFIED BY '",
+		"sql-password":     "password='",
+		"rsyslog-hash":     "#",
+		"escape-before-ip": bs + "E::",
 	}
 }
 
@@ -65,7 +70,6 @@ func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 		}
 		return work
 	}
-	instrumented := raceEnabled || testing.CoverMode() != ""
 	for name, unit := range repetitionUnits() {
 		full := repetitionEvent(unit)
 		line := full[:strings.IndexByte(full, '\n')]
@@ -78,14 +82,6 @@ func TestHomogeneousRepetitionIsLinear(t *testing.T) {
 		if wFull > 2*lines*wLine {
 			t.Errorf("%s: %d bytes of work for %d lines, %d for one line: over %dx (quadratic?)",
 				name, wFull, lines, wLine, 2*lines)
-		}
-		// An uninstrumented build also stays inside the item deadline.
-		if !instrumented {
-			start := time.Now()
-			_, _, _ = red.Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, full, nil)
-			if el := time.Since(start); el > ItemDeadline {
-				t.Errorf("%s: %v for a %d-byte event, over %v", name, el, len(full), ItemDeadline)
-			}
 		}
 	}
 }

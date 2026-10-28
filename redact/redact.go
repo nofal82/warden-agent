@@ -34,7 +34,7 @@ const (
 
 // RulesVersion is REDACT_RULES_VERSION (§4.5). Raise it on every change to
 // the rule table.
-const RulesVersion uint32 = 2
+const RulesVersion uint32 = 3
 
 // Fixed markers of §4.3. A detector marker is "[REDACTED-<id>]" (Marker),
 // "redacted-<id>" in T-NAME and T-PATH, and "REDACTED-<id>" in unit names.

@@ -479,6 +479,7 @@ var scannedClasses = []Class{TName, TPath, TText, EText, LValue}
 var allErrs = []error{
 	ErrDeadline, ErrBudget, ErrInputTooLarge, ErrPostCheck,
 	ErrPairing, ErrOutputTooLarge, ErrRulesUnavailable, ErrInternal,
+	ErrNormPasses,
 }
 
 func isKnownErr(err error) bool {

@@ -135,7 +135,9 @@ func TestNormMaxPassesValue(t *testing.T) {
 
 // R28b, AC72: the pass cap, at the boundary. NormMaxPasses-1 changing
 // passes plus the confirming pass fit the cap and are accepted; an item
-// still changing in pass NormMaxPasses is an error (dropped, reason ERROR).
+// still changing in pass NormMaxPasses is dropped with ErrNormPasses
+// (reason PASS_CAP, issue #24 item 4), never ErrInternal: a crafted
+// alternation must show apart from a redactor fault.
 func TestNormalizePassCap(t *testing.T) {
 	for _, c := range []Class{EText, TText} {
 		ok := "x" + nestedBackslash(NormMaxPasses-1, "0026") + "y"
@@ -146,8 +148,8 @@ func TestNormalizePassCap(t *testing.T) {
 		for _, depth := range []int{NormMaxPasses, NormMaxPasses + 1, 4 * NormMaxPasses} {
 			bad := "x" + nestedBackslash(depth, "0026") + "y"
 			got, n, err := Normalize(c, bad)
-			if !errors.Is(err, ErrInternal) {
-				t.Errorf("%s: %d changing passes: err %v, want ErrInternal", className(c), depth, err)
+			if !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) {
+				t.Errorf("%s: %d changing passes: err %v, want ErrNormPasses and not ErrInternal", className(c), depth, err)
 			}
 			if got != "" || n != (NormCounts{}) {
 				t.Errorf("%s: %d changing passes: output %q counts %v returned with the error", className(c), depth, got, n)
@@ -166,10 +168,11 @@ func adversarialAlternating(depth int) string {
 	return "k=" + chain[:5] + r(0x01) + chain[5:] + " end"
 }
 
-// AC72: an adversarial item deeper than the cap is dropped as ERROR by the
-// redactor, well before the item deadline. The clock steps 2 ms per read,
-// so a redactor without the cap (bounded only by the deadline, which it
-// checks between passes) would return ErrDeadline instead of ErrInternal.
+// AC72: an adversarial item deeper than the cap is dropped with
+// ErrNormPasses (reason PASS_CAP, issue #24 item 4) by the redactor,
+// well before the item deadline. The clock steps 2 ms per read, so a
+// redactor without the cap (bounded only by the deadline, which it checks
+// between passes) would return ErrDeadline instead.
 func TestRedactPassCapFailsFast(t *testing.T) {
 	inputs := map[string]string{
 		"nested backslash at the cap":    nestedBackslash(NormMaxPasses, "0026"),
@@ -187,8 +190,8 @@ func TestRedactPassCapFailsFast(t *testing.T) {
 			start := time.Now()
 			out, _, err := red.Redact(bg, fieldFor(c), in, nil)
 			el := time.Since(start)
-			if !errors.Is(err, ErrInternal) || out != "" {
-				t.Errorf("%s, %s: (%q, %v), want ErrInternal (pass cap), not the deadline", name, className(c), out, err)
+			if !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) || out != "" {
+				t.Errorf("%s, %s: (%q, %v), want ErrNormPasses (pass cap), not the deadline or ErrInternal", name, className(c), out, err)
 			}
 			// A loose sanity bound only; the deterministic proof is the
 			// error kind above.
@@ -196,8 +199,8 @@ func TestRedactPassCapFailsFast(t *testing.T) {
 				t.Errorf("%s, %s: %v, over the item deadline %v", name, className(c), el, ItemDeadline)
 			}
 		}
-		if out, _, err := testRedactor().RedactGroup(bg, fieldFor(TText), []string{"ok", in}, nil); !errors.Is(err, ErrInternal) || out != nil {
-			t.Errorf("%s: RedactGroup (%v, %v), want ErrInternal", name, out, err)
+		if out, _, err := testRedactor().RedactGroup(bg, fieldFor(TText), []string{"ok", in}, nil); !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) || out != nil {
+			t.Errorf("%s: RedactGroup (%v, %v), want ErrNormPasses", name, out, err)
 		}
 	}
 }
@@ -220,8 +223,8 @@ func TestRedactPassCapBoundaryAcceptedAndScanned(t *testing.T) {
 		}
 		// One more layer is over the cap: dropped, never sent.
 		over := "GET https://h.example/x?a=1" + nestedBackslash(NormMaxPasses, "0026") + "token=" + secret + " ok"
-		if out, _, err := testRedactor().Redact(bg, fieldFor(c), over, nil); !errors.Is(err, ErrInternal) || out != "" {
-			t.Errorf("%s: over the cap: (%q, %v), want ErrInternal", className(c), out, err)
+		if out, _, err := testRedactor().Redact(bg, fieldFor(c), over, nil); !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) || out != "" {
+			t.Errorf("%s: over the cap: (%q, %v), want ErrNormPasses", className(c), out, err)
 		}
 	}
 }
