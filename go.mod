@@ -1,8 +1,6 @@
 module github.com/nofal82/warden-agent
 
-go 1.27
-
-toolchain go1.27.3
+go 1.27.3
 
 require (
 	google.golang.org/grpc v1.84.0
