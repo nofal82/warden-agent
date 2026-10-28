@@ -10,10 +10,12 @@ package redact
 // none of these tests may call t.Parallel.
 
 import (
+	"errors"
 	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"unicode"
 )
@@ -305,6 +307,179 @@ func TestNormalisationTablesMatchSpec(t *testing.T) {
 	for _, r := range []rune{0xE0000, 0xE007F, 0x180E, 0x034F, 0xFE00, 0xFE0F, 0x115F, 0x1160, 0x3164, 0xFFA0, 0xFFF9, 0xFFFB} {
 		if !in(tagFillerRanges, r) {
 			t.Errorf("tagFillerRanges misses %U (R26)", r)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Issue #24 item 3 (S5 leftover): the numeric validator parameters live in
+// one package variable, validatorParams, that the validators read at run
+// time and the digest hashes (fmt.Sprintf("%#v", validatorParams)). A
+// hand-written description beside the code could drift from it; the
+// variable cannot.
+
+// setParams changes validatorParams through mutate and restores the
+// previous value at cleanup. Tests that call it must not call t.Parallel.
+func setParams(t *testing.T, mutate func(p *numParams)) {
+	t.Helper()
+	saved := validatorParams
+	saved.AEGroups = slices.Clone(validatorParams.AEGroups)
+	t.Cleanup(func() { validatorParams = saved })
+	p := validatorParams
+	p.AEGroups = slices.Clone(validatorParams.AEGroups)
+	mutate(&p)
+	validatorParams = p
+}
+
+// The values are those of §4.2.
+func TestValidatorParamsValues(t *testing.T) {
+	p := validatorParams
+	ints := []struct {
+		name      string
+		got, want int
+	}{
+		{"IBANMin", p.IBANMin, 15}, {"IBANMax", p.IBANMax, 34},
+		{"CardMinDigits", p.CardMinDigits, 13}, {"CardMaxDigits", p.CardMaxDigits, 19},
+		{"AEDigits", p.AEDigits, 15}, {"JOMobileDigits", p.JOMobileDigits, 10},
+		{"JOMobileSplit", p.JOMobileSplit, 3}, {"NationalIDDigits", p.NationalIDDigits, 10},
+	}
+	for _, c := range ints {
+		if c.got != c.want {
+			t.Errorf("validatorParams.%s = %d, want %d", c.name, c.got, c.want)
+		}
+	}
+	strs := []struct{ name, got, want string }{
+		{"CardFirst", p.CardFirst, "23456"}, {"AEPrefix", p.AEPrefix, "784"},
+		{"JOMobilePrefix", p.JOMobilePrefix, "07"}, {"JOMobileThird", p.JOMobileThird, "789"},
+	}
+	for _, c := range strs {
+		if c.got != c.want {
+			t.Errorf("validatorParams.%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+	if !slices.Equal(p.AEGroups, []int{4, 7, 1}) {
+		t.Errorf("validatorParams.AEGroups = %v, want [4 7 1]", p.AEGroups)
+	}
+}
+
+// AC70 (S5): changing any one field of validatorParams changes the digest.
+// Every field is walked by reflection, so a field added later is covered;
+// a field of a kind this test cannot mutate fails it instead of slipping
+// through unhashed.
+func TestDigestMutationEveryValidatorParam(t *testing.T) {
+	saved := validatorParams
+	saved.AEGroups = slices.Clone(validatorParams.AEGroups)
+	t.Cleanup(func() { validatorParams = saved })
+	base := currentDigest()
+	v := reflect.ValueOf(&validatorParams).Elem()
+	typ := v.Type()
+	if typ.NumField() < 13 {
+		t.Errorf("numParams has %d fields, want at least the 13 of issue #24", typ.NumField())
+	}
+	for i := range typ.NumField() {
+		f, name := v.Field(i), typ.Field(i).Name
+		if !f.CanSet() {
+			t.Fatalf("numParams.%s cannot be set by this test (unexported?): name it so the mutation test covers it", name)
+		}
+		old := reflect.ValueOf(f.Interface())
+		switch {
+		case f.Kind() == reflect.Int:
+			f.SetInt(f.Int() + 1)
+		case f.Kind() == reflect.String:
+			f.SetString(f.String() + "1")
+		case f.Kind() == reflect.Slice && f.Type().Elem().Kind() == reflect.Int:
+			n := reflect.MakeSlice(f.Type(), f.Len(), f.Len())
+			reflect.Copy(n, f)
+			if n.Len() == 0 {
+				n = reflect.Append(n, reflect.ValueOf(1).Convert(f.Type().Elem()))
+			} else {
+				n.Index(0).SetInt(n.Index(0).Int() + 1)
+			}
+			f.Set(n)
+		default:
+			t.Fatalf("numParams.%s has kind %s, which this test cannot mutate: extend the test", name, f.Type())
+		}
+		if currentDigest() == base {
+			t.Errorf("changing validatorParams.%s left the digest unchanged (S5)", name)
+		}
+		f.Set(old)
+		if currentDigest() != base {
+			t.Fatalf("restoring validatorParams.%s did not restore the digest", name)
+		}
+	}
+}
+
+func detectorByID(t *testing.T, id string) detector {
+	t.Helper()
+	for _, d := range defaultRules() {
+		if d.id == id {
+			return d
+		}
+	}
+	t.Fatalf("no detector %q", id)
+	return detector{}
+}
+
+// paramTie checks that in matches the detector before the change and not
+// after it, at the detector and through a redactor built with New() after
+// the change. The redactor's self-test (R42) may itself fail when the
+// change breaks a built-in sample; that is also proof that the validator
+// reads the variable, and then every call returns ErrRulesUnavailable.
+func paramTie(t *testing.T, id, in string, mutate func(p *numParams)) {
+	t.Helper()
+	if spans, _ := detectorByID(t, id).find(in); len(spans) == 0 {
+		t.Fatalf("%s: %q does not match before the change", id, in)
+	}
+	setParams(t, mutate)
+	if spans, _ := detectorByID(t, id).find(in); len(spans) != 0 {
+		t.Errorf("%s: %q still matches after the change: the validator holds its own constant (S5)", id, in)
+	}
+	red := New(WithClock(frozenClock))
+	if err := red.Err(); err != nil {
+		if !errors.Is(err, ErrRulesUnavailable) {
+			t.Errorf("%s: New() after the change: %v", id, err)
+		}
+		return
+	}
+	out, rep, err := red.Redact(bg, fieldFor(EText), in, nil)
+	if err != nil || rep.Replaced[id] != 0 {
+		t.Errorf("%s: Redact after the change: (%q, %v, %v), want no %s match", id, out, rep.Replaced, err, id)
+	}
+}
+
+// S5 behaviour ties: each validator reads validatorParams at call time.
+func TestValidatorParamsAreRead(t *testing.T) {
+	t.Run("IBANMax", func(t *testing.T) {
+		v := stableIBAN(func() string { return zzIBAN(30) }) // 34 characters
+		paramTie(t, "iban", "iban "+v+" ok.", func(p *numParams) { p.IBANMax = len(v) - 1 })
+	})
+	t.Run("CardFirst", func(t *testing.T) {
+		c := makeCard("4", 16)
+		paramTie(t, "payment-card", "card "+c+" ok", func(p *numParams) {
+			p.CardFirst = strings.ReplaceAll(p.CardFirst, "4", "")
+		})
+	})
+	t.Run("JOMobileThird", func(t *testing.T) {
+		paramTie(t, "phone", "call "+"079"+randDigits(7)+" now", func(p *numParams) {
+			p.JOMobileThird = strings.ReplaceAll(p.JOMobileThird, "9", "")
+		})
+	})
+}
+
+// S5: the hand-written numeric descriptions in the detectors' tables are
+// gone; the numbers are hashed from validatorParams instead.
+func TestNoHandWrittenNumericTables(t *testing.T) {
+	old := []string{
+		"first-2-6", "13-19-digits", "prefix-784", "groups:15|3-4-7-1",
+		"jordan-mobile:07[789]", "jordan-groups:10|3+7", "length:15-34", "window:45",
+	}
+	for _, d := range defaultRules() {
+		for _, entry := range d.tables {
+			for _, o := range old {
+				if strings.Contains(entry, o) {
+					t.Errorf("%s: tables entry %q holds the hand-written description %q (S5)", d.id, entry, o)
+				}
+			}
 		}
 	}
 }

@@ -108,11 +108,21 @@ func TestDetectorIDsAndOrder(t *testing.T) {
 	}
 }
 
+// Issue #24 item 5 (R43): the IBAN rule changed (spaces between runs of
+// any length) and the digest now covers validatorParams, so the version
+// is exactly 3 in this round.
+func TestRulesVersionIsThree(t *testing.T) {
+	if RulesVersion != 3 {
+		t.Errorf("RulesVersion = %d, want 3 (issue #24: R43 raise for the IBAN rule change)", RulesVersion)
+	}
+}
+
 func TestRulesIdentity(t *testing.T) {
 	// Raised from 1 by the 13th review's rule changes (R28a, B1, S2,
-	// OQ15-OQ17; R43, AC73).
-	if RulesVersion < 2 {
-		t.Errorf("RulesVersion = %d, want at least 2", RulesVersion)
+	// OQ15-OQ17; R43, AC73), and to 3 by issue #24 (the IBAN spacing
+	// fix and the validator parameters entering the digest).
+	if RulesVersion < 3 {
+		t.Errorf("RulesVersion = %d, want at least 3", RulesVersion)
 	}
 	d1, d2 := RulesDigest(), RulesDigest()
 	if d1 == ([32]byte{}) {

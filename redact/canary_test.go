@@ -193,6 +193,11 @@ func buildCanaries(t *testing.T, key [32]byte) []canary {
 	for name, v := range map[string]string{"MA": stableIBAN(maIBAN), "SN": stableIBAN(snIBAN), "GB": stableIBAN(gbIBAN)} {
 		add(canary{name: "C19 " + name + " IBAN", text: "iban " + v, secrets: []string{v}, id: "iban", paths: allPaths})
 	}
+	// AC75 (14th review): mixed grouping, a run of another length and two
+	// spaces between runs, is an IBAN too.
+	gb := stableIBAN(gbIBAN)
+	mixed := gb[:4] + " " + gb[4:8] + "  " + gb[8:]
+	add(canary{name: "C19 GB IBAN mixed grouping", text: "iban " + mixed, secrets: []string{mixed, gb[8:]}, id: "iban", paths: allPaths})
 
 	// C20, C21: unit-id-shaped.
 	c20tok := wdnToken()

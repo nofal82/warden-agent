@@ -69,8 +69,9 @@ func FuzzNormalize(f *testing.F) {
 		defer catchPanic(t, "Normalize")
 		out, counts, err := Normalize(c, s)
 		if err != nil {
-			// R28b: only the pass cap fails, and then nothing is returned.
-			if !errors.Is(err, ErrInternal) || out != "" || counts != (NormCounts{}) {
+			// R28b: only the pass cap fails, with its own error
+			// (ErrNormPasses, issue #24 item 4), and nothing is returned.
+			if !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) || out != "" || counts != (NormCounts{}) {
 				t.Fatalf("%s: error %v with output or counts", className(c), err)
 			}
 			return
