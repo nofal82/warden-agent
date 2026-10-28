@@ -104,7 +104,7 @@ func redactIn(t *testing.T, c Class, in string) (string, Report) {
 	return mustRedact(t, fieldFor(c), in, nil)
 }
 
-// AC75: MA, SN and GB, compact and grouped by four, in E-TEXT, T-TEXT and
+// AC75: MA, SN and GB, compact, grouped by four and in mixed grouping, in E-TEXT, T-TEXT and
 // L-VALUE; one check digit changed leaves the value unchanged.
 func TestIBANEveryCountry(t *testing.T) {
 	values := map[string]string{
@@ -135,6 +135,15 @@ func TestIBANEveryCountry(t *testing.T) {
 					t.Errorf("%s %s %s: Replaced[iban] = %d, want 1", country, form.name, className(c), rep.Replaced["iban"])
 				}
 				assertNoLeak(t, country+" "+form.name, out, v[4:])
+			}
+			// AC75 (14th review): mixed grouping, runs of 4, 2, 7 and the
+			// rest, with three spaces after the second run.
+			mixed := v[:4] + " " + v[4:6] + "   " + v[6:13] + " " + v[13:]
+			in := "iban " + mixed + " ok."
+			if out, _ := redactIn(t, c, in); out != "iban "+ibanOrCardMarker(c, mixed)+" ok." {
+				t.Errorf("%s mixed grouping %s: got %q", country, className(c), out)
+			} else {
+				assertNoLeak(t, country+" mixed grouping", out, v[13:])
 			}
 			broken := ibanBreak(v)
 			for _, form := range []string{broken, groupFours(broken)} {
@@ -241,10 +250,9 @@ func ibanOrCardMarker(c Class, in string) string {
 // listed in the PR #18 known limits). Every value is mod-97 valid and is
 // built from fragments or at run time.
 //
-// Recorded residual (§6), deliberately not tested here: an IBAN glued to a
-// word ("DE89...3000_ref") has no word boundary after its last run, so it
-// does not match. A test asserting that it stays unredacted would lock in
-// a leak; a test asserting the opposite would contradict the rule.
+// An IBAN glued to a word ("DE89...3000_ref") has no word boundary after
+// its last run, so it does not match: AC75 and the 14th-review amendment
+// (redaction.md §10) specify that, and TestIBANWordBoundary tests it.
 func TestIBANAnyRunSpacing(t *testing.T) {
 	de := "DE89" + "3704" + "0044" + "0532" + "0130" + "00"
 	gbFixed := "GB82" + "WEST" + "1234" + "5698" + "7654" + "32"
@@ -421,13 +429,22 @@ func FuzzIBANDetector(f *testing.F) {
 	})
 }
 
-// A word boundary is required before the country code.
+// A word boundary is required before the country code and after the last
+// run (AC75: glued to a word on either side is not matched).
 func TestIBANWordBoundary(t *testing.T) {
 	v := gbIBAN()
 	for _, in := range []string{"x" + v, "_" + v, "9" + v} {
 		out, rep := redactE(t, "iban "+in+" ok.")
 		if rep.Replaced["iban"] != 0 {
 			t.Errorf("%q: matched without a word boundary: %q", in, out)
+		}
+	}
+	// stableIBAN: no group end other than the whole value passes mod 97.
+	sv := stableIBAN(gbIBAN)
+	for _, in := range []string{sv + "_ref", sv + "x", groupFours(sv) + "_ref", groupFours(sv) + "x"} {
+		out, rep := redactE(t, "iban "+in+" ok.")
+		if rep.Replaced["iban"] != 0 {
+			t.Errorf("%q: matched without a word boundary at the end: %q", in, out)
 		}
 	}
 	for _, in := range []string{"(" + v + ")", "=" + v, `"` + v + `"`} {
@@ -513,5 +530,13 @@ func TestIBANOverlappingFalseCandidate(t *testing.T) {
 			}
 			assertNoLeak(t, className(c), out, jo)
 		}
+	}
+}
+
+// ibanAt's fixed arrays hold the longest IBAN: a larger IBANMax would be
+// read as ibanBufMax, silently shorter than the hashed value.
+func TestIBANBufferHoldsMax(t *testing.T) {
+	if validatorParams.IBANMax > ibanBufMax {
+		t.Errorf("IBANMax %d is over ibanBufMax %d", validatorParams.IBANMax, ibanBufMax)
 	}
 }

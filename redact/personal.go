@@ -493,6 +493,9 @@ func luhn(digits []byte) bool {
 // 14th review: spacing is not limited to groups of four).
 const ibanStart = `[A-Z]{2}[0-9]{2}[A-Z0-9]*`
 
+// ibanBufMax sizes ibanAt's arrays; IBANMax above it is read as ibanBufMax.
+const ibanBufMax = 64
+
 func iban() detector {
 	re := anchored(ibanStart)
 	return detector{
@@ -543,32 +546,41 @@ func ibanAt(s string, m []int) (span, bool) {
 		return span{}, false
 	}
 	p := validatorParams
-	var buf []byte
-	var ends []int // candidate ends, and the number of letters and digits at each
-	e := m[0]
-	for len(buf) < p.IBANMax {
-		for e < len(s) && len(buf) < p.IBANMax && (isUpper(s[e]) || isDigitByte(s[e])) {
-			buf = append(buf, s[e])
+	// Fixed arrays keep the scan off the heap; a run holds at least one
+	// character, so there are at most as many ends as characters.
+	var buf [ibanBufMax]byte
+	var ends [ibanBufMax]struct{ end, n int } // a candidate end, and the characters before it
+	limit := min(p.IBANMax, len(buf))
+	n, k, e, read := 0, 0, m[0], m[0]
+	for n < limit {
+		for e < len(s) && n < limit && (isUpper(s[e]) || isDigitByte(s[e])) {
+			buf[n] = s[e]
+			n++
 			e++
 		}
+		read = e
 		if e < len(s) && isWordByte(s[e]) {
 			break
 		}
-		ends = append(ends, e, len(buf))
+		ends[k] = struct{ end, n int }{e, n}
+		k++
 		j := e
 		for j < len(s) && s[j] == ' ' {
 			j++
 		}
+		read = j
 		if j == e || j == len(s) || (!isUpper(s[j]) && !isDigitByte(s[j])) {
 			break
 		}
 		e = j
 	}
-	work(e - m[0])
-	for k := len(ends) - 2; k >= 0; k -= 2 {
-		end, l := ends[k], ends[k+1]
-		if l >= p.IBANMin && l <= p.IBANMax && ibanMod97(buf[:l]) {
-			return span{start: m[0], end: end}, true
+	work(read - m[0])
+	for k--; k >= 0; k-- {
+		if l := ends[k].n; l >= p.IBANMin && l <= p.IBANMax {
+			work(l)
+			if ibanMod97(buf[:l]) {
+				return span{start: m[0], end: ends[k].end}, true
+			}
 		}
 	}
 	return span{}, false
