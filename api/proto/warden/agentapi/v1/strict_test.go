@@ -429,6 +429,173 @@ func TestStrictUnmarshalRefusesHostile(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// M1 ruling: no partial data on error. StrictUnmarshal resets m before
+// returning any error, so a caller that ignores or mishandles the error
+// can never read stale content (a reused message) or attacker-chosen
+// fields that proto.Unmarshal filled before it reached invalid UTF-8.
+
+// prefilled returns a fully populated message of the same type as root(),
+// standing in for a message a caller reuses across decodes.
+func prefilled(t testing.TB, root func() proto.Message) proto.Message {
+	t.Helper()
+	m := fullyPopulated(t, root().ProtoReflect().Type(), 0)
+	if proto.Size(m) == 0 {
+		t.Fatalf("%s: populated message is empty", m.ProtoReflect().Descriptor().FullName())
+	}
+	return m
+}
+
+// wantEmpty fails unless m equals a new message of its type.
+func wantEmpty(t *testing.T, m proto.Message) {
+	t.Helper()
+	if fresh := m.ProtoReflect().Type().New().Interface(); !proto.Equal(m, fresh) {
+		t.Fatalf("%s left non-empty after refusal: %v", m.ProtoReflect().Descriptor().FullName(), m)
+	}
+}
+
+// TestStrictUnmarshalRefusalLeavesMessageEmpty: for every hostile case,
+// after the refusal m is empty, whether it started fresh or pre-filled.
+// The error is still exactly wirescan's.
+func TestStrictUnmarshalRefusalLeavesMessageEmpty(t *testing.T) {
+	for _, tc := range strictRefuseCases() {
+		for _, start := range []struct {
+			name string
+			m    func(testing.TB) proto.Message
+		}{
+			{"fresh", func(testing.TB) proto.Message { return tc.root() }},
+			{"prefilled", func(t testing.TB) proto.Message { return prefilled(t, tc.root) }},
+		} {
+			t.Run(tc.name+"/"+start.name, func(t *testing.T) {
+				m := start.m(t)
+				err := agentapiv1.StrictUnmarshal(tc.b, m)
+				wantOnlySentinel(t, err, tc.want)
+				if d := sameStrictError(err, wirescan.Unmarshal(tc.b, tc.root())); d != "" {
+					t.Fatal(d)
+				}
+				wantEmpty(t, m)
+			})
+		}
+	}
+}
+
+// TestStrictUnmarshalRefusalStatesFromReview pins the three states the
+// security review observed with the plain wrapper.
+func TestStrictUnmarshalRefusalStatesFromReview(t *testing.T) {
+	// (a) A scan refusal never touches m, so a reused message kept its old
+	// content: a caller ignoring the error would read stale data.
+	t.Run("scan-refusal/prefilled-status-body", func(t *testing.T) {
+		b := []byte{0x00}
+		ref := realisticStatusBody()
+		if err := wirescan.Unmarshal(b, ref); !errors.Is(err, wirescan.ErrMalformed) {
+			t.Fatalf("premise: wirescan gave %v, want ErrMalformed", err)
+		}
+		if !proto.Equal(ref, realisticStatusBody()) {
+			t.Fatal("premise changed: wirescan's scan refusal now touches m")
+		}
+
+		m := realisticStatusBody()
+		err := agentapiv1.StrictUnmarshal(b, m)
+		wantOnlySentinel(t, err, wirescan.ErrMalformed)
+		wantEmpty(t, m)
+		if m.GetServerId() != "" || m.GetResultSequence() != 0 {
+			t.Fatalf("stale content survived: server_id %q, result_sequence %d", m.GetServerId(), m.GetResultSequence())
+		}
+	})
+
+	// (b) Invalid UTF-8 is caught by proto.Unmarshal after the scan passed,
+	// once it has already set earlier fields from attacker bytes.
+	statusUTF8 := cat(
+		wVarint(nil, statusFormatVersion, 1),
+		wString(nil, statusServerID, "srv-from-attacker"),
+		wString(nil, statusBinaryVersion, invalidUTF8()),
+	)
+	t.Run("utf8/status-body-partial", func(t *testing.T) {
+		ref := &wardenv1.ExecutorStatusBody{}
+		if err := wirescan.Unmarshal(statusUTF8, ref); !errors.Is(err, wirescan.ErrMalformed) {
+			t.Fatalf("premise: wirescan gave %v, want ErrMalformed", err)
+		}
+		if ref.GetServerId() != "srv-from-attacker" {
+			t.Logf("note: wirescan no longer leaves server_id behind (got %q)", ref.GetServerId())
+		}
+		for _, start := range []*wardenv1.ExecutorStatusBody{{}, realisticStatusBody()} {
+			m := start
+			err := agentapiv1.StrictUnmarshal(statusUTF8, m)
+			wantOnlySentinel(t, err, wirescan.ErrMalformed)
+			wantEmpty(t, m)
+			if m.GetServerId() != "" || m.GetFormatVersion() != 0 {
+				t.Fatalf("attacker data survived: server_id %q, format_version %d", m.GetServerId(), m.GetFormatVersion())
+			}
+		}
+	})
+
+	outboxUTF8 := outbox(42, wBytes(nil, payloadAdminTool, cat(
+		wBytes(nil, adminRecordID, fixed(0x91, 16)),
+		wVarint(nil, adminMode, uint64(agentapiv1.AdminToolMode_ADMIN_TOOL_MODE_STAGE)),
+		wString(nil, adminReleaseVersion, string([]byte{0xff})),
+	)))
+	t.Run("utf8/outbox-admin-partial", func(t *testing.T) {
+		ref := &agentapiv1.OutboxMessage{}
+		if err := wirescan.Unmarshal(outboxUTF8, ref); !errors.Is(err, wirescan.ErrMalformed) {
+			t.Fatalf("premise: wirescan gave %v, want ErrMalformed", err)
+		}
+		if ref.GetMessageSeq() != 42 {
+			t.Logf("note: wirescan no longer leaves message_seq behind (got %d)", ref.GetMessageSeq())
+		}
+		for _, start := range []*agentapiv1.OutboxMessage{{}, realisticOutbox(t)} {
+			m := start
+			err := agentapiv1.StrictUnmarshal(outboxUTF8, m)
+			wantOnlySentinel(t, err, wirescan.ErrMalformed)
+			wantEmpty(t, m)
+			if m.GetMessageSeq() != 0 || m.GetPayload() != nil {
+				t.Fatalf("attacker data survived: message_seq %d, payload %v", m.GetMessageSeq(), m.GetPayload())
+			}
+		}
+	})
+}
+
+// TestStrictUnmarshalSuccessReplacesPrefilled: success is unchanged. A
+// fresh m holds exactly the decoded message, and a pre-filled m holds
+// exactly the new message, with nothing of the old one merged in (wirescan
+// calls proto.Unmarshal, which resets m first; this pins that).
+func TestStrictUnmarshalSuccessReplacesPrefilled(t *testing.T) {
+	for _, tc := range strictAcceptCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := deterministic.Marshal(tc.msg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mt := tc.msg.ProtoReflect().Type()
+
+			fresh := mt.New().Interface()
+			if err := agentapiv1.StrictUnmarshal(b, fresh); err != nil {
+				t.Fatalf("fresh m: %v", err)
+			}
+			if !proto.Equal(fresh, tc.msg) {
+				t.Fatal("fresh m: decoded message differs")
+			}
+
+			// A different populated variant, so old and new differ.
+			for _, variant := range []int{0, 3} {
+				reused := fullyPopulated(t, mt, variant)
+				if err := agentapiv1.StrictUnmarshal(b, reused); err != nil {
+					t.Fatalf("pre-filled m (variant %d): %v", variant, err)
+				}
+				if !proto.Equal(reused, tc.msg) {
+					t.Fatalf("pre-filled m (variant %d): result is not exactly the new message", variant)
+				}
+			}
+
+			// Empty input into a pre-filled m gives the empty message.
+			reused := fullyPopulated(t, mt, 1)
+			if err := agentapiv1.StrictUnmarshal(nil, reused); err != nil {
+				t.Fatalf("empty input: %v", err)
+			}
+			wantEmpty(t, reused)
+		})
+	}
+}
+
 // TestStrictUnmarshalRefuseCasesCoverEveryRule guards the table: every
 // rule the issue lists has at least one case.
 func TestStrictUnmarshalRefuseCasesCoverEveryRule(t *testing.T) {
@@ -526,8 +693,10 @@ func strictRoots() []protoreflect.FullName {
 
 // FuzzStrictUnmarshalMatchesWirescan: for any bytes and any root,
 // StrictUnmarshal gives the same error as wirescan.Unmarshal (both nil, or
-// the same text and the same errors.Is answer for every sentinel) and, on
-// success, an equal message.
+// the same text and the same errors.Is answer for every sentinel). On
+// success the message equals wirescan's; on error it is empty (M1: no
+// partial or stale data), whether m started fresh or pre-filled. wirescan's
+// own message may be partial on error, so the two are not compared then.
 func FuzzStrictUnmarshalMatchesWirescan(f *testing.F) {
 	names := strictRoots()
 	types := make([]protoreflect.MessageType, len(names))
@@ -578,6 +747,22 @@ func FuzzStrictUnmarshalMatchesWirescan(f *testing.F) {
 		}
 		if err == nil && !proto.Equal(got, ref) {
 			t.Fatalf("%s: decoded messages differ\nin: %x", mt.Descriptor().FullName(), b)
+		}
+		if err != nil && !proto.Equal(got, mt.New().Interface()) {
+			t.Fatalf("%s: refused input left data in m: %v\nin: %x", mt.Descriptor().FullName(), err, b)
+		}
+
+		// The same bytes into a reused, pre-filled message.
+		reused := fullyPopulated(t, mt, int(which))
+		reusedErr := agentapiv1.StrictUnmarshal(b, reused)
+		if d := sameStrictError(reusedErr, refErr); d != "" {
+			t.Fatalf("%s: pre-filled m: %s\nin: %x", mt.Descriptor().FullName(), d, b)
+		}
+		if reusedErr == nil && !proto.Equal(reused, ref) {
+			t.Fatalf("%s: pre-filled m: decoded message is not exactly the new one\nin: %x", mt.Descriptor().FullName(), b)
+		}
+		if reusedErr != nil && !proto.Equal(reused, mt.New().Interface()) {
+			t.Fatalf("%s: pre-filled m: refused input left stale or partial data: %v\nin: %x", mt.Descriptor().FullName(), reusedErr, b)
 		}
 	})
 }
@@ -688,19 +873,34 @@ func TestStrictUnmarshalDocComment(t *testing.T) {
 			t.Errorf("doc comment lacks %q: %q", phrase, doc)
 		}
 	}
+	// M1 ruling: wirescan's error values are not exported from this
+	// package, so the doc must tell callers to treat every error as
+	// MALFORMED, and that m is reset (left empty) on error.
+	if !strings.Contains(doc, "MALFORMED") {
+		t.Errorf("doc comment does not say every error is treated as MALFORMED: %q", doc)
+	}
+	if !strings.Contains(strings.ToLower(doc), "reset") {
+		t.Errorf("doc comment does not say m is reset on error: %q", doc)
+	}
 }
 
 // TestStrictUnmarshalIsThinWrapper: the body is exactly
-// "return wirescan.Unmarshal(b, m)" with the parameters in order, so the
-// error is returned unchanged and no second decoding path exists; and
-// strict.go imports nothing but wirescan and protobuf's proto package (no
-// new dependency).
+//
+//	if err := wirescan.Unmarshal(b, m); err != nil {
+//		proto.Reset(m)
+//		return err
+//	}
+//	return nil
+//
+// with the parameters in order (M1 ruling), so the error is returned
+// unchanged, m is left empty on error, and no second decoding path exists;
+// and strict.go imports nothing but wirescan and protobuf's proto package
+// (no new dependency), neither renamed.
 func TestStrictUnmarshalIsThinWrapper(t *testing.T) {
 	f, fd := parseStrict(t)
 
-	params := fd.Type.Params.List
 	var names []string
-	for _, p := range params {
+	for _, p := range fd.Type.Params.List {
 		for _, n := range p.Names {
 			names = append(names, n.Name)
 		}
@@ -708,36 +908,54 @@ func TestStrictUnmarshalIsThinWrapper(t *testing.T) {
 	if len(names) != 2 {
 		t.Fatalf("StrictUnmarshal has %d named parameters, want 2", len(names))
 	}
-	if fd.Body == nil || len(fd.Body.List) != 1 {
-		t.Fatalf("StrictUnmarshal body has %d statements, want one return", len(fd.Body.List))
+	if fd.Body == nil || len(fd.Body.List) != 2 {
+		t.Fatalf("StrictUnmarshal body has %d statements, want an if and a return", len(fd.Body.List))
 	}
-	ret, ok := fd.Body.List[0].(*ast.ReturnStmt)
-	if !ok || len(ret.Results) != 1 {
-		t.Fatal("StrictUnmarshal body is not a single return of one value")
-	}
-	call, ok := ret.Results[0].(*ast.CallExpr)
+
+	ifs, ok := fd.Body.List[0].(*ast.IfStmt)
 	if !ok {
-		t.Fatal("StrictUnmarshal does not return a call")
+		t.Fatal("first statement is not an if")
 	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	pkg, pok := func() (*ast.Ident, bool) {
-		if !ok {
-			return nil, false
-		}
-		id, ok := sel.X.(*ast.Ident)
-		return id, ok
-	}()
-	if !ok || !pok || pkg.Name != "wirescan" || sel.Sel.Name != "Unmarshal" {
-		t.Fatal("StrictUnmarshal does not return wirescan.Unmarshal(...)")
+	if ifs.Else != nil {
+		t.Fatal("the if has an else branch")
 	}
-	if len(call.Args) != 2 {
-		t.Fatalf("wirescan.Unmarshal called with %d arguments", len(call.Args))
+
+	// Init: errName := wirescan.Unmarshal(<param0>, <param1>)
+	init, ok := ifs.Init.(*ast.AssignStmt)
+	if !ok || init.Tok != token.DEFINE || len(init.Lhs) != 1 || len(init.Rhs) != 1 {
+		t.Fatal("the if does not start with a single := assignment")
 	}
-	for i, a := range call.Args {
-		id, ok := a.(*ast.Ident)
-		if !ok || id.Name != names[i] {
-			t.Errorf("argument %d is not parameter %s unchanged", i, names[i])
-		}
+	errID, ok := init.Lhs[0].(*ast.Ident)
+	if !ok || errID.Name == "_" {
+		t.Fatal("the assignment does not bind the error to a name")
+	}
+	errName := errID.Name
+	wantSelectorCall(t, init.Rhs[0], "wirescan", "Unmarshal", names)
+
+	// Cond: errName != nil
+	cond, ok := ifs.Cond.(*ast.BinaryExpr)
+	if !ok || cond.Op != token.NEQ || !isIdent(cond.X, errName) || !isIdent(cond.Y, "nil") {
+		t.Fatalf("the if condition is not %s != nil", errName)
+	}
+
+	// Then: proto.Reset(<param1>); return errName
+	if len(ifs.Body.List) != 2 {
+		t.Fatalf("the if body has %d statements, want proto.Reset and return", len(ifs.Body.List))
+	}
+	reset, ok := ifs.Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatal("the if body does not start with a call statement")
+	}
+	wantSelectorCall(t, reset.X, "proto", "Reset", names[1:])
+	ret, ok := ifs.Body.List[1].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 || !isIdent(ret.Results[0], errName) {
+		t.Fatalf("the if body does not end with return %s (unchanged)", errName)
+	}
+
+	// Last: return nil
+	last, ok := fd.Body.List[1].(*ast.ReturnStmt)
+	if !ok || len(last.Results) != 1 || !isIdent(last.Results[0], "nil") {
+		t.Fatal("StrictUnmarshal does not end with return nil")
 	}
 
 	allowed := map[string]bool{
@@ -754,6 +972,34 @@ func TestStrictUnmarshalIsThinWrapper(t *testing.T) {
 		}
 		if imp.Name != nil && imp.Name.Name != "wirescan" && imp.Name.Name != "proto" {
 			t.Errorf("%s renames import %s to %s", strictFile, p, imp.Name.Name)
+		}
+	}
+}
+
+// isIdent reports whether e is the bare identifier name.
+func isIdent(e ast.Expr, name string) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == name
+}
+
+// wantSelectorCall fails unless e is pkg.fn(args...) with each argument the
+// bare identifier given, in order.
+func wantSelectorCall(t *testing.T, e ast.Expr, pkg, fn string, args []string) {
+	t.Helper()
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected a call to %s.%s", pkg, fn)
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !isIdent(sel.X, pkg) || sel.Sel.Name != fn {
+		t.Fatalf("expected a call to %s.%s", pkg, fn)
+	}
+	if call.Ellipsis.IsValid() || len(call.Args) != len(args) {
+		t.Fatalf("%s.%s called with %d arguments, want %d", pkg, fn, len(call.Args), len(args))
+	}
+	for i, a := range call.Args {
+		if !isIdent(a, args[i]) {
+			t.Errorf("%s.%s argument %d is not parameter %s unchanged", pkg, fn, i, args[i])
 		}
 	}
 }
