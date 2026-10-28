@@ -2,6 +2,7 @@ package redact
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -153,19 +154,20 @@ func phone() detector {
 		numeric: true,
 		classes: allClasses,
 		res:     []*regexp.Regexp{ri, runs},
-		tables:  []string{"jordan-mobile:07[789]", "jordan-groups:10|3+7", "jordan-separators: -", "digit-boundaries"},
+		tables:  []string{"jordan-mobile-prefix", "jordan-groups:whole|split", "jordan-separators: -", "digit-boundaries"},
 		find: func(s string) ([]span, error) {
 			var out []span
 			if strings.IndexByte(s, '+') >= 0 {
 				out = matchSpans(ri, s)
 			}
-			for _, m := range digitRuns(s, runs, 10) {
+			p := validatorParams
+			for _, m := range digitRuns(s, runs, p.JOMobileDigits) {
 				gs := digitGroups(s, m[0], m[1])
 				for i, g := range gs {
 					switch {
-					case len(g.digits) == 10 && jordanMobile(g.digits):
+					case len(g.digits) == p.JOMobileDigits && jordanMobile(g.digits):
 						out = append(out, span{start: g.start, end: g.end})
-					case len(g.digits) == 3 && i+1 < len(gs) && len(gs[i+1].digits) == 7 &&
+					case len(g.digits) == p.JOMobileSplit && i+1 < len(gs) && len(gs[i+1].digits) == p.JOMobileDigits-p.JOMobileSplit &&
 						joined(s, g, gs[i+1], " -") && jordanMobile(g.digits+gs[i+1].digits):
 						out = append(out, span{start: g.start, end: gs[i+1].end})
 					}
@@ -180,7 +182,9 @@ func phone() detector {
 }
 
 func jordanMobile(d string) bool {
-	return d[0] == '0' && d[1] == '7' && strings.IndexByte("789", d[2]) >= 0
+	p := validatorParams
+	rest, ok := strings.CutPrefix(d, p.JOMobilePrefix)
+	return ok && rest != "" && strings.IndexByte(p.JOMobileThird, rest[0]) >= 0
 }
 
 // idWindow is the distance, in characters from the end of a context
@@ -270,7 +274,7 @@ func (k idRule) find(s string) []span {
 	return out
 }
 
-// numbersAfter returns the 10-digit numbers that start within idWindow
+// numbersAfter returns the national numbers (NationalIDDigits digits) that start within idWindow
 // characters after from.
 func (k idRule) numbersAfter(s string, from int) []span {
 	var out []span
@@ -287,7 +291,7 @@ func (k idRule) numbersAfter(s string, from int) []span {
 				j += size2
 				count++
 			}
-			if count == 10 && k.firstOK(s[i:j]) {
+			if count == validatorParams.NationalIDDigits && k.firstOK(s[i:j]) {
 				out = append(out, span{start: i, end: j})
 			}
 		}
@@ -313,7 +317,7 @@ func (k idRule) firstOK(num string) bool {
 func nationalIDJO() detector {
 	rule := newIDRule(
 		[]string{"national id", "national number", "national_no", "الرقم الوطني", "رقم وطني"},
-		`(ni[dn])[:=#\- ]{0,3}(`+digitClass+`{10})`, "")
+		`(ni[dn])[:=#\- ]{0,3}(`+digitClass+`{`+strconv.Itoa(validatorParams.NationalIDDigits)+`})`, "")
 	return detector{
 		id:      "national-id-jo",
 		kind:    kindMarker,
@@ -331,7 +335,7 @@ func nationalIDJO() detector {
 func nationalIDSA() detector {
 	rule := newIDRule(
 		[]string{"national id", "iqama", "هوية", "الهوية", "رقم الهوية", "إقامة", "الإقامة", "رقم الإقامة", "الرقم الوطني"},
-		`(nid)[:=#\- ]{0,3}(`+digitClass+`{10})`, "12")
+		`(nid)[:=#\- ]{0,3}(`+digitClass+`{`+strconv.Itoa(validatorParams.NationalIDDigits)+`})`, "12")
 	return detector{
 		id:      "national-id-sa",
 		kind:    kindMarker,
@@ -354,19 +358,20 @@ func nationalIDAE() detector {
 		numeric: true,
 		classes: allClasses,
 		res:     []*regexp.Regexp{runs},
-		tables:  []string{"prefix-784", "groups:15|3-4-7-1", "separator:-", "digit-boundaries"},
+		tables:  []string{"prefix", "groups:whole|prefix-then-groups", "separator:-", "digit-boundaries"},
 		find: func(s string) ([]span, error) {
 			var out []span
-			for _, m := range digitRuns(s, runs, 15) {
+			p := validatorParams
+			for _, m := range digitRuns(s, runs, p.AEDigits) {
 				gs := digitGroups(s, m[0], m[1])
 				for i, g := range gs {
 					switch {
-					case len(g.digits) == 15 && strings.HasPrefix(g.digits, "784"):
+					case len(g.digits) == p.AEDigits && strings.HasPrefix(g.digits, p.AEPrefix):
 						out = append(out, span{start: g.start, end: g.end})
-					case g.digits == "784" && i+3 < len(gs) &&
-						len(gs[i+1].digits) == 4 && len(gs[i+2].digits) == 7 && len(gs[i+3].digits) == 1 &&
-						joined(s, g, gs[i+1], "-") && joined(s, gs[i+1], gs[i+2], "-") && joined(s, gs[i+2], gs[i+3], "-"):
-						out = append(out, span{start: g.start, end: gs[i+3].end})
+					case g.digits == p.AEPrefix:
+						if end, ok := dashedGroups(s, gs[i:], p.AEGroups); ok {
+							out = append(out, span{start: g.start, end: end})
+						}
 					}
 				}
 			}
@@ -378,6 +383,21 @@ func nationalIDAE() detector {
 	}
 }
 
+// dashedGroups reports whether gs[0] is followed by groups of the given
+// lengths, each joined to the one before by a dash, and returns the end of
+// the last.
+func dashedGroups(s string, gs []digitGroup, lengths []int) (int, bool) {
+	if len(gs) <= len(lengths) {
+		return 0, false
+	}
+	for k, n := range lengths {
+		if len(gs[k+1].digits) != n || !joined(s, gs[k], gs[k+1], "-") {
+			return 0, false
+		}
+	}
+	return gs[len(lengths)].end, true
+}
+
 func paymentCard() detector {
 	const pattern = `[0-9]+(?:[ \-][0-9]+)*`
 	re := regexp.MustCompile(pattern)
@@ -387,10 +407,10 @@ func paymentCard() detector {
 		numeric: true,
 		classes: allClasses,
 		res:     []*regexp.Regexp{re},
-		tables:  []string{"first-2-6", "13-19-digits", "start-at-every-group-start", "merge-overlaps", "every-group-end", "luhn", "longest", "no-hex-before"},
+		tables:  []string{"first-digit", "digit-count", "start-at-every-group-start", "merge-overlaps", "every-group-end", "luhn", "longest", "no-hex-before"},
 		find: func(s string) ([]span, error) {
 			var out []span
-			for _, m := range digitRuns(s, re, 13) {
+			for _, m := range digitRuns(s, re, validatorParams.CardMinDigits) {
 				out = append(out, cardsInRun(s, m[0], m[1])...)
 			}
 			return out, nil
@@ -420,18 +440,19 @@ func cardsInRun(s string, a, b int) []span {
 		i = j + 1
 	}
 	work(b - a)
+	p := validatorParams
 	var out []span
 	for i := 0; i < len(gs); {
 		best := -1
 		first := s[gs[i].start]
-		if (i > 0 || a == 0 || !isHexByte(s[a-1])) && first >= '2' && first <= '6' {
+		if (i > 0 || a == 0 || !isHexByte(s[a-1])) && strings.IndexByte(p.CardFirst, first) >= 0 {
 			var digits []byte
 			for j := i; j < len(gs); j++ {
 				digits = append(digits, s[gs[j].start:gs[j].end]...)
-				if len(digits) > 19 {
+				if len(digits) > p.CardMaxDigits {
 					break
 				}
-				if len(digits) >= 13 && luhn(digits) {
+				if len(digits) >= p.CardMinDigits && luhn(digits) {
 					best = j
 				}
 			}
@@ -466,33 +487,29 @@ func luhn(digits []byte) bool {
 	return sum%10 == 0
 }
 
-// ibanPattern is the generic IBAN shape of §4.2 (B1; no country table):
-// two capitals, two digits, then letters or digits, either compact or in
-// groups of four split by single spaces, the last group 1–4 long. The
-// candidate's length without spaces must be 15–34.
-const ibanPattern = `[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)`
-
-const (
-	ibanMin    = 15
-	ibanMax    = 34
-	ibanWindow = 45 // longest shape match (44 bytes) and one byte after it
-)
+// ibanStart is the first run of an IBAN (§4.2, B1; no country table):
+// two capitals, two digits, then letters or digits. Later runs of letters
+// and digits may follow after one or more spaces each (human Go reviewer,
+// 14th review: spacing is not limited to groups of four).
+const ibanStart = `[A-Z]{2}[0-9]{2}[A-Z0-9]*`
 
 func iban() detector {
-	re := anchored(ibanPattern)
+	re := anchored(ibanStart)
 	return detector{
 		id:      "iban",
 		kind:    kindMarker,
 		classes: allClasses,
 		res:     []*regexp.Regexp{re},
-		tables:  []string{"start-on-word-boundary", "every-group-end", "end-on-word-boundary", "window:45", "length:15-34", "mod97"},
+		tables:  []string{"start-on-word-boundary", "runs-split-by-spaces", "every-run-end", "end-on-word-boundary", "length", "mod97"},
 		find: func(s string) ([]span, error) {
-			// The pattern runs anchored at every start of two capitals and
-			// two digits on a word boundary (MA10), including starts inside
-			// an earlier match: an IBAN-shaped token whose chance mod 97 end
-			// falls inside a real IBAN must not hide that IBAN's tail
-			// (security review H2). Overlapping matches are merged (R31).
-			// Each match is at most 44 bytes, so the scan stays linear.
+			// Every start of two capitals and two digits on a word boundary
+			// is tried (MA10), including starts inside an earlier match: an
+			// IBAN-shaped token whose chance mod 97 end falls inside a real
+			// IBAN must not hide that IBAN's tail (security review H2).
+			// Overlapping matches are merged (R31). A start reads at most
+			// IBANMax letters and digits, and every start holds at least
+			// four of them, so a byte is read from a bounded number of
+			// starts and the scan stays linear however many spaces there are.
 			var out []span
 			for i := 0; i+4 <= len(s); i++ {
 				if !isUpper(s[i]) || !isUpper(s[i+1]) || !isDigitByte(s[i+2]) || !isDigitByte(s[i+3]) {
@@ -501,53 +518,57 @@ func iban() detector {
 				if i > 0 && isWordByte(s[i-1]) {
 					continue
 				}
-				// The pattern never reads past 44 bytes, so the regexp is
-				// handed only that window, not the rest of the input.
-				if sp, ok := ibanAt(s, matchAt(re, s[:min(len(s), i+ibanWindow)], i)); ok {
+				m := matchAt(re, s[:min(len(s), i+validatorParams.IBANMax+1)], i)
+				if sp, ok := ibanAt(s, m); ok {
 					out = append(out, sp)
 				}
 			}
 			return out, nil
 		},
 		samples: func() ([]string, []string) {
-			return []string{"GB82" + "WEST" + "1234" + "5698" + "7654" + "32"},
+			return []string{"GB82" + "WEST" + "1234" + "5698" + "7654" + "32", "GB82 " + "WEST1234 " + "5698  " + "765432"},
 				[]string{"GB82" + "WEST" + "1234" + "5698" + "7654" + "33"}
 		},
 	}
 }
 
-// ibanAt checks the ends of the shape match m (MA10): the whole match when
-// compact, or every group end when grouped, longest first. An end must be
-// on a word boundary; a candidate whose length without spaces is 15–34
-// and that passes mod 97 is an IBAN.
+// ibanAt reads the runs of letters and digits from the start of m, split
+// by one or more spaces, and tries every run end that a word boundary
+// follows, longest first (MA10). A run that goes on into another word
+// character (a lower-case letter, '_', or past IBANMax) ends the reading
+// with no end there. A candidate of IBANMin–IBANMax letters and digits
+// that passes mod 97 is an IBAN.
 func ibanAt(s string, m []int) (span, bool) {
 	if m == nil {
 		return span{}, false
 	}
-	p := m[0]
-	var buf [ibanMax + 8]byte
-	var ends []int // candidate ends, and the length without spaces at each
-	n := 0
-	for e := p; e < m[1]; e++ {
-		if s[e] == ' ' {
-			continue
+	p := validatorParams
+	var buf []byte
+	var ends []int // candidate ends, and the number of letters and digits at each
+	e := m[0]
+	for len(buf) < p.IBANMax {
+		for e < len(s) && len(buf) < p.IBANMax && (isUpper(s[e]) || isDigitByte(s[e])) {
+			buf = append(buf, s[e])
+			e++
 		}
-		if n == len(buf) {
+		if e < len(s) && isWordByte(s[e]) {
 			break
 		}
-		buf[n] = s[e]
-		n++
-		if e+1 == m[1] || s[e+1] == ' ' {
-			ends = append(ends, e+1, n)
+		ends = append(ends, e, len(buf))
+		j := e
+		for j < len(s) && s[j] == ' ' {
+			j++
 		}
+		if j == e || j == len(s) || (!isUpper(s[j]) && !isDigitByte(s[j])) {
+			break
+		}
+		e = j
 	}
+	work(e - m[0])
 	for k := len(ends) - 2; k >= 0; k -= 2 {
 		end, l := ends[k], ends[k+1]
-		if l < ibanMin || l > ibanMax || (end < len(s) && isWordByte(s[end])) {
-			continue
-		}
-		if ibanMod97(buf[:l]) {
-			return span{start: p, end: end}, true
+		if l >= p.IBANMin && l <= p.IBANMax && ibanMod97(buf[:l]) {
+			return span{start: m[0], end: end}, true
 		}
 	}
 	return span{}, false

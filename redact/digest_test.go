@@ -55,7 +55,7 @@ func canonicalTable(rules []detector, maxPasses int) string {
 		}
 	}
 	// Validator tables, limits and boundary sets.
-	field("iban-max", fmt.Sprint(ibanMax))
+	field("validator-params", fmt.Sprintf("%#v", validatorParams))
 	field("unit-suffixes", strings.Join(unitSuffixes, ","))
 	field("aws-prefixes", strings.Join(awsKeyPrefixes, ","))
 	field("secret-key-words", strings.Join(secretKeyWords, ","))

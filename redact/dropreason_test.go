@@ -80,7 +80,7 @@ func TestDropReasonValues(t *testing.T) {
 		if !allowed[got] {
 			t.Errorf("DropReason(%s) = %q, not a §4.6 reason", c.name, got)
 		}
-		if got == reasonPassCap && c.err != ErrNormPasses {
+		if got == reasonPassCap && !errors.Is(c.err, ErrNormPasses) {
 			t.Errorf("DropReason(%s) = %q: only the pass cap has that reason", c.name, got)
 		}
 	}

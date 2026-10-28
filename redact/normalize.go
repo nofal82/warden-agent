@@ -60,7 +60,7 @@ func inRanges(r rune, rs []runeRange) bool {
 
 // Normalize applies the textual escapes of R25a (EText and TText only)
 // and R25–R28a for class c, to a fixed point (R28b, §4.4). An item that
-// still changes after NormMaxPasses passes is an error (ErrInternal).
+// still changes after NormMaxPasses passes is an error (ErrNormPasses).
 func Normalize(c Class, in string) (string, NormCounts, error) {
 	var n NormCounts
 	out, err := normalise(c, in, &n, nil)
@@ -74,8 +74,8 @@ func Normalize(c Class, in string) (string, NormCounts, error) {
 // pass is not enough: removing a control character can join the halves of
 // an escape ("#0\x0133"), and a decoded "\" starts a new one. Each pass
 // counts only the changes it makes. The confirming pass counts toward
-// NormMaxPasses, so a crafted alternation fails fast (ErrInternal, reason
-// ERROR) instead of using the item deadline; check (R36) runs between
+// NormMaxPasses, so a crafted alternation fails fast (ErrNormPasses, reason
+// PASS_CAP) instead of using the item deadline; check (R36) runs between
 // passes.
 func normalise(c Class, s string, n *NormCounts, check func() error) (string, error) {
 	if hooks.normalise != nil {
@@ -87,7 +87,7 @@ func normalise(c Class, s string, n *NormCounts, check func() error) (string, er
 			return s, nil
 		}
 		if pass == NormMaxPasses {
-			return "", ErrInternal
+			return "", ErrNormPasses
 		}
 		s = next
 		if check != nil {
