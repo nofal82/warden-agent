@@ -64,6 +64,67 @@ func TestVerifyIssuedValidityEdges(t *testing.T) {
 	}
 }
 
+// R15 clock check with MAX_SKEW (Nofal 2026-10-30, PR #29): an agent clock
+// up to MaxSkew outside the certificate's validity is accepted, so small
+// drift never blocks enrollment; one second further is refused with
+// ErrClockSkew, which is also ErrCertificateRejected.
+func TestVerifyIssuedClockSkew(t *testing.T) {
+	t.Parallel()
+	f := newVerifyFixture(t)
+	c := mustParse(t, f.leaf)
+	if MaxSkew != 60*time.Second {
+		t.Fatalf("MaxSkew = %v, want the spec's 60 s", MaxSkew)
+	}
+	for _, now := range []time.Time{
+		c.NotBefore.Add(-MaxSkew),
+		c.NotBefore.Add(-time.Second),
+		c.NotAfter.Add(time.Second),
+		c.NotAfter.Add(MaxSkew),
+	} {
+		v, err := VerifyIssued(f.leaf, testServerID, f.key, f.ca.cert, now)
+		if err != nil {
+			t.Fatalf("VerifyIssued at %v (inside MaxSkew): %v", now, err)
+		}
+		if v.Certificate() == nil {
+			t.Fatalf("VerifyIssued at %v returned no certificate", now)
+		}
+	}
+	for _, now := range []time.Time{
+		c.NotBefore.Add(-MaxSkew - time.Second),
+		c.NotAfter.Add(MaxSkew + time.Second),
+		testNow.Add(-24 * time.Hour),
+		testNow.Add(31 * 24 * time.Hour),
+	} {
+		v, err := VerifyIssued(f.leaf, testServerID, f.key, f.ca.cert, now)
+		if !errors.Is(err, ErrClockSkew) || !errors.Is(err, ErrCertificateRejected) {
+			t.Fatalf("VerifyIssued at %v = %v, want ErrClockSkew and ErrCertificateRejected", now, err)
+		}
+		if v.Certificate() != nil {
+			t.Fatalf("VerifyIssued at %v returned a certificate with the error", now)
+		}
+	}
+}
+
+// Skew tolerance never relaxes the other R15 checks: a certificate for
+// another UUID, or from another CA, is still refused inside the tolerance,
+// and not as a clock problem.
+func TestVerifyIssuedClockSkewKeepsOtherChecks(t *testing.T) {
+	t.Parallel()
+	f := newVerifyFixture(t)
+	otherCA := newCA(t, "other agent CA", testNow)
+	now := testNow.Add(-90 * time.Second)
+	for name, der := range map[string][]byte{
+		"other UUID":       f.ca.issue(t, agentLeafTemplate(t, otherServerID, testNow), &f.key.PublicKey),
+		"other CA":         otherCA.issue(t, agentLeafTemplate(t, testServerID, testNow), &f.key.PublicKey),
+		"other public key": f.ca.issue(t, agentLeafTemplate(t, testServerID, testNow), &newP256(t).PublicKey),
+	} {
+		_, err := VerifyIssued(der, testServerID, f.key, f.ca.cert, now)
+		if !errors.Is(err, ErrCertificateRejected) || errors.Is(err, ErrClockSkew) {
+			t.Fatalf("%s: VerifyIssued = %v, want ErrCertificateRejected without ErrClockSkew", name, err)
+		}
+	}
+}
+
 func TestVerifyIssuedRejects(t *testing.T) {
 	t.Parallel()
 	f := newVerifyFixture(t)
@@ -161,7 +222,7 @@ func TestVerifyIssuedRejects(t *testing.T) {
 		{"EKU any", leaf(func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageAny} }), nil, testNow},
 		{"no EKU", leaf(func(c *x509.Certificate) { c.ExtKeyUsage = nil }), nil, testNow},
 		{"expired", f.leaf, nil, testNow.Add(31 * 24 * time.Hour)},
-		{"not yet valid", f.leaf, nil, testNow.Add(-2 * time.Minute)},
+		{"not yet valid beyond MaxSkew", f.leaf, nil, testNow.Add(-3 * time.Minute)},
 		{"bad signature", sigFlipped, nil, testNow},
 		{"trailing byte", append(bytes.Clone(f.leaf), 0), nil, testNow},
 		{"trailing certificate", cat(f.leaf, f.ca.cert.Raw), nil, testNow},
