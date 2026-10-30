@@ -13,6 +13,12 @@ import (
 // MaxCertificateBytes is the DER limit of an issued leaf (§4.5).
 const MaxCertificateBytes = 4096
 
+// MaxSkew is the spec's MAX_SKEW (action-envelope R16, OQ2): the clock
+// difference R15 tolerates on each end of the issued certificate's
+// validity, so small drift between server and control plane never blocks
+// enrollment. Added to R15 by Nofal on 2026-10-30 (PR #29).
+const MaxSkew = 60 * time.Second
+
 var (
 	oidCN             = asn1.ObjectIdentifier{2, 5, 4, 3}
 	oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
@@ -54,7 +60,9 @@ func (v VerifiedIdentity) TLSCertificate() tls.Certificate {
 //   - its public key equals key's public key;
 //   - it is signed directly by agentCA (chain of length 2, no
 //     intermediate), agentCA is a CA certificate, the leaf is not a CA, its
-//     extended key usage is clientAuth only, and it is valid at now.
+//     extended key usage is clientAuth only;
+//   - now is within its validity widened by MaxSkew on both sides; outside
+//     that the error is also ErrClockSkew.
 //
 // On any failure it returns ErrCertificateRejected; the caller discards
 // the certificate and never adopts a UUID from it.
@@ -84,11 +92,15 @@ func VerifyIssued(certDER []byte, serverID string, key *ecdsa.PrivateKey, agentC
 	if cert.IsCA || !ekuOnly(cert, x509.ExtKeyUsageClientAuth) {
 		return VerifiedIdentity{}, reject("not a clientAuth-only end-entity certificate")
 	}
+	at, err := withinSkew(cert, now)
+	if err != nil {
+		return VerifiedIdentity{}, err
+	}
 	roots := x509.NewCertPool()
 	roots.AddCert(agentCA)
 	chains, err := cert.Verify(x509.VerifyOptions{
 		Roots:       roots,
-		CurrentTime: now,
+		CurrentTime: at,
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 	if err != nil {
@@ -100,6 +112,26 @@ func VerifyIssued(certDER []byte, serverID string, key *ecdsa.PrivateKey, agentC
 		}
 	}
 	return VerifiedIdentity{key: key, cert: cert}, nil
+}
+
+// withinSkew refuses with ErrClockSkew when now is more than MaxSkew
+// outside the leaf's validity. Otherwise it returns now moved into the
+// validity window, the time the chain is then verified at, so a drift the
+// tolerance allows never fails the chain check.
+func withinSkew(cert *x509.Certificate, now time.Time) (time.Time, error) {
+	if now.Before(cert.NotBefore.Add(-MaxSkew)) || now.After(cert.NotAfter.Add(MaxSkew)) {
+		return time.Time{}, fmt.Errorf("%w: %w (valid %s to %s, server clock %s, tolerance %s)",
+			ErrCertificateRejected, ErrClockSkew,
+			cert.NotBefore.UTC().Format(time.RFC3339), cert.NotAfter.UTC().Format(time.RFC3339),
+			now.UTC().Format(time.RFC3339), MaxSkew)
+	}
+	switch {
+	case now.Before(cert.NotBefore):
+		return cert.NotBefore, nil
+	case now.After(cert.NotAfter):
+		return cert.NotAfter, nil
+	}
+	return now, nil
 }
 
 func reject(format string, args ...any) error {

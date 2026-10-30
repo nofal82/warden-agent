@@ -25,6 +25,10 @@ var (
 	ErrInvalidTrust = errors.New("identity: invalid trust anchor")
 	// ErrCertificateRejected: an issued certificate failed R15.
 	ErrCertificateRejected = errors.New("identity: issued certificate rejected")
+	// ErrClockSkew: the agent's clock is more than MaxSkew outside the
+	// issued certificate's validity. Always returned together with
+	// ErrCertificateRejected; the operator fixes the server clock.
+	ErrClockSkew = errors.New("identity: clock skew: server clock outside the certificate's validity")
 	// ErrMalformedFile: a state file does not have its exact encoding.
 	ErrMalformedFile = errors.New("identity: malformed state file")
 	// ErrUnsafeFile: a file or one of its directories breaks R10e or the
