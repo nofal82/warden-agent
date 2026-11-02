@@ -31,9 +31,6 @@ func FuzzReadOwnedFilePath(f *testing.F) {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			f.Fatal(err)
 		}
-		if err := os.Chmod(d, 0o755); err != nil {
-			f.Fatal(err)
-		}
 	}
 	for rel, data := range files {
 		p := filepath.Join(start, rel)

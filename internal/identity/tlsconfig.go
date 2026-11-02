@@ -21,7 +21,8 @@ const MaxTrustedControlPlaneCAs = 2
 // here). serverName is `server_name` from endpoints.json, checked with
 // ValidateServerName. client is nil on the enrollment endpoint and the
 // identity's certificate on the agent endpoint. now supplies the time for
-// the VerifyConnection re-verification; nil means time.Now.
+// Go's verification (tls.Config.Time) and the VerifyConnection
+// re-verification, so one clock decides; nil means time.Now.
 //
 // The configuration: TLS 1.3 only; RootCAs holds only trustedCAs, never
 // the system roots; ServerName is serverName; ClientSessionCache is nil;
@@ -59,6 +60,7 @@ func ClientTLSConfig(trustedCAs []*x509.Certificate, serverName string, client *
 		RootCAs:            pool,
 		ServerName:         serverName,
 		ClientSessionCache: nil, // R24: every connection is a full handshake
+		Time:               now, // Go's own verification uses the same clock as VerifyConnection
 		VerifyConnection:   v.verify,
 	}
 	if client != nil {

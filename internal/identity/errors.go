@@ -36,7 +36,26 @@ var (
 	ErrUnsafeFile = errors.New("identity: unsafe file")
 	// ErrFileTooLarge: a file is larger than the limit for its kind.
 	ErrFileTooLarge = errors.New("identity: file too large")
+	// ErrInvalidEndpoints: endpoints.json is not exactly the §4.7 object
+	// with valid §4.3 endpoints and server name.
+	ErrInvalidEndpoints = errors.New("identity: invalid endpoints file")
+	// ErrNoTrustedControlPlaneCA: the R10d set is empty. The agent makes no
+	// connection and reports it locally.
+	ErrNoTrustedControlPlaneCA = errors.New("identity: no trusted control-plane CA: control-plane trust outdated, run the installer trust update")
+	// ErrTokenExpired: token-expires is in the past (R18a case 3); no
+	// enrollment request was sent.
+	ErrTokenExpired = errors.New("identity: " + HealthTokenExpired)
 	// ErrPeerRejected: the control plane's TLS certificate failed an R24
 	// check in VerifyConnection.
 	ErrPeerRejected = errors.New("identity: control-plane certificate rejected")
+
+	// errInvalidLimit: a read limit outside 1 … MaxRootFileBytes, a caller
+	// defect.
+	errInvalidLimit = errors.New("identity: read limit out of range")
+)
+
+// Local health messages of R18a, word for word.
+const (
+	HealthTokenExpired = "enrollment token expired, ask an admin for a new enrollment bundle"
+	HealthNoIdentity   = "identity expired or missing, ask an admin for a re-enrollment bundle"
 )
