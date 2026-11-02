@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"math/big"
 	"testing"
 )
 
@@ -133,4 +134,79 @@ func rawKey(curve elliptic.Curve, pubFrom, dFrom *ecdsa.PrivateKey) *ecdsa.Priva
 		PublicKey: ecdsa.PublicKey{Curve: curve, X: pubFrom.X, Y: pubFrom.Y},
 		D:         dFrom.D,
 	}
+}
+
+// malformedP256 returns caller-built P-256 keys that Go's deprecated raw
+// fields allow but that are not valid keys (design §A.4).
+//
+//nolint:staticcheck // deliberately invalid keys
+func malformedP256(t testing.TB) map[string]*ecdsa.PrivateKey {
+	t.Helper()
+	a, b := newP256(t), newP256(t)
+	n := elliptic.P256().Params().N
+	withD := func(d *big.Int) *ecdsa.PrivateKey {
+		return &ecdsa.PrivateKey{PublicKey: ecdsa.PublicKey{Curve: elliptic.P256(), X: a.X, Y: a.Y}, D: d}
+	}
+	withPoint := func(x, y *big.Int) *ecdsa.PrivateKey {
+		return &ecdsa.PrivateKey{PublicKey: ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, D: a.D}
+	}
+	return map[string]*ecdsa.PrivateKey{
+		"nil D":                withD(nil),
+		"D = 0":                withD(big.NewInt(0)),
+		"D = N":                withD(new(big.Int).Set(n)),
+		"D = N+1":              withD(new(big.Int).Add(n, big.NewInt(1))),
+		"D negative":           withD(new(big.Int).Neg(a.D)),
+		"nil X":                withPoint(nil, a.Y),
+		"nil Y":                withPoint(a.X, nil),
+		"off-curve point":      withPoint(a.X, new(big.Int).Add(a.Y, big.NewInt(1))),
+		"point at infinity":    withPoint(big.NewInt(0), big.NewInt(0)),
+		"D of another key":     rawKey(elliptic.P256(), a, b),
+		"X beyond field prime": withPoint(new(big.Int).Add(a.X, elliptic.P256().Params().P), a.Y),
+		"nil D, nil point":     {PublicKey: ecdsa.PublicKey{Curve: elliptic.P256()}},
+	}
+}
+
+// Every entry point that accepts a key refuses the malformed ones with
+// ErrInvalidKey and never panics.
+func TestMalformedP256KeysRefused(t *testing.T) {
+	t.Parallel()
+	ca := newCA(t, "agent CA", testNow)
+	good := newP256(t)
+	leaf := ca.issue(t, agentLeafTemplate(t, testServerID, testNow), &good.PublicKey)
+	for name, key := range malformedP256(t) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			noPanic(t, "CreateCSR", func() {
+				if der, err := CreateCSR(key); !errors.Is(err, ErrInvalidKey) || der != nil {
+					t.Errorf("CreateCSR = %d bytes, %v; want ErrInvalidKey", len(der), err)
+				}
+			})
+			noPanic(t, "EncodePendingEnrollKey", func() {
+				if out, err := EncodePendingEnrollKey(key, TokenHash(canaryToken())); !errors.Is(err, ErrInvalidKey) || out != nil {
+					t.Errorf("EncodePendingEnrollKey = %d bytes, %v; want ErrInvalidKey", len(out), err)
+				}
+			})
+			noPanic(t, "encodeIdentity", func() {
+				if out, err := encodeIdentity(key, leaf); !errors.Is(err, ErrInvalidKey) || out != nil {
+					t.Errorf("encodeIdentity = %d bytes, %v; want ErrInvalidKey", len(out), err)
+				}
+			})
+			noPanic(t, "VerifyIssued", func() {
+				_, err := VerifyIssued(leaf, testServerID, key, ca.cert, testNow)
+				if !errors.Is(err, ErrCertificateRejected) || !errors.Is(err, ErrInvalidKey) {
+					t.Errorf("VerifyIssued = %v; want ErrCertificateRejected and ErrInvalidKey", err)
+				}
+			})
+		})
+	}
+}
+
+func noPanic(t *testing.T, what string, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s panicked on a malformed key", what)
+		}
+	}()
+	fn()
 }
