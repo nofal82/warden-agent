@@ -45,6 +45,9 @@ var (
 	// ErrTokenExpired: token-expires is in the past (R18a case 3); no
 	// enrollment request was sent.
 	ErrTokenExpired = errors.New("identity: " + HealthTokenExpired)
+	// ErrNotCurrentIdentity: AfterHandshake was given a pair that is not
+	// the one in identity.pem; nothing was removed.
+	ErrNotCurrentIdentity = errors.New("identity: handshake pair is not identity.pem")
 	// ErrPeerRejected: the control plane's TLS certificate failed an R24
 	// check in VerifyConnection.
 	ErrPeerRejected = errors.New("identity: control-plane certificate rejected")

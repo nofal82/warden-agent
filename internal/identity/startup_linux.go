@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
@@ -200,6 +201,7 @@ type EnrollInput struct {
 }
 
 // Enroll runs one enrollment attempt (R12, R12a, R15, R18a case 3):
+//  0. in.AgentCA must be a CA certificate, checked before the token is used;
 //  1. token-expires in the past: ErrTokenExpired, no request;
 //  2. the token file must hold exactly a §4.2 token;
 //  3. a pending key bound to this token is reused; any other pending key
@@ -213,6 +215,11 @@ type EnrollInput struct {
 // On any failure nothing is written after the pending key, and the token
 // and pending key stay, so the caller's retry reuses the same key.
 func Enroll(ctx context.Context, d *StateDir, in EnrollInput, send EnrollFunc, now time.Time) (Identity, error) {
+	// A bad local agent-ca.pem would only be caught by R15 after the send,
+	// when the control plane has already consumed the token.
+	if !isCA(in.AgentCA) {
+		return Identity{}, fmt.Errorf("%w: agent CA is not a CA certificate", ErrInvalidTrust)
+	}
 	if tokenExpired(d, now) {
 		return Identity{}, ErrTokenExpired
 	}
@@ -290,12 +297,18 @@ func pendingKeyFor(d *StateDir, token string) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-// AfterHandshake runs after the first successful mTLS handshake with
-// identity.pem. It removes what that handshake made obsolete, in this
+// AfterHandshake runs after the first successful mTLS handshake. used is
+// the pair that completed it. Only when used is the pair now in
+// identity.pem does it remove what that handshake made obsolete, in this
 // order: a leftover token, token-expires, enroll.pending-key.pem (R18a
-// case 1, R12a), then identity.prev.pem (R22). It returns the names it
-// removed, for the local report.
-func (d *StateDir) AfterHandshake() ([]string, error) {
+// case 1, R12a), then identity.prev.pem (R22). Otherwise it removes nothing
+// and returns ErrNotCurrentIdentity, so a handshake with identity.prev.pem
+// (case 2) never deletes that pair. It returns the names it removed, for
+// the local report.
+func (d *StateDir) AfterHandshake(used Identity) ([]string, error) {
+	if err := d.isCurrent(used); err != nil {
+		return nil, err
+	}
 	var removed []string
 	for _, name := range []string{FileToken, FileTokenExpires, FileEnrollPendingKey, FileIdentityPrev} {
 		present, err := exists(d, name)
@@ -311,4 +324,25 @@ func (d *StateDir) AfterHandshake() ([]string, error) {
 		removed = append(removed, name)
 	}
 	return removed, nil
+}
+
+// isCurrent reports whether used is the pair in identity.pem. Validity is
+// not rechecked: the handshake already succeeded with it.
+func (d *StateDir) isCurrent(used Identity) error {
+	if used.key == nil || used.cert == nil {
+		return fmt.Errorf("%w: no pair", ErrNotCurrentIdentity)
+	}
+	data, err := d.ReadFile(FileIdentity)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNotCurrentIdentity, err)
+	}
+	defer clear(data)
+	key, cert, err := DecodeIdentity(data)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNotCurrentIdentity, err)
+	}
+	if !bytes.Equal(cert.Raw, used.cert.Raw) || !key.Equal(used.key) {
+		return ErrNotCurrentIdentity
+	}
+	return nil
 }
