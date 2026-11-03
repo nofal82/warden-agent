@@ -853,10 +853,10 @@ func TestEnrollBadInput(t *testing.T) {
 		t.Parallel()
 		f := newEnrollFixture(t)
 		f.in.AgentCA = nil
-		if _, err := f.enroll(context.Background()); err == nil {
-			t.Fatal("Enroll accepted a nil agent CA")
+		if _, err := f.enroll(context.Background()); !errors.Is(err, ErrInvalidTrust) || len(f.cp.calls) != 0 {
+			t.Fatalf("Enroll = %v after %d sends; want ErrInvalidTrust and no send", err, len(f.cp.calls))
 		}
-		if present(t, f.p, FileIdentity) || !present(t, f.p, FileToken) {
+		if present(t, f.p, FileIdentity) || present(t, f.p, FileEnrollPendingKey) || !present(t, f.p, FileToken) {
 			t.Fatal("state changed")
 		}
 	})
@@ -870,71 +870,429 @@ func TestEnrollBadInput(t *testing.T) {
 	})
 }
 
+// Agent CA checked first (R15, R12a): an agent CA that is not a CA
+// certificate is refused before the token is read, before
+// enroll.pending-key.pem is written or replaced and before anything is
+// sent. Otherwise a broken agent-ca.pem would make every attempt burn a
+// round trip with the token and replace a pending key the next good
+// attempt could have reused.
+func TestEnrollChecksAgentCAFirst(t *testing.T) {
+	t.Parallel()
+	ca := newCA(t, "agent CA", testNow)
+	leaf := mustParse(t, ca.issue(t, agentLeafTemplate(t, testServerID, testNow), &newP256(t).PublicKey))
+	// Go never emits CA:TRUE without basic constraints, so these two are
+	// built in memory from a parsed CA certificate.
+	noBC := *ca.cert
+	noBC.BasicConstraintsValid = false
+	bcNotCA := *ca.cert
+	bcNotCA.IsCA = false
+	cas := map[string]*x509.Certificate{
+		"nil":                                nil,
+		"leaf certificate":                   leaf,
+		"IsCA without basic constraints":     &noBC,
+		"basic constraints with CA false":    &bcNotCA,
+		"zero certificate":                   {},
+		"self-signed leaf (no CA extension)": selfSignedLeaf(t),
+	}
+	otherHash := TokenHash(otherToken())
+	tok := canaryToken()
+	tokens := []struct {
+		name  string
+		token []byte // nil: no token file
+		dir   bool   // token is a directory
+	}{
+		{"valid token", []byte(tok), false},
+		{"invalid token", []byte("bad"), false},
+		{"token trailing newline", []byte(tok + "\n"), false},
+		{"token missing", nil, false},
+		{"token is a directory", nil, true},
+	}
+	for caName, agentCA := range cas {
+		for _, tk := range tokens {
+			for _, withPending := range []bool{false, true} {
+				name := caName + "/" + tk.name
+				if withPending {
+					name += "/foreign pending key"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					f := newEnrollFixture(t)
+					f.in.AgentCA = agentCA
+					_ = os.Remove(filepath.Join(f.p, FileToken))
+					switch {
+					case tk.dir:
+						if err := os.Mkdir(filepath.Join(f.p, FileToken), 0o700); err != nil {
+							t.Fatal(err)
+						}
+					case tk.token != nil:
+						put(t, f.p, FileToken, tk.token)
+					}
+					if withPending {
+						put(t, f.p, FileEnrollPendingKey, pendingPEM(t, newP256(t), otherHash[:]))
+					}
+					before := snapshot(t, f.p, FileToken, FileTokenExpires, FileEnrollPendingKey)
+					_, err := f.enroll(context.Background())
+					if !errors.Is(err, ErrInvalidTrust) {
+						t.Fatalf("Enroll = %v, want ErrInvalidTrust", err)
+					}
+					if len(f.cp.calls) != 0 {
+						t.Fatalf("send called %d times, want 0", len(f.cp.calls))
+					}
+					sameFiles(t, f.p, before)
+					if !withPending && present(t, f.p, FileEnrollPendingKey) {
+						t.Fatal("enroll.pending-key.pem written before the agent CA check")
+					}
+					if present(t, f.p, FileIdentity) {
+						t.Fatal("identity.pem written")
+					}
+					noSecretIn(t, err, tok, tok[5:21])
+				})
+			}
+		}
+	}
+	// The same fixture with a real CA is accepted: the refusals above are
+	// the CA check, not the fixture.
+	t.Run("real CA control", func(t *testing.T) {
+		t.Parallel()
+		f := newEnrollFixture(t)
+		if _, err := f.enroll(context.Background()); err != nil || len(f.cp.calls) != 1 {
+			t.Fatalf("Enroll = %v after %d sends; want success after 1", err, len(f.cp.calls))
+		}
+	})
+}
+
+// selfSignedLeaf is a self-signed certificate with CA:FALSE: it signs
+// itself but is not a CA.
+func selfSignedLeaf(t *testing.T) *x509.Certificate {
+	t.Helper()
+	tmpl := caTemplate(t, "not a CA", testNow)
+	tmpl.IsCA = false
+	tmpl.BasicConstraintsValid = false
+	c := newCAFrom(t, tmpl, nil).cert
+	if c.IsCA || c.BasicConstraintsValid {
+		t.Fatal("selfSignedLeaf: Go emitted basic constraints")
+	}
+	return c
+}
+
+// snapshot records the bytes of each named file; a missing file maps to
+// nil and a directory to an empty non-nil slice.
+func snapshot(t *testing.T, dir string, names ...string) map[string][]byte {
+	t.Helper()
+	out := make(map[string][]byte, len(names))
+	for _, n := range names {
+		p := filepath.Join(dir, n)
+		fi, err := os.Lstat(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			out[n] = nil
+		case err != nil:
+			t.Fatal(err)
+		case fi.IsDir():
+			out[n] = []byte{}
+		default:
+			data, err := readTestFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data == nil {
+				data = []byte{}
+			}
+			out[n] = data
+		}
+	}
+	return out
+}
+
+// sameFiles fails unless every file in before is still there (or still
+// absent) with the same bytes.
+func sameFiles(t *testing.T, dir string, before map[string][]byte) {
+	t.Helper()
+	after := snapshot(t, dir, keys(before)...)
+	for n, b := range before {
+		a := after[n]
+		switch {
+		case b == nil && a != nil:
+			t.Errorf("%s created", n)
+		case b != nil && a == nil:
+			t.Errorf("%s removed", n)
+		case !bytes.Equal(a, b):
+			t.Errorf("%s changed", n)
+		}
+	}
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// handshakeFixture is a state directory whose identity.pem is a real pair
+// for testServerID, plus every leftover AfterHandshake may remove.
+type handshakeFixture struct {
+	d    *StateDir
+	p    string
+	ca   *testCA
+	cur  Identity // identity.pem
+	prev Identity // identity.prev.pem
+}
+
+// leftovers is the removal order of AfterHandshake.
+var leftovers = []string{FileToken, FileTokenExpires, FileEnrollPendingKey, FileIdentityPrev}
+
+func newHandshakeFixture(t *testing.T) *handshakeFixture {
+	t.Helper()
+	d, p := stateDir(t)
+	ca := newCA(t, "agent CA", testNow)
+	_, curPEM, _ := issuedPair(t, ca, testServerID, testNow, nil)
+	_, prevPEM, _ := issuedPair(t, ca, testServerID, testNow, nil)
+	put(t, p, FileIdentity, curPEM)
+	put(t, p, FileIdentityPrev, prevPEM)
+	cur, ok := loadValid(d, FileIdentity, testServerID, testNow)
+	if !ok {
+		t.Fatal("fixture identity.pem does not load")
+	}
+	prev, ok := loadValid(d, FileIdentityPrev, testServerID, testNow)
+	if !ok {
+		t.Fatal("fixture identity.prev.pem does not load")
+	}
+	return &handshakeFixture{d: d, p: p, ca: ca, cur: cur, prev: prev}
+}
+
+// putLeftovers writes a token, token-expires and an enroll pending key.
+func (f *handshakeFixture) putLeftovers(t *testing.T) {
+	t.Helper()
+	h := TokenHash(canaryToken())
+	put(t, f.p, FileToken, []byte(canaryToken()))
+	put(t, f.p, FileTokenExpires, unixText(testNow.Unix()+3600))
+	put(t, f.p, FileEnrollPendingKey, pendingPEM(t, newP256(t), h[:]))
+}
+
+// R18a case 1, R12a, R22: after a handshake with identity.pem, the leftovers
+// go in order and identity.pem and the renewal pending key stay.
 func TestAfterHandshake(t *testing.T) {
 	t.Parallel()
-	all := []string{FileToken, FileTokenExpires, FileEnrollPendingKey, FileIdentityPrev}
 	t.Run("all present", func(t *testing.T) {
 		t.Parallel()
-		d, p := stateDir(t)
-		for _, n := range append([]string{FileIdentity, FileIdentityPendingKey}, all...) {
-			put(t, p, n, []byte("x"))
+		f := newHandshakeFixture(t)
+		f.putLeftovers(t)
+		put(t, f.p, FileIdentityPendingKey, renewalKeyPEM(t, newP256(t)))
+		kept := snapshot(t, f.p, FileIdentity, FileIdentityPendingKey)
+		got, err := f.d.AfterHandshake(f.cur)
+		if err != nil || strings.Join(got, ",") != strings.Join(leftovers, ",") {
+			t.Fatalf("AfterHandshake = %q, %v; want %q", got, err, leftovers)
 		}
-		got, err := d.AfterHandshake()
-		if err != nil || strings.Join(got, ",") != strings.Join(all, ",") {
-			t.Fatalf("AfterHandshake = %q, %v; want %q", got, err, all)
-		}
-		for _, n := range all {
-			if present(t, p, n) {
+		for _, n := range leftovers {
+			if present(t, f.p, n) {
 				t.Errorf("%s not removed", n)
 			}
 		}
-		if !present(t, p, FileIdentity) || !present(t, p, FileIdentityPendingKey) {
-			t.Error("identity.pem or the renewal pending key was removed")
+		sameFiles(t, f.p, kept)
+	})
+	t.Run("identity from Decide", func(t *testing.T) {
+		t.Parallel()
+		f := newHandshakeFixture(t)
+		f.putLeftovers(t)
+		st, err := Decide(f.d, testServerID, testNow)
+		if err != nil || st.State != StartUseIdentity {
+			t.Fatalf("Decide = %+v, %v; want StartUseIdentity", st, err)
+		}
+		if got, err := f.d.AfterHandshake(st.Identity); err != nil || len(got) != len(leftovers) {
+			t.Fatalf("AfterHandshake = %q, %v; want %q", got, err, leftovers)
 		}
 	})
 	t.Run("none present", func(t *testing.T) {
 		t.Parallel()
-		d, _ := stateDir(t)
-		if got, err := d.AfterHandshake(); err != nil || len(got) != 0 {
+		f := newHandshakeFixture(t)
+		_ = os.Remove(filepath.Join(f.p, FileIdentityPrev))
+		if got, err := f.d.AfterHandshake(f.cur); err != nil || len(got) != 0 {
 			t.Fatalf("AfterHandshake = %q, %v; want nothing", got, err)
+		}
+		if !present(t, f.p, FileIdentity) {
+			t.Fatal("identity.pem removed")
 		}
 	})
 	t.Run("some present", func(t *testing.T) {
 		t.Parallel()
-		d, p := stateDir(t)
-		put(t, p, FileIdentityPrev, []byte("x"))
-		put(t, p, FileTokenExpires, []byte("x"))
-		got, err := d.AfterHandshake()
+		f := newHandshakeFixture(t)
+		put(t, f.p, FileTokenExpires, []byte("x"))
+		got, err := f.d.AfterHandshake(f.cur)
 		if err != nil || strings.Join(got, ",") != FileTokenExpires+","+FileIdentityPrev {
 			t.Fatalf("AfterHandshake = %q, %v", got, err)
 		}
 	})
+	// Validity is not rechecked: the handshake already succeeded, and
+	// identity.pem may expire between the handshake and the clean-up.
+	t.Run("expired identity.pem that was used", func(t *testing.T) {
+		t.Parallel()
+		f := newHandshakeFixture(t)
+		key, pem, der := issuedPair(t, f.ca, testServerID, testNow, func(c *x509.Certificate) { c.NotAfter = testNow.Add(-time.Second) })
+		put(t, f.p, FileIdentity, pem)
+		f.putLeftovers(t)
+		used := Identity{key: key, cert: mustParse(t, der)}
+		if got, err := f.d.AfterHandshake(used); err != nil || len(got) != len(leftovers) {
+			t.Fatalf("AfterHandshake = %q, %v; want %q", got, err, leftovers)
+		}
+	})
 	t.Run("token removal fails keeps the pending key", func(t *testing.T) {
 		t.Parallel()
-		d, p := stateDir(t)
-		put(t, p, FileEnrollPendingKey, []byte("x"))
-		if err := os.Mkdir(filepath.Join(p, FileToken), 0o700); err != nil {
+		f := newHandshakeFixture(t)
+		put(t, f.p, FileEnrollPendingKey, []byte("x"))
+		if err := os.Mkdir(filepath.Join(f.p, FileToken), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		writeMode(t, filepath.Join(p, FileToken, "x"), nil, 0o600)
-		if _, err := d.AfterHandshake(); err == nil {
+		writeMode(t, filepath.Join(f.p, FileToken, "x"), nil, 0o600)
+		_, err := f.d.AfterHandshake(f.cur)
+		if err == nil {
 			t.Fatal("AfterHandshake hid a failed removal")
 		}
-		if !present(t, p, FileEnrollPendingKey) {
-			t.Fatal("pending key removed while the token is still there")
+		if errors.Is(err, ErrNotCurrentIdentity) {
+			t.Fatalf("AfterHandshake = %v; the identity matched, the removal failed", err)
+		}
+		if !present(t, f.p, FileEnrollPendingKey) || !present(t, f.p, FileIdentityPrev) {
+			t.Fatal("pending key or identity.prev.pem removed while the token is still there")
 		}
 	})
 	t.Run("unsafe dir", func(t *testing.T) {
 		t.Parallel()
-		d, p := stateDir(t)
-		put(t, p, FileToken, []byte("x"))
-		mustChmod(t, p, 0o755)
-		if _, err := d.AfterHandshake(); !errors.Is(err, ErrUnsafeFile) {
-			t.Fatalf("AfterHandshake = %v, want ErrUnsafeFile", err)
+		f := newHandshakeFixture(t)
+		f.putLeftovers(t)
+		before := snapshot(t, f.p, append([]string{FileIdentity}, leftovers...)...)
+		mustChmod(t, f.p, 0o755)
+		got, err := f.d.AfterHandshake(f.cur)
+		mustChmod(t, f.p, 0o700)
+		// identity.pem cannot be read through an unsafe directory, so the
+		// refusal may name either class; nothing may be removed.
+		if !errors.Is(err, ErrUnsafeFile) && !errors.Is(err, ErrNotCurrentIdentity) {
+			t.Fatalf("AfterHandshake = %v, want ErrUnsafeFile or ErrNotCurrentIdentity", err)
 		}
-		mustChmod(t, p, 0o700)
-		if !present(t, p, FileToken) {
-			t.Fatal("removed through an unsafe directory")
+		if len(got) != 0 {
+			t.Fatalf("AfterHandshake reported %q removed", got)
 		}
+		sameFiles(t, f.p, before)
+	})
+}
+
+// AfterHandshake removes nothing unless the pair that connected is exactly
+// identity.pem. In particular a handshake with identity.prev.pem (R18a case
+// 2) keeps identity.prev.pem, the token, token-expires and the enroll
+// pending key: they are what the agent falls back on (R22, R12a).
+func TestAfterHandshakeRefusesOtherIdentity(t *testing.T) {
+	t.Parallel()
+	all := append([]string{FileIdentity, FileIdentityPendingKey}, leftovers...)
+	check := func(t *testing.T, f *handshakeFixture, used Identity) {
+		t.Helper()
+		before := snapshot(t, f.p, all...)
+		got, err := f.d.AfterHandshake(used)
+		if !errors.Is(err, ErrNotCurrentIdentity) {
+			t.Fatalf("AfterHandshake = %q, %v; want ErrNotCurrentIdentity", got, err)
+		}
+		if got != nil {
+			t.Fatalf("AfterHandshake reported %q removed, want nil", got)
+		}
+		sameFiles(t, f.p, before)
+		noSecretIn(t, err, canaryToken(), canaryToken()[5:21])
+	}
+	// R18a case 2: identity.pem not valid, identity.prev.pem valid; Decide
+	// picks the previous pair and the handshake uses it.
+	invalidCurrent := map[string]func(t *testing.T, f *handshakeFixture){
+		"identity.pem garbage": func(t *testing.T, f *handshakeFixture) { put(t, f.p, FileIdentity, []byte("garbage")) },
+		"identity.pem expired": func(t *testing.T, f *handshakeFixture) {
+			_, pem, _ := issuedPair(t, f.ca, testServerID, testNow, func(c *x509.Certificate) { c.NotAfter = testNow.Add(-time.Second) })
+			put(t, f.p, FileIdentity, pem)
+		},
+		"identity.pem names another UUID": func(t *testing.T, f *handshakeFixture) {
+			_, pem, _ := issuedPair(t, f.ca, otherServerID, testNow, nil)
+			put(t, f.p, FileIdentity, pem)
+		},
+		"identity.pem missing": func(t *testing.T, f *handshakeFixture) { _ = os.Remove(filepath.Join(f.p, FileIdentity)) },
+		"identity.pem empty":   func(t *testing.T, f *handshakeFixture) { put(t, f.p, FileIdentity, []byte{}) },
+		"identity.pem key does not match certificate": func(t *testing.T, f *handshakeFixture) {
+			put(t, f.p, FileIdentity, identityPEM(t, newP256(t), f.cur.cert.Raw))
+		},
+	}
+	for name, setup := range invalidCurrent {
+		t.Run("case 2/"+name, func(t *testing.T) {
+			t.Parallel()
+			f := newHandshakeFixture(t)
+			setup(t, f)
+			f.putLeftovers(t)
+			put(t, f.p, FileIdentityPendingKey, renewalKeyPEM(t, newP256(t)))
+			st, err := Decide(f.d, testServerID, testNow)
+			if err != nil || st.State != StartUsePrevious {
+				t.Fatalf("Decide = %+v, %v; want StartUsePrevious", st, err)
+			}
+			check(t, f, st.Identity)
+		})
+	}
+	// identity.pem valid, but the pair that connected is another one.
+	others := map[string]func(t *testing.T, f *handshakeFixture) Identity{
+		"previous pair while identity.pem is valid": func(t *testing.T, f *handshakeFixture) Identity { return f.prev },
+		"unrelated pair": func(t *testing.T, f *handshakeFixture) Identity {
+			key, _, der := issuedPair(t, f.ca, testServerID, testNow, nil)
+			return Identity{key: key, cert: mustParse(t, der)}
+		},
+		"identity.pem certificate with another key": func(t *testing.T, f *handshakeFixture) Identity {
+			return Identity{key: newP256(t), cert: f.cur.cert}
+		},
+		"identity.pem key with another certificate": func(t *testing.T, f *handshakeFixture) Identity {
+			der := f.ca.issue(t, agentLeafTemplate(t, testServerID, testNow), &f.cur.key.PublicKey)
+			return Identity{key: f.cur.key, cert: mustParse(t, der)}
+		},
+		"identity.pem key, no certificate": func(t *testing.T, f *handshakeFixture) Identity {
+			return Identity{key: f.cur.key}
+		},
+		"identity.pem certificate, no key": func(t *testing.T, f *handshakeFixture) Identity {
+			return Identity{cert: f.cur.cert}
+		},
+		"zero Identity": func(t *testing.T, f *handshakeFixture) Identity { return Identity{} },
+	}
+	for name, used := range others {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newHandshakeFixture(t)
+			f.putLeftovers(t)
+			put(t, f.p, FileIdentityPendingKey, renewalKeyPEM(t, newP256(t)))
+			check(t, f, used(t, f))
+		})
+	}
+	// Each check fails closed whatever identity.pem holds.
+	t.Run("zero Identity, identity.pem missing", func(t *testing.T) {
+		t.Parallel()
+		f := newHandshakeFixture(t)
+		_ = os.Remove(filepath.Join(f.p, FileIdentity))
+		f.putLeftovers(t)
+		check(t, f, Identity{})
+	})
+	t.Run("identity.pem symlink to the used pair", func(t *testing.T) {
+		t.Parallel()
+		f := newHandshakeFixture(t)
+		data, err := readTestFile(filepath.Join(f.p, FileIdentity))
+		if err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(t.TempDir(), "identity.pem")
+		writeMode(t, outside, data, 0o600)
+		_ = os.Remove(filepath.Join(f.p, FileIdentity))
+		if err := os.Symlink(outside, filepath.Join(f.p, FileIdentity)); err != nil {
+			t.Fatal(err)
+		}
+		f.putLeftovers(t)
+		check(t, f, f.cur)
+	})
+	// A renewal replaced identity.pem after the old pair connected: the
+	// old pair is no longer identity.pem, so its connection proves nothing
+	// about the new one.
+	t.Run("identity.pem replaced after the handshake", func(t *testing.T) {
+		t.Parallel()
+		f := newHandshakeFixture(t)
+		used := f.cur
+		_, pem, _ := issuedPair(t, f.ca, testServerID, testNow, nil)
+		put(t, f.p, FileIdentity, pem)
+		f.putLeftovers(t)
+		check(t, f, used)
 	})
 }
