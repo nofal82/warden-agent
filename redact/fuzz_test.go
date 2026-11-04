@@ -423,8 +423,9 @@ func TestWorstCaseTime(t *testing.T) {
 		}
 	}
 	// With the real clock, a benign maximum-size event finishes inside the
-	// deadline (not asserted under the race detector, which is 5-10x slower).
-	if !raceEnabled {
+	// deadline (not asserted under the race detector, which is 5-10x slower,
+	// nor under coverage instrumentation, which also slows it down).
+	if !raceEnabled && testing.CoverMode() == "" {
 		if _, _, err := New().Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, benignEvent(t), nil); err != nil {
 			t.Errorf("benign 64 KiB event with the real clock: %v", err)
 		}

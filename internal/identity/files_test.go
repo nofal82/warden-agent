@@ -10,6 +10,7 @@ package identity
 import (
 	"bytes"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,8 +118,10 @@ func TestReadOwnedFileSizeBound(t *testing.T) {
 	if _, err := readOwnedFile(start, rel, os.Getuid(), 99); !errors.Is(err, ErrFileTooLarge) {
 		t.Fatalf("one byte over: %v, want ErrFileTooLarge", err)
 	}
-	if _, err := readOwnedFile(start, rel, os.Getuid(), 0); !errors.Is(err, ErrFileTooLarge) {
-		t.Fatalf("limit 0: %v, want ErrFileTooLarge", err)
+	// A limit of 0 is not a size check but a caller bug (slice 2, design
+	// §A.1): it is refused before any open.
+	if _, err := readOwnedFile(start, rel, os.Getuid(), 0); !errors.Is(err, errInvalidLimit) {
+		t.Fatalf("limit 0: %v, want errInvalidLimit", err)
 	}
 }
 
@@ -382,7 +385,7 @@ func TestReadRootFilePathRules(t *testing.T) {
 		"", "etc/passwd", "./etc/passwd", "/etc/../etc/passwd", "/etc//passwd",
 		"/etc/./passwd", "/etc/passwd/", "/", "/etc/passwd\x00",
 	} {
-		if _, err := ReadRootFile(p, 1<<20); err == nil {
+		if _, err := ReadRootFile(p, MaxRootFileBytes); err == nil {
 			t.Errorf("ReadRootFile(%q) accepted", p)
 		}
 	}
@@ -419,7 +422,7 @@ func TestReadRootFileRealRootFile(t *testing.T) {
 			continue
 		}
 		want, err := readTestFile(p)
-		if err != nil {
+		if err != nil || len(want) >= MaxRootFileBytes {
 			continue
 		}
 		got, err := ReadRootFile(p, int64(len(want))+1)
@@ -429,7 +432,7 @@ func TestReadRootFileRealRootFile(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Fatalf("ReadRootFile(%s) content differs", p)
 		}
-		if len(want) > 0 {
+		if len(want) > 1 { // a limit of 0 is errInvalidLimit, not a size check
 			if _, err := ReadRootFile(p, int64(len(want))-1); !errors.Is(err, ErrFileTooLarge) {
 				t.Fatalf("ReadRootFile(%s) one byte over: %v, want ErrFileTooLarge", p, err)
 			}
@@ -451,7 +454,7 @@ func TestReadRootFileRefusesUnsafe(t *testing.T) {
 	}
 	// A directory.
 	if rootSafe("/etc") {
-		if _, err := ReadRootFile("/etc", 1<<20); !errors.Is(err, ErrUnsafeFile) {
+		if _, err := ReadRootFile("/etc", MaxRootFileBytes); !errors.Is(err, ErrUnsafeFile) {
 			t.Fatalf("ReadRootFile(/etc): %v, want ErrUnsafeFile", err)
 		}
 	}
@@ -461,7 +464,7 @@ func TestReadRootFileRefusesUnsafe(t *testing.T) {
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 || !rootSafe("/etc") {
 			continue
 		}
-		if _, err := ReadRootFile(l, 1<<20); !errors.Is(err, ErrUnsafeFile) {
+		if _, err := ReadRootFile(l, MaxRootFileBytes); !errors.Is(err, ErrUnsafeFile) {
 			t.Fatalf("ReadRootFile(%s) symlink: %v, want ErrUnsafeFile", l, err)
 		}
 	}
@@ -915,5 +918,80 @@ func TestWriteIdentityRefusesZeroValue(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(p, FileIdentity)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("a file was written for the zero identity")
+	}
+}
+
+// Limits outside 1 … MaxRootFileBytes are a caller bug (design §A.1). They
+// are refused before any open: the start directory does not even exist, so
+// an error other than errInvalidLimit would show that something was opened.
+func TestReadOwnedFileInvalidLimit(t *testing.T) {
+	t.Parallel()
+	if MaxRootFileBytes != 32<<10 {
+		t.Fatalf("MaxRootFileBytes = %d, want 32 KiB (the bundle manifest limit)", MaxRootFileBytes)
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, n := range []int64{0, -1, math.MinInt64, MaxRootFileBytes + 1, math.MaxInt64} {
+		if _, err := readOwnedFile(missing, "a/b/file", os.Getuid(), n); !errors.Is(err, errInvalidLimit) {
+			t.Errorf("readOwnedFile limit %d: %v, want errInvalidLimit", n, err)
+		}
+		if _, err := ReadRootFile("/nonexistent-warden-dir/file", n); !errors.Is(err, errInvalidLimit) {
+			t.Errorf("ReadRootFile limit %d: %v, want errInvalidLimit", n, err)
+		}
+	}
+	// The bounds themselves are valid limits.
+	start, rel := tree(t, []byte("x"))
+	for _, n := range []int64{1, MaxRootFileBytes} {
+		if _, err := readOwnedFile(start, rel, os.Getuid(), n); err != nil {
+			t.Errorf("readOwnedFile limit %d: %v", n, err)
+		}
+	}
+}
+
+// A hard link lets whoever can write the other name change a file that
+// passed the checks here; a file with more than one link is refused (design
+// §A.2). Hard-link creation across users is blocked by protected_hardlinks
+// on most systems, but the check must not depend on that sysctl.
+func TestReadOwnedFileRefusesHardLink(t *testing.T) {
+	t.Parallel()
+	start, rel := tree(t, []byte("x"))
+	if err := os.Link(filepath.Join(start, rel), filepath.Join(start, "a", "b", "second")); err != nil {
+		t.Skipf("cannot create a hard link here: %v", err)
+	}
+	for _, r := range []string{rel, "a/b/second"} {
+		got, err := readOwnedFile(start, r, os.Getuid(), 1024)
+		if !errors.Is(err, ErrUnsafeFile) || got != nil {
+			t.Errorf("hard-linked %s: %q, %v; want ErrUnsafeFile", r, got, err)
+		}
+	}
+	// With the second name gone the link count is 1 again.
+	if err := os.Remove(filepath.Join(start, "a", "b", "second")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readOwnedFile(start, rel, os.Getuid(), 1024); err != nil {
+		t.Fatalf("after unlinking the second name: %v", err)
+	}
+}
+
+func TestStateDirReadRefusesHardLink(t *testing.T) {
+	t.Parallel()
+	d, p := stateDir(t)
+	outside := filepath.Join(t.TempDir(), "outside")
+	writeMode(t, outside, []byte("OUTSIDE"), 0o600)
+	if err := os.Link(outside, filepath.Join(p, FileToken)); err != nil {
+		t.Skipf("cannot create a hard link here: %v", err)
+	}
+	got, err := d.ReadFile(FileToken)
+	if !errors.Is(err, ErrUnsafeFile) || got != nil {
+		t.Fatalf("hard-linked token: %q, %v; want ErrUnsafeFile", got, err)
+	}
+	// Two names inside the state directory are refused as well.
+	if err := d.WriteFile(FileIdentity, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(p, FileIdentity), filepath.Join(p, FileIdentityPrev)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReadFile(FileIdentityPrev); !errors.Is(err, ErrUnsafeFile) {
+		t.Fatalf("hard-linked identity.prev.pem: %v, want ErrUnsafeFile", err)
 	}
 }

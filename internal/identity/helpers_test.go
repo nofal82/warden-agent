@@ -14,6 +14,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -26,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -446,3 +448,50 @@ func serverTLS(chain [][]byte, key crypto.Signer, maxVersion uint16) *tls.Config
 }
 
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
+
+// endpointsJSON is a valid endpoints.json.
+const endpointsJSON = `{"enroll_endpoint":"enroll.example.test:443","agent_endpoint":"agent.example.test:8443","server_name":"cp.example.test"}`
+
+// certPEM is the canonical PEM encoding of one certificate.
+func certPEM(c *x509.Certificate) []byte { return pemBlock(certBlockType, c.Raw, nil) }
+
+// sortedCAs returns the certificates ordered by the SHA-256 of their DER,
+// the §4.7 order of controlplane-ca.pem.
+func sortedCAs(certs ...*x509.Certificate) []*x509.Certificate {
+	out := append([]*x509.Certificate(nil), certs...)
+	sort.Slice(out, func(i, j int) bool {
+		a, b := sha256.Sum256(out[i].Raw), sha256.Sum256(out[j].Raw)
+		return bytes.Compare(a[:], b[:]) < 0
+	})
+	return out
+}
+
+func casPEM(certs ...*x509.Certificate) []byte {
+	var out []byte
+	for _, c := range certs {
+		out = append(out, certPEM(c)...)
+	}
+	return out
+}
+
+func fingerprint(c *x509.Certificate) [sha256.Size]byte { return sha256.Sum256(c.Raw) }
+
+// dnsNameOfLen builds a valid DNS name of exactly n bytes (n >= 1) from
+// 63-byte labels.
+func dnsNameOfLen(n int) string {
+	var b strings.Builder
+	for b.Len() < n {
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		l := n - b.Len()
+		if l > 63 {
+			l = 63
+		}
+		if n-b.Len()-l == 1 { // never leave room for only a dot
+			l--
+		}
+		b.WriteString(strings.Repeat("a", l))
+	}
+	return b.String()
+}

@@ -16,12 +16,20 @@
 //     (R15): it must name exactly this server, carry our key and be signed
 //     directly by the stored agent CA. Only a pair that passed this check
 //     can be written as identity.pem;
+//   - loads the trust files of /etc/warden-agent/ (the server-id copy,
+//     endpoints.json, agent-ca.pem, controlplane-ca.pem) with strict,
+//     canonical decoding, and computes the trusted control-plane CA set of
+//     R10d from controlplane-ca.pem and the CA entries of a keyset;
 //   - builds the TLS 1.3 client configuration of R24, trusting only the
-//     control-plane CAs it is given, never the system roots.
+//     control-plane CAs it is given, never the system roots;
+//   - decides the start-up state of R18a and runs one enrollment attempt
+//     (R12, R12a, R15) through a send function the caller supplies, with
+//     the pending key written before the request and the token removed
+//     before the pending key.
 //
-// What it does not do: decide which control-plane CAs are trusted (that
-// set comes from the root-signed keyset, R10d), run the start-up states of
-// R18a, dial, retry or renew. Those build on this package.
+// What it does not do: verify keysets (the CA entries passed to
+// TrustedControlPlaneCAs must come from a keyset already verified with
+// root-key.pub), dial, retry or renew. Those build on this package.
 //
 // Nothing here logs. Errors name the file or the check that failed and
 // never contain a token, a private key or file contents (R20).

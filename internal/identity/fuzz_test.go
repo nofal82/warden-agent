@@ -14,12 +14,20 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"io"
+	"math"
+	"net"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -267,6 +275,339 @@ func FuzzVerifyIssued(f *testing.F) {
 		}
 		if len(der) > MaxCertificateBytes {
 			t.Fatalf("accepted %d bytes", len(der))
+		}
+	})
+}
+
+// FuzzBuildEnrollRequest: a request is built only when token, server ID
+// and CSR all validate, and it carries exactly the inputs (design §A.5).
+func FuzzBuildEnrollRequest(f *testing.F) {
+	key := newP256(f)
+	csr := mustCSR(f, key)
+	body := strings.Repeat("Q", 43)
+	f.Add(canaryToken(), testServerID, csr)
+	f.Add(canaryToken()+"\n", testServerID, csr)
+	f.Add("wdn1"+"_"+body[:42], testServerID, csr)
+	f.Add(canaryToken(), strings.ToUpper(testServerID), csr)
+	f.Add(canaryToken(), testServerID+"\n", csr)
+	f.Add(canaryToken(), testServerID, append(bytes.Clone(csr), 0))
+	f.Add(canaryToken(), testServerID, csr[:len(csr)-1])
+	f.Add(canaryToken(), testServerID, mustCSR(f, newP384(f)))
+	f.Add(canaryToken(), testServerID, []byte{})
+	f.Add("", "", []byte(nil))
+	binding := testBinding(f)
+	f.Fuzz(func(t *testing.T, token, serverID string, csrDER []byte) {
+		req, err := BuildEnrollRequest(token, serverID, csrDER, binding)
+		_, csrErr := checkCSR(csrDER)
+		want := ValidateToken(token) == nil && ValidateServerID(serverID) == nil && csrErr == nil
+		if want != (err == nil) {
+			t.Fatalf("BuildEnrollRequest = %v, validators say valid=%v", err, want)
+		}
+		if err != nil {
+			if req != nil {
+				t.Fatal("request returned with the error")
+			}
+			if len(token) >= 8 && strings.Contains(err.Error(), token) {
+				t.Fatal("error echoes the token")
+			}
+			return
+		}
+		if req.GetFormatVersion() != 1 || req.GetToken() != token || req.GetServerId() != serverID ||
+			!bytes.Equal(req.GetCsr(), csrDER) || !bytes.Equal(req.GetExecutorPublicKey(), binding.PublicKey[:]) ||
+			!bytes.Equal(req.GetExecutorBindingMac(), binding.MAC[:]) {
+			t.Fatal("request fields differ from the input")
+		}
+		if len(csrDER) > 0 {
+			csrDER[0] ^= 0xff
+			if bytes.Equal(req.GetCsr(), csrDER) {
+				t.Fatal("request aliases the caller's CSR slice")
+			}
+			csrDER[0] ^= 0xff
+		}
+	})
+}
+
+func FuzzParseServerIDFile(f *testing.F) {
+	for _, s := range []string{
+		testServerID, "", testServerID + "\n", testServerID + "\r\n", " " + testServerID,
+		"\ufeff" + testServerID, strings.ToUpper(testServerID), testServerID[:35], testServerID + "0",
+		testServerID[:35] + "\x00",
+	} {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got, err := ParseServerIDFile(data)
+		want := len(data) == 36 && serverIDRe.Match(data)
+		if want != (err == nil) {
+			t.Fatalf("ParseServerIDFile(%q) = %v, want valid=%v", data, err, want)
+		}
+		if err != nil {
+			if !errors.Is(err, ErrInvalidServerID) || got != "" {
+				t.Fatalf("wrong error or value: %q, %v", got, err)
+			}
+			return
+		}
+		if got != string(data) {
+			t.Fatalf("returned %q for %q", got, data)
+		}
+	})
+}
+
+// topLevelKeys returns the member names of a JSON object in order, with
+// duplicates, or ok=false if data is not one object followed only by
+// whitespace.
+func topLevelKeys(data []byte) (keys []string, ok bool) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, false
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		k, isStr := tok.(string)
+		if !isStr {
+			return nil, false
+		}
+		keys = append(keys, k)
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, false
+		}
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return keys, true
+}
+
+func FuzzParseEndpoints(f *testing.F) {
+	e, a, s := `"enroll_endpoint":"enroll.example.test:443"`, `"agent_endpoint":"agent.example.test:8443"`, `"server_name":"cp.example.test"`
+	for _, seed := range []string{
+		endpointsJSON, "{" + s + "," + a + "," + e + "}", "\n" + endpointsJSON + "\n", "", "null", "{}",
+		"{" + e + "," + a + "}", "{" + e + "," + a + "," + s + "," + s + "}",
+		"{" + e + "," + a + "," + s + `,"server_nam\u0065":"evil.example.test"}`,
+		"{" + e + "," + a + `,"server_name":443}`, "{" + e + "," + a + `,"server_name":null}`,
+		endpointsJSON + "x", endpointsJSON + endpointsJSON, "{" + e + "," + a + ",\"server_name\":\"cp\xff\"}",
+		"\ufeff" + endpointsJSON, `{"enroll_endpoint":"[2001:db8::10]:443","agent_endpoint":"192.0.2.10:8443","server_name":"2001:db8::10"}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got, err := ParseEndpoints(data)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidEndpoints) && !errors.Is(err, ErrInvalidServerName) {
+				t.Fatalf("wrong error class: %v", err)
+			}
+			if got != (Endpoints{}) {
+				t.Fatal("values returned with the error")
+			}
+			return
+		}
+		if !utf8.Valid(data) || !json.Valid(data) {
+			t.Fatal("accepted invalid UTF-8 or invalid JSON")
+		}
+		keys, ok := topLevelKeys(data)
+		if !ok || len(keys) != 3 {
+			t.Fatalf("accepted something other than one object of three members: %q", keys)
+		}
+		seen := map[string]bool{}
+		for _, k := range keys {
+			seen[k] = true
+		}
+		if !seen["enroll_endpoint"] || !seen["agent_endpoint"] || !seen["server_name"] {
+			t.Fatalf("accepted members %q", keys)
+		}
+		if ValidateEndpoint(got.Enroll) != nil || ValidateEndpoint(got.Agent) != nil || ValidateServerName(got.ServerName) != nil {
+			t.Fatalf("accepted invalid values %+v", got)
+		}
+		again, err := json.Marshal(map[string]string{"enroll_endpoint": got.Enroll, "agent_endpoint": got.Agent, "server_name": got.ServerName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got2, err := ParseEndpoints(again); err != nil || got2 != got {
+			t.Fatalf("re-encoded endpoints do not round-trip: %v", err)
+		}
+	})
+}
+
+var endpointPortRe = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
+
+func FuzzValidateEndpoint(f *testing.F) {
+	for _, s := range []string{
+		"cp.example.test:443", "192.0.2.10:8443", "[2001:db8::10]:443", "cp:65535", "cp:65536", "cp:0",
+		"cp:0443", "cp:+443", "", ":443", "cp:", "[::1]", "cp:443:1", "2001:db8::10:443",
+		"[fe80::1%eth0]:443", "*.example.test:443", "cp.example.test.:443", "cp:443\n", "$(id):443",
+		strings.Repeat("a", 250) + ":443",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		err := ValidateEndpoint(s)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidEndpoints) {
+				t.Fatalf("wrong error class: %v", err)
+			}
+			return
+		}
+		if len(s) > 253 {
+			t.Fatalf("accepted %d bytes", len(s))
+		}
+		host, port, perr := net.SplitHostPort(s)
+		if perr != nil {
+			t.Fatalf("accepted %q, which does not split: %v", s, perr)
+		}
+		if ValidateServerName(host) != nil {
+			t.Fatalf("accepted host %q", host)
+		}
+		if strings.Contains(host, ":") && !strings.HasPrefix(s, "[") {
+			t.Fatalf("accepted an unbracketed IPv6 literal %q", s)
+		}
+		n, cerr := strconv.Atoi(port)
+		if !endpointPortRe.MatchString(port) || cerr != nil || n < 1 || n > 65535 {
+			t.Fatalf("accepted port %q", port)
+		}
+	})
+}
+
+func FuzzParseAgentCA(f *testing.F) {
+	ca := newCA(f, "agent CA", testNow)
+	good := certPEM(ca.cert)
+	leaf := ca.issue(f, agentLeafTemplate(f, testServerID, testNow), &newP256(f).PublicKey)
+	for _, s := range [][]byte{
+		good, {}, ca.cert.Raw, pemBlock(certBlockType, leaf, nil), cat(good, good), cat(good, []byte("\n")),
+		good[:len(good)-1], bytes.ReplaceAll(good, []byte("\n"), []byte("\r\n")), cat([]byte("x\n"), good),
+		pemBlock(certBlockType, ca.cert.Raw, map[string]string{"A": "b"}),
+		pemBlock(certBlockType, append(bytes.Clone(ca.cert.Raw), 0), nil),
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		c, err := ParseAgentCA(data)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidTrust) || c != nil {
+				t.Fatalf("wrong error or value: %v", err)
+			}
+			return
+		}
+		if !c.BasicConstraintsValid || !c.IsCA {
+			t.Fatal("accepted a certificate that is not a CA")
+		}
+		if !bytes.Equal(data, certPEM(c)) {
+			t.Fatal("accepted a file that is not the canonical encoding of its certificate")
+		}
+	})
+}
+
+func FuzzParseControlPlaneCAs(f *testing.F) {
+	cas := sortedCAs(newCA(f, "cp CA A", testNow).cert, newCA(f, "cp CA B", testNow).cert, newCA(f, "cp CA C", testNow).cert)
+	for _, s := range [][]byte{
+		casPEM(cas[0]), casPEM(cas[0], cas[1]), casPEM(cas[1], cas[0]), casPEM(cas[0], cas[0]),
+		casPEM(cas...), {}, cat(casPEM(cas[0]), []byte("\n"), casPEM(cas[1])),
+		bytes.ReplaceAll(casPEM(cas[0], cas[1]), []byte("\n"), []byte("\r\n")),
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got, err := ParseControlPlaneCAs(data)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidTrust) || got != nil {
+				t.Fatalf("wrong error or value: %v", err)
+			}
+			return
+		}
+		if len(got) < 1 || len(got) > 2 {
+			t.Fatalf("accepted %d certificates", len(got))
+		}
+		var prev [32]byte
+		for i, c := range got {
+			if c == nil || !c.BasicConstraintsValid || !c.IsCA {
+				t.Fatal("accepted a certificate that is not a CA")
+			}
+			h := sha256.Sum256(c.Raw)
+			if i > 0 && bytes.Compare(prev[:], h[:]) >= 0 {
+				t.Fatal("accepted certificates not strictly sorted by SHA-256")
+			}
+			prev = h
+		}
+		if !bytes.Equal(data, casPEM(got...)) {
+			t.Fatal("accepted a file that is not the canonical encoding of its certificates")
+		}
+	})
+}
+
+// FuzzTrustedControlPlaneCAs checks the R10d filter against a direct
+// restatement of design §C.
+func FuzzTrustedControlPlaneCAs(f *testing.F) {
+	pool := sortedCAs(newCA(f, "cp CA A", testNow).cert, newCA(f, "cp CA B", testNow).cert, newCA(f, "cp CA C", testNow).cert)
+	now := testNow.Unix()
+	// fileSel and entrySel pick certificates from pool: low two bits the
+	// count, then two bits per index.
+	f.Add(uint8(0b0001), uint8(0b0001), now-1, now+1, int64(0), int64(0), now)
+	f.Add(uint8(0b010010), uint8(0b000110), now, now, now+1, now+2, now)
+	f.Add(uint8(0b0001), uint8(0b0001), now+1, now+2, int64(0), int64(0), now)
+	f.Add(uint8(0b0001), uint8(0b0010), now-1, now+1, now-1, now+1, now)
+	f.Add(uint8(0b0001), uint8(0b0001), int64(0), now, int64(0), int64(0), now)
+	f.Add(uint8(0b0001), uint8(0b0001), now, now-1, int64(0), int64(0), now)
+	f.Add(uint8(0b0011), uint8(0b0011), int64(1), int64(math.MaxInt64), int64(1), int64(math.MaxInt64), int64(math.MinInt64))
+	f.Fuzz(func(t *testing.T, fileSel, entrySel uint8, nb1, na1, nb2, na2, at int64) {
+		pick := func(sel uint8) []*x509.Certificate {
+			n := int(sel & 3)
+			out := make([]*x509.Certificate, 0, n)
+			for i := 0; i < n; i++ {
+				out = append(out, pool[int(sel>>(2+2*i)&3)%len(pool)])
+			}
+			return out
+		}
+		file := pick(fileSel)
+		var entries []CAEntry
+		bounds := [][2]int64{{nb1, na1}, {nb2, na2}, {nb1, na2}}
+		for i, c := range pick(entrySel) {
+			entries = append(entries, CAEntry{Fingerprint: sha256.Sum256(c.Raw), NotBefore: bounds[i][0], NotAfter: bounds[i][1]})
+		}
+		got, err := TrustedControlPlaneCAs(file, entries, time.Unix(at, 0))
+
+		validInput := len(file) >= 1 && len(file) <= 2 && len(entries) >= 1 && len(entries) <= 2
+		seen := map[[32]byte]bool{}
+		for _, e := range entries {
+			if seen[e.Fingerprint] || e.NotBefore < 1 || e.NotBefore > e.NotAfter {
+				validInput = false
+			}
+			seen[e.Fingerprint] = true
+		}
+		if !validInput {
+			if !errors.Is(err, ErrInvalidTrust) || got != nil {
+				t.Fatalf("invalid input accepted or wrong error: %d, %v", len(got), err)
+			}
+			return
+		}
+		var want []*x509.Certificate
+		for _, c := range file {
+			fp := sha256.Sum256(c.Raw)
+			for _, e := range entries {
+				if e.Fingerprint == fp && e.NotBefore <= at && at <= e.NotAfter {
+					want = append(want, c)
+					break
+				}
+			}
+		}
+		if len(want) == 0 {
+			if !errors.Is(err, ErrNoTrustedControlPlaneCA) || got != nil {
+				t.Fatalf("empty set: %d, %v; want ErrNoTrustedControlPlaneCA", len(got), err)
+			}
+			return
+		}
+		if err != nil || len(got) != len(want) {
+			t.Fatalf("got %d, %v; want %d", len(got), err, len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] && !bytes.Equal(got[i].Raw, want[i].Raw) {
+				t.Fatalf("certificate %d differs", i)
+			}
 		}
 	})
 }

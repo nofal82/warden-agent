@@ -518,3 +518,49 @@ func TestVerifyConnectionTwoCAs(t *testing.T) {
 		}
 	}
 }
+
+// Go's own verification and the VerifyConnection re-verification use one
+// clock (design §A.3): cfg.Time is the injected now, time.Now when nil.
+func TestClientTLSConfigSetsTime(t *testing.T) {
+	t.Parallel()
+	ca := newCA(t, "cp CA", testNow)
+	cfg := mustClientTLS(t, []*x509.Certificate{ca.cert}, testServerName, nil, fixedClock(testNow))
+	if cfg.Time == nil || !cfg.Time().Equal(testNow) {
+		t.Fatal("cfg.Time is not the injected clock")
+	}
+	real := mustClientTLS(t, []*x509.Certificate{ca.cert}, testServerName, nil, nil)
+	if real.Time == nil {
+		t.Fatal("cfg.Time is nil with a nil clock; want time.Now")
+	}
+	if d := time.Since(real.Time()); d < -time.Minute || d > time.Minute {
+		t.Fatalf("cfg.Time with a nil clock is %v away from the real time", d)
+	}
+}
+
+// A CA and server certificate valid only five years from now: the
+// handshake succeeds with that clock injected and fails with the real
+// clock, and a certificate valid only now fails under the future clock. If
+// cfg.Time were unset, Go's verification would use the real time and the
+// first handshake would fail.
+func TestHandshakeUsesInjectedClock(t *testing.T) {
+	t.Parallel()
+	future := time.Now().Add(5 * 365 * 24 * time.Hour).Truncate(time.Second)
+	futureCA := newCA(t, "future cp CA", future)
+	futureSrv := issueServer(t, futureCA, testServerName, future, nil)
+
+	ok := mustClientTLS(t, []*x509.Certificate{futureCA.cert}, testServerName, nil, fixedClock(future))
+	if _, err, srvErr := tlsPair(t, ok, serverTLS(futureSrv.chain, futureSrv.key, 0)); err != nil {
+		t.Fatalf("handshake at the injected clock: client %v, server %v", err, srvErr)
+	}
+	realClock := mustClientTLS(t, []*x509.Certificate{futureCA.cert}, testServerName, nil, nil)
+	if _, err, _ := tlsPair(t, realClock, serverTLS(futureSrv.chain, futureSrv.key, 0)); err == nil {
+		t.Fatal("certificate not yet valid at the real time was accepted")
+	}
+
+	nowCA := newCA(t, "current cp CA", time.Now())
+	nowSrv := issueServer(t, nowCA, testServerName, time.Now(), nil)
+	late := mustClientTLS(t, []*x509.Certificate{nowCA.cert}, testServerName, nil, fixedClock(future))
+	if _, err, _ := tlsPair(t, late, serverTLS(nowSrv.chain, nowSrv.key, 0)); err == nil {
+		t.Fatal("certificate expired at the injected clock was accepted")
+	}
+}

@@ -39,8 +39,28 @@ func CreateCSR(key *ecdsa.PrivateKey) ([]byte, error) {
 	return der, nil
 }
 
-func isP256(key *ecdsa.PrivateKey) bool {
-	return key != nil && key.Curve == elliptic.P256()
+// isP256 reports whether key is a usable ECDSA P-256 private key: the
+// curve is P-256, the scalar and the point are valid for crypto/ecdh, and
+// the point is the scalar's public key. A caller-built key that fails any
+// of these would otherwise panic or sign with a key the certificate does
+// not name.
+func isP256(key *ecdsa.PrivateKey) (ok bool) {
+	if key == nil || key.Curve != elliptic.P256() {
+		return false
+	}
+	// crypto/ecdsa dereferences a nil D, X or Y (the fields are deprecated,
+	// so they are not inspected here): such a key is refused, not a crash.
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	priv, err := key.ECDH()
+	if err != nil {
+		return false
+	}
+	pub, err := key.PublicKey.ECDH()
+	return err == nil && priv.PublicKey().Equal(pub)
 }
 
 // checkCSR applies the §4.4 checks the control plane will apply (size,

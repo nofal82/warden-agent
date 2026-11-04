@@ -31,6 +31,11 @@ const (
 // MaxStateFileBytes bounds every state-file read.
 const MaxStateFileBytes = 16 << 10
 
+// MaxRootFileBytes is the largest read limit ReadRootFile accepts: the
+// largest file in ConfigDir is bundle-manifest, at most MAX_MANIFEST_BYTES
+// (32 KiB, signing-and-updates §4.2).
+const MaxRootFileBytes = 32 << 10
+
 var stateFileNames = map[string]bool{
 	FileIdentity:           true,
 	FileIdentityPrev:       true,
@@ -52,7 +57,8 @@ const (
 // clean. Every directory from "/" down is opened without following
 // symlinks and must be owned by root and not group- or other-writable; the
 // file itself must be a regular file, not a symlink, owned by root and not
-// group- or other-writable, and at most maxBytes long. The checks run on
+// group- or other-writable, with exactly one hard link, and at most
+// maxBytes long; maxBytes must be 1 … MaxRootFileBytes. The checks run on
 // the opened descriptors, so the file read is the file checked.
 func ReadRootFile(p string, maxBytes int64) ([]byte, error) {
 	if !path.IsAbs(p) || path.Clean(p) != p || p == "/" {
@@ -68,6 +74,9 @@ func ReadRootFile(p string, maxBytes int64) ([]byte, error) {
 // below it; rel is a clean relative path ("a/b/file", no "." or ".."
 // element, no empty element).
 func readOwnedFile(start, rel string, owner int, maxBytes int64) ([]byte, error) {
+	if maxBytes < 1 || maxBytes > MaxRootFileBytes {
+		return nil, fmt.Errorf("%w: %d", errInvalidLimit, maxBytes)
+	}
 	elems := strings.Split(rel, "/")
 	for _, e := range elems {
 		if e == "" || e == "." || e == ".." {
@@ -133,7 +142,8 @@ func (d *StateDir) checkName(name string) error {
 
 // ReadFile reads one §4.7 state file. It refuses a name not listed above, a
 // symlink, a file that is not regular, not owned by the agent user, or has
-// any group or other permission bit, and a file over MaxStateFileBytes.
+// any group or other permission bit, more than one hard link, and a file
+// over MaxStateFileBytes.
 func (d *StateDir) ReadFile(name string) ([]byte, error) {
 	if err := d.checkName(name); err != nil {
 		return nil, err
@@ -310,6 +320,10 @@ func checkFD(fd int, display string, kind uint32, owner int, forbidden uint32) e
 		return fmt.Errorf("%w: %s is owned by uid %d, want %d", ErrUnsafeFile, display, st.Uid, owner)
 	case st.Mode&forbidden != 0:
 		return fmt.Errorf("%w: %s has mode %04o", ErrUnsafeFile, display, st.Mode&0o7777)
+	case kind == syscall.S_IFREG && st.Nlink != 1:
+		// A second name could keep an old key or trust file alive after
+		// the name the agent knows has been removed or replaced (R34).
+		return fmt.Errorf("%w: %s has %d hard links", ErrUnsafeFile, display, st.Nlink)
 	}
 	return nil
 }
