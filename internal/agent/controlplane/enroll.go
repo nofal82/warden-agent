@@ -1,16 +1,25 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
+	"github.com/nofal82/warden-agent/internal/identity"
 )
 
 // Limits of R2 and R47.
@@ -23,7 +32,8 @@ const (
 	DialDeadline = 10 * time.Second
 	// MaxHeaderListSize is the R2 header-list limit.
 	MaxHeaderListSize = 8 << 10
-	// StreamWindow and ConnWindow are the R2 flow-control windows.
+	// StreamWindow and ConnWindow are the R2 flow-control windows; setting
+	// them also turns off gRPC's dynamic window growth.
 	StreamWindow = 64 << 10
 	ConnWindow   = 256 << 10
 )
@@ -40,19 +50,20 @@ var (
 	ErrCompressorRegistered = errors.New("controlplane: a gRPC compressor is registered")
 	// ErrInvalidEndpoint: the endpoint is not host:port.
 	ErrInvalidEndpoint = errors.New("controlplane: invalid endpoint")
+	// errNilRequest: a caller defect; nothing is sent.
+	errNilRequest = errors.New("controlplane: nil enroll request")
 )
 
-// Target returns the explicit gRPC target of R2 for an endpoint host:port
-// from endpoints.json: passthrough:///<ip>:<port> for an IP literal,
-// dns:///<host>:<port> otherwise.
-func Target(endpoint string) (string, error) {
-	return "", errors.ErrUnsupported
-}
+// knownCompressors are the names a Go program can register by importing a
+// compression package. gRPC has no list of what is registered, so R2's
+// start-up assertion checks these names.
+var knownCompressors = []string{"gzip", "deflate", "zstd", "snappy", "s2", "lz4", "br"}
 
 // EnrollClient sends one EnrollRequest per call to the enrollment endpoint.
 type EnrollClient struct {
 	target string
-	cfgErr error
+	tls    *tls.Config
+	limits enrollLimits
 	// dialer replaces gRPC's TCP dialer in tests only (export_test.go).
 	dialer func(context.Context, string) (net.Conn, error)
 }
@@ -62,57 +73,139 @@ type EnrollClient struct {
 // serverName is server_name; both go to identity.ClientTLSConfig with no
 // client certificate. now is the clock for certificate checks; nil means
 // time.Now. An empty trustedCAs is refused: no connection is made (R3).
+// Nothing is dialled here.
 func NewEnrollClient(endpoint string, trustedCAs []*x509.Certificate, serverName string, now func() time.Time) (*EnrollClient, error) {
-	return nil, errors.ErrUnsupported
+	for _, name := range knownCompressors {
+		if encoding.GetCompressor(name) != nil {
+			return nil, fmt.Errorf("%w: %s", ErrCompressorRegistered, name)
+		}
+	}
+	target, err := Target(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := identity.ClientTLSConfig(trustedCAs, serverName, nil, now)
+	if err != nil {
+		return nil, err
+	}
+	l, err := limits()
+	if err != nil {
+		return nil, err
+	}
+	return &EnrollClient{target: target, tls: cfg, limits: l}, nil
 }
 
-// Enroll sends req once and returns the certificate DER of a response that
-// passed the size, strict-decoding and field checks. It has the signature
-// of identity.EnrollFunc. A gRPC error is returned as *StatusError.
+// Enroll sends req once, on a new connection that is closed before it
+// returns, and returns the certificate DER of a response that passed the
+// size, strict-decoding and field checks. It has the signature of
+// identity.EnrollFunc. A gRPC error is returned as *StatusError; a failed
+// connection as ErrNotConnected; a refused response as ErrResponseRefused.
 func (c *EnrollClient) Enroll(ctx context.Context, req *agentapiv1.EnrollRequest) ([]byte, error) {
-	return nil, errors.ErrUnsupported
+	if req == nil {
+		return nil, errNilRequest
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("controlplane: enroll: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, EnrollDeadline)
+	defer cancel()
+	conn, err := grpc.NewClient(c.target, c.dialOptions()...)
+	if err != nil {
+		return nil, fmt.Errorf("controlplane: enroll client: %w", err)
+	}
+	defer func() { _ = conn.Close() }() // nothing to do on a close error; the attempt's outcome stands
+	if err := waitReady(ctx, conn); err != nil {
+		return nil, err
+	}
+	var (
+		frame  rawFrame
+		header metadata.MD
+	)
+	if err := conn.Invoke(ctx, agentapiv1.AgentEnrollment_Enroll_FullMethodName, req, &frame, grpc.Header(&header)); err != nil {
+		return nil, callError(err, header)
+	}
+	return c.decode(frame.b)
 }
 
-// StatusError is a gRPC error from the control plane, reduced to what R45
-// lets the agent use: the code and the EndDetail reason. Reason is
-// END_REASON_UNSPECIFIED when the status had no valid detail (none, more
-// than one, or one that fails the R45 checks). HasDetail reports whether
-// the status carried any detail at all.
-type StatusError struct {
-	Code      codes.Code
-	Reason    agentapiv1.EndReason
-	HasDetail bool
+func (c *EnrollClient) dialOptions() []grpc.DialOption {
+	opts := []grpc.DialOption{
+		// credentials.NewTLS clones the config; never insecure (R3).
+		grpc.WithTransportCredentials(credentials.NewTLS(c.tls)),
+		grpc.WithNoProxy(),
+		grpc.WithDisableServiceConfig(),
+		grpc.WithDisableRetry(),
+		grpc.WithMaxHeaderListSize(MaxHeaderListSize),
+		grpc.WithInitialWindowSize(StreamWindow),
+		grpc.WithInitialConnWindowSize(ConnWindow),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(c.limits.response),
+			grpc.MaxCallSendMsgSize(c.limits.request),
+			grpc.ForceCodecV2(rawCodec{}),
+		),
+	}
+	if c.dialer != nil {
+		opts = append(opts, grpc.WithContextDialer(c.dialer))
+	}
+	return opts
 }
 
-func (e *StatusError) Error() string { return "controlplane: " + e.Code.String() }
-
-// ParseEndDetail applies R45 to st: exactly one detail, no unknown fields
-// on the Status or the Any, type URL
-// type.googleapis.com/warden.agentapi.v1.EndDetail, an Any of at most 128
-// bytes, a value that passes the strict decoder, and a known EndReason that
-// §4.8 pairs with st's code. It returns the reason and true only then.
-// It reads Status.Proto().GetDetails(), never Status.Details().
-func ParseEndDetail(st *status.Status) (agentapiv1.EndReason, bool) {
-	return agentapiv1.EndReason_END_REASON_UNSPECIFIED, false
+// waitReady starts the connection and waits for READY within DialDeadline
+// (R47). A first failure ends the attempt: gRPC would otherwise reconnect
+// on its own backoff inside the deadline, and every reconnect counts
+// against the enrollment endpoint's per-source limits.
+func waitReady(ctx context.Context, conn *grpc.ClientConn) error {
+	dctx, cancel := context.WithTimeout(ctx, DialDeadline)
+	defer cancel()
+	conn.Connect()
+	for {
+		s := conn.GetState()
+		switch s {
+		case connectivity.Ready:
+			return nil
+		case connectivity.TransientFailure, connectivity.Shutdown:
+			return fmt.Errorf("%w: connection failed", ErrNotConnected)
+		}
+		if !conn.WaitForStateChange(dctx, s) {
+			return fmt.Errorf("%w: dial deadline", ErrNotConnected)
+		}
+	}
 }
 
-// Action is what the enrollment loop does after a failed attempt.
-type Action int
+// callError reduces a gRPC error to a StatusError (R45). A
+// RESOURCE_EXHAUSTED after response headers arrived is our own receive
+// limit tripping on an oversized response (§4.2: refuse and retry), not
+// the library answer of the control plane, which is a trailers-only
+// response with no headers.
+func callError(err error, header metadata.MD) error {
+	st := status.Convert(err)
+	if st.Code() == codes.ResourceExhausted && len(header) > 0 {
+		return fmt.Errorf("%w: over the size limit", ErrResponseRefused)
+	}
+	reason, _ := ParseEndDetail(st)
+	return &StatusError{Code: st.Code(), Reason: reason, HasDetail: len(st.Proto().GetDetails()) > 0}
+}
 
-// Actions.
-const (
-	// ActionStop: do not retry; return the error to the caller.
-	ActionStop Action = iota + 1
-	// ActionRetry: retry under the enrollment backoff (§4.9).
-	ActionRetry
-	// ActionRetryLongest: retry after the longest enrollment backoff
-	// (R45: unknown code or unknown reason).
-	ActionRetryLongest
-)
+// decodeEnrollResponse is the response path after gRPC delivered the
+// bytes: size limit, strict decode, field limits, copy (§4.2, §4.3, R16).
+func decodeEnrollResponse(b []byte) ([]byte, error) {
+	l, err := limits()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrResponseRefused, err)
+	}
+	return (&EnrollClient{limits: l}).decode(b)
+}
 
-// ActionOf maps an error of one enrollment attempt to an Action, per R16,
-// R45 and §4.8. Errors that did not come from the call (local file, key or
-// R15 failures) are ActionStop.
-func ActionOf(err error) Action {
-	return ActionStop
+func (c *EnrollClient) decode(b []byte) ([]byte, error) {
+	if len(b) > c.limits.response {
+		return nil, fmt.Errorf("%w: %d bytes, limit %d", ErrResponseRefused, len(b), c.limits.response)
+	}
+	var resp agentapiv1.EnrollResponse
+	if err := agentapiv1.StrictUnmarshal(b, &resp); err != nil {
+		return nil, fmt.Errorf("%w: strict decoding failed", ErrResponseRefused)
+	}
+	cert := resp.GetCertificate()
+	if len(cert) < c.limits.certMin || len(cert) > c.limits.certMax {
+		return nil, fmt.Errorf("%w: certificate is %d bytes, want %d to %d", ErrResponseRefused, len(cert), c.limits.certMin, c.limits.certMax)
+	}
+	return bytes.Clone(cert), nil
 }

@@ -35,3 +35,8 @@ func RealJitter(d time.Duration) time.Duration {
 func DecodeEnrollResponse(b []byte) ([]byte, error) {
 	return decodeEnrollResponse(b)
 }
+
+// RunEnrollWithClock is RunEnroll with the loop's clock replaced.
+func RunEnrollWithClock(ctx context.Context, d *identity.StateDir, in identity.EnrollInput, send identity.EnrollFunc, c Clock) (identity.Identity, error) {
+	return runEnroll(ctx, d, in, send, c)
+}
