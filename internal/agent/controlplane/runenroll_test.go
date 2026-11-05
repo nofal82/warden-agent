@@ -37,15 +37,16 @@ type e2e struct {
 	client *controlplane.EnrollClient
 	fs     *fakeServer
 
-	mu   sync.Mutex
-	pubs []any // public key of every CSR received
+	mu        sync.Mutex
+	pubs      []any         // public key of every CSR received
+	notBefore time.Duration // issued NotBefore, relative to testNow
 }
 
 // newE2E starts a control plane whose handler refuses the first `refusals`
 // calls with PERMISSION_DENIED, ENROLLMENT_REFUSED and then issues.
 func newE2E(t *testing.T, refusals int) *e2e {
 	t.Helper()
-	e := &e2e{dir: filepath.Join(t.TempDir(), "state")}
+	e := &e2e{dir: filepath.Join(t.TempDir(), "state"), notBefore: -time.Minute}
 	if err := os.Mkdir(e.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -79,11 +80,12 @@ func newE2E(t *testing.T, refusals int) *e2e {
 		e.pubs = append(e.pubs, csr.PublicKey)
 		calls++
 		n := calls
+		notBefore := e.notBefore
 		e.mu.Unlock()
 		if n <= refusals {
 			return nil, statusWith(t, codes.PermissionDenied, "ENROLLMENT_REFUSED", agentapiv1.EndReason_END_REASON_ENROLLMENT_REFUSED).Err()
 		}
-		return marshalDet(t, &agentapiv1.EnrollResponse{Certificate: issueAgentLeaf(t, agentCA, csr.PublicKey)}), nil
+		return marshalDet(t, &agentapiv1.EnrollResponse{Certificate: issueAgentLeaf(t, agentCA, csr.PublicKey, testNow.Add(notBefore))}), nil
 	})
 	e.client = newClient(t, cpCA, e.fs.dialer)
 	return e
@@ -101,7 +103,7 @@ func (e *e2e) exists(name string) bool {
 	return err == nil
 }
 
-func issueAgentLeaf(t *testing.T, ca testCA, pub any) []byte {
+func issueAgentLeaf(t *testing.T, ca testCA, pub any, notBefore time.Time) []byte {
 	t.Helper()
 	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
@@ -111,7 +113,7 @@ func issueAgentLeaf(t *testing.T, ca testCA, pub any) []byte {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: e2eServerID},
 		URIs:         []*url.URL{{Scheme: "urn", Opaque: "uuid:" + e2eServerID}},
-		NotBefore:    testNow.Add(-time.Minute),
+		NotBefore:    notBefore,
 		NotAfter:     testNow.Add(30 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -222,8 +224,8 @@ func TestRunEnrollCertificateRejected(t *testing.T) {
 	e.in.ServerID = "7a8b9c0d-1e2f-4a3b-9c4d-5e6f7a8b9c0d"
 	c := newFakeClock()
 	_, err := controlplane.RunEnrollWithClock(shortCtx(t, 10*time.Second), e.state, e.in, e.client.Enroll, c)
-	if !errors.Is(err, identity.ErrCertificateRejected) {
-		t.Fatalf("err = %v, want ErrCertificateRejected", err)
+	if !errors.Is(err, identity.ErrCertificateRejected) || !errors.Is(err, controlplane.ErrEnrollStopped) {
+		t.Fatalf("err = %v, want ErrCertificateRejected and ErrEnrollStopped", err)
 	}
 	if len(c.sleeps) != 0 {
 		t.Fatalf("slept %v after an R15 failure", c.sleeps)
@@ -243,4 +245,36 @@ func equalDurations(a, b []time.Duration) bool {
 		}
 	}
 	return true
+}
+
+// TestRunEnrollClockSkewRetried: the control plane issues a certificate
+// valid from testNow+3 min, so R15 reports clock skew at +0 and +1 min
+// (beyond MaxSkew) and accepts it at +3 min. The loop retries on the
+// normal backoff with the same pending key, and nothing is written until
+// R15 passes (Nofal, PR #33).
+func TestRunEnrollClockSkewRetried(t *testing.T) {
+	t.Parallel()
+	e := newE2E(t, 0)
+	e.notBefore = 3 * time.Minute
+	c := newFakeClock()
+	if _, err := controlplane.RunEnrollWithClock(shortCtx(t, 20*time.Second), e.state, e.in, e.client.Enroll, c); err != nil {
+		t.Fatalf("RunEnroll: %v", err)
+	}
+	if want := []time.Duration{time.Minute, 2 * time.Minute}; !equalDurations(c.sleeps, want) {
+		t.Fatalf("sleeps %v, want %v", c.sleeps, want)
+	}
+	e.mu.Lock()
+	pubs := e.pubs
+	e.mu.Unlock()
+	if len(pubs) != 3 {
+		t.Fatalf("%d requests, want 3", len(pubs))
+	}
+	for i, p := range pubs {
+		if !pubs[0].(*ecdsa.PublicKey).Equal(p) {
+			t.Fatalf("request %d used another key", i)
+		}
+	}
+	if !e.exists(identity.FileIdentity) || e.exists(identity.FileToken) {
+		t.Fatal("enrollment did not complete after the clock-skew retries")
+	}
 }

@@ -234,7 +234,10 @@ func TestActionOf(t *testing.T) {
 		{"plain error", errors.New("local failure"), stop},
 		{"ErrCertificateRejected", identity.ErrCertificateRejected, stop},
 		{"wrapped ErrCertificateRejected", fmt.Errorf("x: %w", identity.ErrCertificateRejected), stop},
-		{"ErrClockSkew", identity.ErrClockSkew, stop},
+		// A clock-skew R15 failure is retried on the normal backoff (Nofal, PR #33).
+		{"ErrClockSkew", identity.ErrClockSkew, controlplane.ActionRetry},
+		{"R15 clock skew as identity returns it", fmt.Errorf("%w: %w (valid …)", identity.ErrCertificateRejected, identity.ErrClockSkew), controlplane.ActionRetry},
+		{"R15 clock skew wrapped again", fmt.Errorf("identity: enroll: %w", fmt.Errorf("%w: %w", identity.ErrCertificateRejected, identity.ErrClockSkew)), controlplane.ActionRetry},
 		{"ErrInvalidTrust", identity.ErrInvalidTrust, stop},
 		{"ErrUnsafeFile", identity.ErrUnsafeFile, stop},
 		{"fs.ErrNotExist", fs.ErrNotExist, stop},

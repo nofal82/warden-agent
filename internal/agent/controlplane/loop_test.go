@@ -254,6 +254,9 @@ func TestRunLoopStop(t *testing.T) {
 		if !errors.Is(err, e) {
 			t.Fatalf("err = %v, want %v", err, e)
 		}
+		if !errors.Is(err, controlplane.ErrEnrollStopped) {
+			t.Fatalf("err = %v, want ErrEnrollStopped", err)
+		}
 		if s.calls != 1 || len(c.sleeps) != 0 {
 			t.Fatalf("%v: calls %d sleeps %v", e, s.calls, c.sleeps)
 		}
@@ -360,5 +363,67 @@ func TestRealJitter(t *testing.T) {
 	}
 	if j := controlplane.RealJitter(0); j != 0 {
 		t.Errorf("Jitter(0) = %v", j)
+	}
+}
+
+// TestRunLoopNotStoppedErrors: an expired token, a cancelled context and a
+// sleep failure are not permanent stops: they never carry ErrEnrollStopped
+// (Nofal, PR #33).
+func TestRunLoopNotStoppedErrors(t *testing.T) {
+	t.Parallel()
+	c, s := newFakeClock(), &script{errs: []error{identity.ErrTokenExpired}}
+	if _, err := controlplane.RunLoop(context.Background(), s.attempt, c); errors.Is(err, controlplane.ErrEnrollStopped) {
+		t.Fatalf("token expiry is a permanent stop: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c, s = newFakeClock(), &script{errs: []error{retryErr()}}
+	if _, err := controlplane.RunLoop(ctx, s.attempt, c); errors.Is(err, controlplane.ErrEnrollStopped) {
+		t.Fatalf("cancellation is a permanent stop: %v", err)
+	}
+}
+
+// TestRunLoopClockSkewRetried: an R15 clock-skew failure is retried on the
+// normal backoff, not a permanent stop (Nofal, PR #33).
+func TestRunLoopClockSkewRetried(t *testing.T) {
+	t.Parallel()
+	skew := fmt.Errorf("%w: %w", identity.ErrCertificateRejected, identity.ErrClockSkew)
+	c, s := newFakeClock(), &script{errs: []error{skew, skew, retryErr()}}
+	if _, err := controlplane.RunLoop(context.Background(), s.attempt, c); err != nil {
+		t.Fatalf("RunLoop: %v", err)
+	}
+	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute}
+	if fmt.Sprint(c.sleeps) != fmt.Sprint(want) {
+		t.Fatalf("sleeps %v, want %v", c.sleeps, want)
+	}
+}
+
+// TestRunLoopWaitCappedAfterJitter: the jittered wait never exceeds
+// EnrollBackoffCap (Nofal, PR #33); below the cap the jitter is kept.
+func TestRunLoopWaitCappedAfterJitter(t *testing.T) {
+	t.Parallel()
+	up := func(d time.Duration) time.Duration { return d * 12 / 10 }
+	errs := make([]error, 9)
+	for i := range errs {
+		errs[i] = retryErr()
+	}
+	errs[8] = &controlplane.StatusError{Code: codes.Internal} // longest
+	c, s := newFakeClock(), &script{errs: errs}
+	c.jitter = up
+	if _, err := controlplane.RunLoop(context.Background(), s.attempt, c); err != nil {
+		t.Fatal(err)
+	}
+	h := controlplane.EnrollBackoffCap
+	want := []time.Duration{
+		up(time.Minute), up(2 * time.Minute), up(4 * time.Minute), up(8 * time.Minute),
+		up(16 * time.Minute), up(32 * time.Minute), h, h, h,
+	}
+	if fmt.Sprint(c.sleeps) != fmt.Sprint(want) {
+		t.Fatalf("sleeps %v, want %v", c.sleeps, want)
+	}
+	for _, d := range c.sleeps {
+		if d > h {
+			t.Fatalf("slept %v, over the cap", d)
+		}
 	}
 }
