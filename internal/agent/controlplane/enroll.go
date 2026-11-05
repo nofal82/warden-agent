@@ -48,6 +48,10 @@ var (
 	// ErrCompressorRegistered: a gRPC compressor is registered in the
 	// process (R2); no connection is made.
 	ErrCompressorRegistered = errors.New("controlplane: a gRPC compressor is registered")
+	// ErrEnrollStopped: RunEnroll ended for good on an error that a retry
+	// cannot fix (ActionStop). It wraps the cause. The agent exits
+	// non-zero; restarting it is systemd's job (Nofal, PR #33).
+	ErrEnrollStopped = errors.New("controlplane: enrollment stopped")
 	// ErrInvalidEndpoint: the endpoint is not host:port.
 	ErrInvalidEndpoint = errors.New("controlplane: invalid endpoint")
 	// errNilRequest: a caller defect; nothing is sent.

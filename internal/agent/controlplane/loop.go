@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/nofal82/warden-agent/internal/identity"
@@ -45,9 +46,10 @@ func EnrollDelay(n int) time.Duration {
 // RunEnroll runs enrollment for R18a case 3 (identity.StartEnroll): it
 // calls identity.Enroll with send until it succeeds, and retries with the
 // same pending key under the §4.9 backoff after every error ActionOf does
-// not map to ActionStop. It returns identity.ErrTokenExpired once the
-// token has expired (no request is sent then), the error of an ActionStop
-// failure, or ctx's error.
+// not map to ActionStop. Every wait is jittered, then capped at
+// EnrollBackoffCap (Nofal, PR #33). It returns identity.ErrTokenExpired once
+// the token has expired (no request is sent then), ErrEnrollStopped wrapping
+// the cause of an ActionStop failure, or ctx's error.
 func RunEnroll(ctx context.Context, d *identity.StateDir, in identity.EnrollInput, send identity.EnrollFunc) (identity.Identity, error) {
 	return runEnroll(ctx, d, in, send, realClock{})
 }
@@ -81,9 +83,9 @@ func runLoop(ctx context.Context, attempt attemptFunc, c clock) (identity.Identi
 		case ActionRetryLongest:
 			wait = EnrollBackoffCap
 		default:
-			return identity.Identity{}, err
+			return identity.Identity{}, fmt.Errorf("%w: %w", ErrEnrollStopped, err)
 		}
-		if err := c.Sleep(ctx, c.Jitter(wait)); err != nil {
+		if err := c.Sleep(ctx, min(c.Jitter(wait), EnrollBackoffCap)); err != nil {
 			return identity.Identity{}, err
 		}
 	}

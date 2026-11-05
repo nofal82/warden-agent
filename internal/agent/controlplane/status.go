@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
+	"github.com/nofal82/warden-agent/internal/identity"
 )
 
 // R45 detail rules.
@@ -124,14 +125,17 @@ const (
 
 // ActionOf maps an error of one enrollment attempt to an Action, per R16,
 // R45 and §4.8. Errors that did not come from the call (local file, key or
-// R15 failures) are ActionStop.
+// R15 failures) are ActionStop, except an R15 clock-skew failure, which is
+// retried on the normal backoff: once the server clock is fixed, the retry
+// with the same pending key gets the same certificate (agent-identity R17;
+// Nofal, PR #33).
 //
 // §4.8 rows marked terminal (UNIMPLEMENTED; INVALID_ARGUMENT; the library
 // RESOURCE_EXHAUSTED with no detail) stop the loop. An honest control
 // plane never sends them on Enroll, whose refusals are all
 // ENROLLMENT_REFUSED (R16).
 func ActionOf(err error) Action {
-	if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrResponseRefused) {
+	if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrResponseRefused) || errors.Is(err, identity.ErrClockSkew) {
 		return ActionRetry
 	}
 	var se *StatusError
