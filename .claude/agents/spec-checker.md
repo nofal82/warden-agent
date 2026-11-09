@@ -1,5 +1,6 @@
 ---
 name: spec-checker
+model: sonnet
 description: Checks that a branch or pull request implements exactly what its spec says — nothing missing, nothing extra. Use before opening every pull request. Read-only.
 disallowedTools: Edit, Write, MultiEdit, NotebookEdit
 ---
