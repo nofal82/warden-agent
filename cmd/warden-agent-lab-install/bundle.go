@@ -22,7 +22,6 @@ import (
 const (
 	maxBundleBytes   = 64 << 10
 	maxCABytes       = 8 << 10
-	maxManifestBytes = 32 << 10
 	bindingSecretLen = 32
 )
 
@@ -54,20 +53,18 @@ type bundle struct {
 	Endpoints      identity.Endpoints
 	AgentCA        []byte // canonical PEM re-encoding of the DER
 	ControlPlaneCA []byte // canonical PEM re-encoding of the DER
-	Manifest       []byte // decoded; nil when the bundle has none
 	secret         []byte
 }
 
-// wipe overwrites the secret in memory, best effort (R52). The manifest is
-// public (§4.3) and is still to be written; Go strings, such as the token,
-// cannot be cleared.
+// wipe overwrites the secret in memory, best effort (R52). Go strings,
+// such as the token, cannot be cleared.
 func (b *bundle) wipe() {
 	clear(b.secret)
 	b.secret = nil
 }
 
 // bundleFields lists every §4.3 member; true means required for kind
-// "enroll". Any other member is refused.
+// "enroll". Any other member is refused, and so is "manifest" (see fill).
 var bundleFields = map[string]bool{
 	"format_version":          true,
 	"kind":                    true,
@@ -84,8 +81,8 @@ var bundleFields = map[string]bool{
 }
 
 // decodeBundle decodes and validates one §4.3 bundle. It accepts only kind
-// "enroll" (the lab installer has no re-enrollment mode) and refuses a
-// bundle whose expires_at is not after now.
+// "enroll" (the lab installer has no re-enrollment mode) and no manifest,
+// and refuses a bundle whose expires_at is not after now.
 func decodeBundle(data []byte, now time.Time) (*bundle, error) {
 	if len(data) > maxBundleBytes {
 		return nil, fmt.Errorf("%w: over %d bytes", errBundle, maxBundleBytes)
@@ -153,8 +150,10 @@ func (b *bundle) fill(m map[string]any, now time.Time) error {
 	if err := b.fillSecret(str); err != nil {
 		return err
 	}
+	// M1 has no manifest key, so a manifest cannot be verified, and the
+	// installer never stores unverified bytes (Nofal, 2026-11-09, PR #38).
 	if _, ok := m["manifest"]; ok {
-		return b.fillManifest(str)
+		return fmt.Errorf("%w: manifest not accepted in M1 (no manifest key)", errBundle)
 	}
 	return nil
 }
@@ -243,19 +242,6 @@ func (b *bundle) fillSecret(str func(string) (string, error)) error {
 		return fmt.Errorf("%w: executor_binding_secret", errBundle)
 	}
 	b.secret = raw
-	return nil
-}
-
-func (b *bundle) fillManifest(str func(string) (string, error)) error {
-	s, err := str("manifest")
-	if err != nil {
-		return err
-	}
-	raw, err := base64.StdEncoding.Strict().DecodeString(s)
-	if err != nil || len(raw) == 0 || len(raw) > maxManifestBytes {
-		return fmt.Errorf("%w: manifest", errBundle)
-	}
-	b.Manifest = raw
 	return nil
 }
 

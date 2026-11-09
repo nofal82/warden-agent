@@ -42,7 +42,6 @@ const (
 	dirAgentVar  = "var/lib/warden-agent" // agent user 0700
 	dirState     = "identity"             // inside dirAgentVar; agent user 0700 (§4.7)
 	fileSeed     = "result-key.seed"      // executor-ipc R28
-	fileManifest = "bundle-manifest"      // §4.7
 	fileUnit     = "warden-agent-lab.service"
 	seedSize     = ed25519.SeedSize
 )
@@ -173,9 +172,6 @@ func writeAll(d *targets, e env, b *bundle) error {
 		{&d.conf, dirAgentConf, identity.FileAgentCA, r, rg, 0o644, b.AgentCA},
 		{&d.conf, dirAgentConf, identity.FileControlPlaneCA, r, rg, 0o644, b.ControlPlaneCA},
 	}
-	if b.Manifest != nil {
-		outs = append(outs, output{&d.conf, dirAgentConf, fileManifest, r, rg, 0o644, b.Manifest})
-	}
 	outs = append(outs,
 		output{&d.conf, dirAgentConf, identity.FileExecutorBinding, r, rg, 0o644, append(pub, mac[:]...)},
 		output{&d.conf, dirAgentConf, path.Base(labtrust.MarkerPath), r, rg, 0o644, []byte(labtrust.MarkerContent)},
@@ -243,7 +239,7 @@ func (d *targets) preflight() error {
 	}{
 		{d.exec, dirExecutor, []string{fileSeed, identity.FileServerID}},
 		{d.conf, dirAgentConf, []string{identity.FileServerID, identity.FileEndpoints, identity.FileAgentCA,
-			identity.FileControlPlaneCA, fileManifest, identity.FileExecutorBinding, path.Base(labtrust.MarkerPath)}},
+			identity.FileControlPlaneCA, identity.FileExecutorBinding, path.Base(labtrust.MarkerPath)}},
 		{d.state, dirStatePath, []string{identity.FileToken, identity.FileTokenExpires}},
 		{d.systemd, dirSystemd, []string{fileUnit}},
 	}
