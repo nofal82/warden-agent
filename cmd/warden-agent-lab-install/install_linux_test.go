@@ -141,7 +141,7 @@ func assertDir(t *testing.T, root, rel string, perm os.FileMode) {
 
 func TestInstallWritesTrustAndState(t *testing.T) {
 	t.Parallel()
-	for _, withManifest := range []bool{true, false} {
+	for _, withManifest := range []bool{false} {
 		t.Run("manifest="+strconv.FormatBool(withManifest), func(t *testing.T) {
 			t.Parallel()
 			fx := newFixture(t, withManifest)
@@ -276,7 +276,7 @@ func TestInstallRefusesUnsafeBundle(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fx := newFixture(t, true)
+			fx := newFixture(t, false)
 			root := newRoot(t, fx)
 			e := testEnv(root)
 			tc.setup(t, root, &e)
@@ -304,7 +304,7 @@ func TestInstallRefusesExistingTargets(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
 			t.Parallel()
-			fx := newFixture(t, true)
+			fx := newFixture(t, false)
 			root := newRoot(t, fx)
 			mkdir(t, filepath.Join(root, "etc/warden-executor"), 0o700)
 			mkdir(t, filepath.Join(root, "etc/warden-agent"), 0o755)
@@ -369,7 +369,7 @@ func TestInstallRefusesPlantedLinks(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fx := newFixture(t, true)
+			fx := newFixture(t, false)
 			root := newRoot(t, fx)
 			outside := t.TempDir()
 			tc.setup(t, root, outside)
@@ -388,7 +388,7 @@ func TestInstallRefusesPlantedLinks(t *testing.T) {
 // leaves the server untouched and the bundle in place.
 func TestInstallInvalidBundleWritesNothing(t *testing.T) {
 	t.Parallel()
-	fx := newFixture(t, true)
+	fx := newFixture(t, false)
 	fx.fields["expires_at"] = testNow.Add(-time.Second).Unix()
 	root := newRoot(t, fx)
 	before := snapshot(t, root)

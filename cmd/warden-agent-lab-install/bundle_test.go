@@ -152,7 +152,7 @@ func assertNoSecretInError(t *testing.T, fx *fixture, err error) {
 
 func TestDecodeBundleValid(t *testing.T) {
 	t.Parallel()
-	fx := newFixture(t, true)
+	fx := newFixture(t, false)
 	b, err := decodeBundle(fx.encode(t), testNow)
 	if err != nil {
 		t.Fatalf("decodeBundle(valid) = %v", err)
@@ -166,9 +166,6 @@ func TestDecodeBundleValid(t *testing.T) {
 	}
 	if !bytes.Equal(b.AgentCA, fx.agentCA) || !bytes.Equal(b.ControlPlaneCA, fx.cpCA) {
 		t.Errorf("CA PEM is not the canonical re-encoding")
-	}
-	if !bytes.Equal(b.Manifest, fx.manifest) {
-		t.Errorf("manifest = %q, want %q", b.Manifest, fx.manifest)
 	}
 	if !bytes.Equal(b.secret, fx.secret) {
 		t.Errorf("secret not decoded")
@@ -207,8 +204,8 @@ func TestDecodeBundleRefusesFields(t *testing.T) {
 			s[42] = alphabet[strings.IndexByte(alphabet, s[42])|1]
 			fx.fields["executor_binding_secret"] = string(s)
 		}},
-		{"manifest over 32 KiB", func(_ *testing.T, fx *fixture) {
-			fx.fields["manifest"] = base64.StdEncoding.EncodeToString(make([]byte, 32<<10+1))
+		{"manifest present: M1 has no manifest key, unverified bytes are never stored", func(_ *testing.T, fx *fixture) {
+			fx.fields["manifest"] = base64.StdEncoding.EncodeToString([]byte("FAKE-SIGNED-MANIFEST-123"))
 		}},
 		{"unknown field", func(_ *testing.T, fx *fixture) { fx.fields["root_key_fingerprint"] = strings.Repeat("0", 64) }},
 	}
@@ -297,7 +294,7 @@ func TestBindingMACKnownAnswer(t *testing.T) {
 // the MAC is computed.
 func TestBundleWipe(t *testing.T) {
 	t.Parallel()
-	fx := newFixture(t, true)
+	fx := newFixture(t, false)
 	b, err := decodeBundle(fx.encode(t), testNow)
 	if err != nil {
 		t.Fatalf("decodeBundle: %v", err)

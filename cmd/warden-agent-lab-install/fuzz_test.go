@@ -52,8 +52,10 @@ func FuzzDecodeBundle(f *testing.F) {
 		if cas, err := identity.ParseControlPlaneCAs(b.ControlPlaneCA); err != nil || len(cas) != 1 {
 			t.Fatalf("control-plane CA: %v", err)
 		}
-		if b.Manifest != nil && (len(b.Manifest) == 0 || len(b.Manifest) > 32<<10) {
-			t.Fatalf("manifest of %d bytes", len(b.Manifest))
+		if m, err := decodeObject(data); err == nil {
+			if _, ok := m["manifest"]; ok {
+				t.Fatal("accepted a bundle with a manifest (M1 has no manifest key)")
+			}
 		}
 		if len(b.secret) != 32 {
 			t.Fatalf("secret of %d bytes", len(b.secret))
