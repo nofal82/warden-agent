@@ -166,9 +166,11 @@ func newFixture(t *testing.T, files map[string][]byte) (*fixture, agent.Deps) {
 				return nil, errors.New("fake send: not used")
 			}, nil
 		},
-		Enroll: func(_ context.Context, _ *identity.StateDir, in identity.EnrollInput, _ identity.EnrollFunc) (identity.Identity, error) {
+		// One attempt: the send result is ignored, as the fake send fails.
+		Enroll: func(ctx context.Context, _ *identity.StateDir, in identity.EnrollInput, send identity.EnrollFunc) (identity.Identity, error) {
 			f.rec.add("Enroll")
 			f.in = in
+			_, _ = send(ctx, &agentapiv1.EnrollRequest{})
 			return identity.Identity{}, nil
 		},
 		Now: func() time.Time { return testNow },
@@ -309,7 +311,7 @@ func TestTrustedSetPassedToSender(t *testing.T) {
 	if _, err := agent.Run(context.Background(), deps); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	assertCalls(t, f.rec.got(), "CheckRules", "LoadTrust", "Trust", "OpenState", "LoadBinding", "NewSender", "Enroll")
+	assertCalls(t, f.rec.got(), "CheckRules", "LoadTrust", "Trust", "OpenState", "LoadBinding", "Enroll", "Trust", "NewSender")
 	if len(f.sent) != 1 || f.sent[0] != other {
 		t.Fatalf("NewSender trusted set = %v, want exactly the Trust result", f.sent)
 	}
@@ -318,6 +320,36 @@ func TestTrustedSetPassedToSender(t *testing.T) {
 	}
 	if f.in.ServerID != testServerID || f.in.AgentCA != f.tf.AgentCA || f.in.Binding != f.binding {
 		t.Errorf("EnrollInput = %+v", f.in)
+	}
+}
+
+// R37 before every new connection: each enroll attempt re-runs the trust
+// check, and once it refuses (marker removed, CA expired) no client is
+// built and the attempt fails with the trust error.
+func TestTrustRecheckedBeforeEveryAttempt(t *testing.T) {
+	t.Parallel()
+	f, deps := newFixture(t, withToken())
+	n := 0
+	deps.Trust = func(cas []*x509.Certificate, _ time.Time) ([]*x509.Certificate, error) {
+		f.rec.add("Trust")
+		if n++; n > 2 {
+			return nil, agent.ErrTrustCheckImpossible
+		}
+		return cas, nil
+	}
+	var last error
+	deps.Enroll = func(ctx context.Context, _ *identity.StateDir, _ identity.EnrollInput, send identity.EnrollFunc) (identity.Identity, error) {
+		f.rec.add("Enroll")
+		_, _ = send(ctx, &agentapiv1.EnrollRequest{})
+		_, last = send(ctx, &agentapiv1.EnrollRequest{})
+		return identity.Identity{}, fmt.Errorf("%w: %w", controlplane.ErrEnrollStopped, last)
+	}
+	if _, err := agent.Run(context.Background(), deps); !errors.Is(err, agent.ErrTrustCheckImpossible) {
+		t.Fatalf("Run = %v, want ErrTrustCheckImpossible", err)
+	}
+	assertCalls(t, f.rec.got(), "CheckRules", "LoadTrust", "Trust", "OpenState", "LoadBinding", "Enroll", "Trust", "NewSender", "Trust")
+	if controlplane.ActionOf(last) != controlplane.ActionStop {
+		t.Fatalf("ActionOf(trust refusal) = %v, want ActionStop", controlplane.ActionOf(last))
 	}
 }
 

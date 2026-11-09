@@ -54,8 +54,8 @@ func Entries(fileCAs []*x509.Certificate) []identity.CAEntry {
 // Trust wraps the keyset check. The keyset result stands unless it is
 // agent.ErrTrustCheckImpossible (no verified keyset); only then, and only
 // with a good marker, the lab entries are used. The marker is read at
-// every check (R37 cadence), so removing it turns lab trust off without a
-// restart.
+// every check; the agent checks at start and before every new connection
+// (R37), so removing the marker stops new connections without a restart.
 func Trust(keyset agent.TrustFunc, read ReadFunc) agent.TrustFunc {
 	return func(fileCAs []*x509.Certificate, now time.Time) ([]*x509.Certificate, error) {
 		set, err := keyset(fileCAs, now)

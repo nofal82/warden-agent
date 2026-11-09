@@ -81,8 +81,8 @@ func Run(ctx context.Context, deps Deps) (identity.Identity, error) {
 	if err != nil {
 		return identity.Identity{}, fmt.Errorf("agent: trust files: %w", err)
 	}
-	trusted, err := deps.Trust(tf.ControlPlaneCAs, deps.Now())
-	if err != nil {
+	// R37: at start, before any connection.
+	if _, err := deps.Trust(tf.ControlPlaneCAs, deps.Now()); err != nil {
 		return identity.Identity{}, err
 	}
 	d, err := deps.OpenState()
@@ -99,20 +99,30 @@ func Run(ctx context.Context, deps Deps) (identity.Identity, error) {
 	case identity.StartTokenExpired:
 		return identity.Identity{}, identity.ErrTokenExpired
 	case identity.StartEnroll:
-		return enroll(ctx, deps, d, tf, trusted)
+		return enroll(ctx, deps, d, tf)
 	default:
 		return identity.Identity{}, ErrNoIdentity
 	}
 }
 
-func enroll(ctx context.Context, deps Deps, d *identity.StateDir, tf identity.TrustFiles, trusted []*x509.Certificate) (identity.Identity, error) {
+func enroll(ctx context.Context, deps Deps, d *identity.StateDir, tf identity.TrustFiles) (identity.Identity, error) {
 	b, err := deps.LoadBinding()
 	if err != nil {
 		return identity.Identity{}, fmt.Errorf("agent: executor binding: %w", err)
 	}
-	send, err := deps.NewSender(trusted, tf.Endpoints, deps.Now)
-	if err != nil {
-		return identity.Identity{}, fmt.Errorf("agent: enroll client: %w", err)
+	// R37: the trust check runs again before every new connection, so a
+	// removed lab marker or an expired CA stops the retries. A failure here
+	// is not a call error, so RunEnroll stops (ErrEnrollStopped).
+	send := func(ctx context.Context, req *agentapiv1.EnrollRequest) ([]byte, error) {
+		trusted, err := deps.Trust(tf.ControlPlaneCAs, deps.Now())
+		if err != nil {
+			return nil, err
+		}
+		s, err := deps.NewSender(trusted, tf.Endpoints, deps.Now)
+		if err != nil {
+			return nil, fmt.Errorf("agent: enroll client: %w", err)
+		}
+		return s(ctx, req)
 	}
 	in := identity.EnrollInput{ServerID: tf.ServerID, AgentCA: tf.AgentCA, Binding: b}
 	id, err := deps.Enroll(ctx, d, in, send)
