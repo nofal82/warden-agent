@@ -84,7 +84,7 @@ func stateDir(t *testing.T, files map[string][]byte) *identity.StateDir {
 	if err := os.Mkdir(p, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(p, 0o700); err != nil {
+	if err := os.Chmod(p, 0o700); err != nil { // #nosec G302 -- a directory: 0700 is the state-directory mode (§4.7)
 		t.Fatal(err)
 	}
 	for name, data := range files {

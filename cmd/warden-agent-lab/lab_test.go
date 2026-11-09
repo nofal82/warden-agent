@@ -32,10 +32,9 @@ func modulePath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for {
-		f, err := os.Open(filepath.Join(dir, "go.mod"))
+		data, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304 -- go.mod of the test's own module, found from the working directory
 		if err == nil {
-			defer f.Close()
-			sc := bufio.NewScanner(f)
+			sc := bufio.NewScanner(bytes.NewReader(data))
 			for sc.Scan() {
 				if mod, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "module "); ok {
 					return strings.TrimSpace(mod)
@@ -60,7 +59,7 @@ func TestBinaryScanFindsLabPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin, err := os.ReadFile(exe)
+	bin, err := os.ReadFile(exe) // #nosec G304 -- the running test binary itself
 	if err != nil {
 		t.Fatal(err)
 	}
