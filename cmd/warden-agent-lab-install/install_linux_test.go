@@ -86,7 +86,7 @@ func snapshot(t *testing.T, dir string) map[string]entry {
 			e.data, err = os.Readlink(p)
 		case fi.Mode().IsRegular():
 			var b []byte
-			b, err = os.ReadFile(p)
+			b, err = os.ReadFile(p) // #nosec G304 G122 -- reads files under the test's own temporary root, which only this test writes
 			e.data = string(b)
 		}
 		out[p] = e
@@ -124,7 +124,7 @@ func readFile(t *testing.T, root, rel string, perm os.FileMode) []byte {
 	if !fi.Mode().IsRegular() || fi.Mode().Perm() != perm {
 		t.Errorf("%s: mode %v, want regular %v", rel, fi.Mode(), perm)
 	}
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(p) // #nosec G304 -- reads files under the test's own temporary root
 	if err != nil {
 		t.Errorf("%s: %v", rel, err)
 	}
@@ -255,7 +255,7 @@ func TestInstallRefusesUnsafeBundle(t *testing.T) {
 			}
 		}},
 		{"bundle group-readable", func(t *testing.T, root string, _ *env) {
-			if err := os.Chmod(filepath.Join(root, bundleRel), 0o640); err != nil {
+			if err := os.Chmod(filepath.Join(root, bundleRel), 0o640); err != nil { // #nosec G302 -- deliberately unsafe mode: the case under test
 				t.Fatal(err)
 			}
 		}},
@@ -265,7 +265,7 @@ func TestInstallRefusesUnsafeBundle(t *testing.T) {
 			}
 		}},
 		{"bundle directory world-writable", func(t *testing.T, root string, _ *env) {
-			if err := os.Chmod(filepath.Join(root, "root"), 0o777); err != nil {
+			if err := os.Chmod(filepath.Join(root, "root"), 0o777); err != nil { // #nosec G302 -- deliberately unsafe mode: the case under test
 				t.Fatal(err)
 			}
 		}},
@@ -335,7 +335,7 @@ func TestInstallRefusesPlantedLinks(t *testing.T) {
 		{"executor-binding symlink to outside file", func(t *testing.T, root, outside string) {
 			mkdir(t, filepath.Join(root, "etc/warden-agent"), 0o755)
 			victim := filepath.Join(outside, "shadow")
-			if err := os.WriteFile(victim, []byte("FAKE-VICTIM"), 0o644); err != nil {
+			if err := os.WriteFile(victim, []byte("FAKE-VICTIM"), 0o644); err != nil { // #nosec G306 -- decoy file outside the root; its mode is irrelevant
 				t.Fatal(err)
 			}
 			if err := os.Symlink(victim, filepath.Join(root, "etc/warden-agent/executor-binding")); err != nil {
