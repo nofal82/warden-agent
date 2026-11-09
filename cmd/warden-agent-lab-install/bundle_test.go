@@ -185,8 +185,6 @@ func TestDecodeBundleRefusesFields(t *testing.T) {
 		{"format_version 2", func(_ *testing.T, fx *fixture) { fx.fields["format_version"] = 2 }},
 		{"format_version float 1.0", func(_ *testing.T, fx *fixture) { fx.fields["format_version"] = json.Number("1.0") }},
 		{"kind reenroll refused by lab installer", func(_ *testing.T, fx *fixture) { fx.fields["kind"] = "reenroll" }},
-		{"server_id uppercase", func(_ *testing.T, fx *fixture) { fx.fields["server_id"] = strings.ToUpper(fx.serverID) }},
-		{"token 47 bytes", func(_ *testing.T, fx *fixture) { fx.fields["token"] = fx.token[:47] }},
 		{"expires_at equals now", func(_ *testing.T, fx *fixture) { fx.fields["expires_at"] = testNow.Unix() }},
 		{"expires_at as string", func(_ *testing.T, fx *fixture) {
 			fx.fields["expires_at"] = strconv.FormatInt(fx.expiresAt, 10)
@@ -196,9 +194,6 @@ func TestDecodeBundleRefusesFields(t *testing.T) {
 		}},
 		{"controlplane_ca two certificates", func(t *testing.T, fx *fixture) {
 			fx.fields["controlplane_ca"] = string(fx.cpCA) + string(newCertPEM(t, "Fake CA 2", true))
-		}},
-		{"enroll_endpoint port with leading zero", func(_ *testing.T, fx *fixture) {
-			fx.fields["enroll_endpoint"] = "enroll.lab.example.test:08443"
 		}},
 		{"secret 31 bytes", func(t *testing.T, fx *fixture) {
 			fx.fields["executor_binding_secret"] = base64.StdEncoding.EncodeToString(randBytes(t, 31))

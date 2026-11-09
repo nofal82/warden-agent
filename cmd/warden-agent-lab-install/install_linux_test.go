@@ -351,6 +351,20 @@ func TestInstallRefusesPlantedLinks(t *testing.T) {
 		{"executor dir group and other readable", func(t *testing.T, root, _ string) {
 			mkdir(t, filepath.Join(root, "etc/warden-executor"), 0o755)
 		}},
+		{"agent config dir group-writable (R10e)", func(t *testing.T, root, _ string) {
+			mkdir(t, filepath.Join(root, "etc/warden-agent"), 0o775)
+		}},
+		{"identity state dir mode 0755 (R34b)", func(t *testing.T, root, _ string) {
+			mkdir(t, filepath.Join(root, "var/lib/warden-agent"), 0o700)
+			mkdir(t, filepath.Join(root, "var/lib/warden-agent/identity"), 0o755)
+		}},
+		{"token symlink planted in state dir (R34b)", func(t *testing.T, root, outside string) {
+			mkdir(t, filepath.Join(root, "var/lib/warden-agent"), 0o700)
+			mkdir(t, filepath.Join(root, "var/lib/warden-agent/identity"), 0o700)
+			if err := os.Symlink(filepath.Join(outside, "token"), filepath.Join(root, "var/lib/warden-agent/identity/token")); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
