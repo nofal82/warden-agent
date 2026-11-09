@@ -1,5 +1,6 @@
 ---
 name: pr-walkthrough
+model: sonnet
 description: Writes the plain-language walkthrough of a branch or pull request for Nofal, who owns the architecture but does not read Go line by line. Use at the end of every pull request. Read-only.
 disallowedTools: Edit, Write, MultiEdit, NotebookEdit
 ---
