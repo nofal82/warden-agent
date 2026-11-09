@@ -13,6 +13,20 @@ func LoadTrustFiles() (TrustFiles, error) {
 	return loadTrustFiles("/", ConfigDir[1:], 0)
 }
 
+// LoadExecutorBinding reads the executor binding file from ConfigDir under
+// R10e and decodes it (R12, R12b). The agent reads it only to enroll.
+func LoadExecutorBinding() (ExecutorBinding, error) {
+	data, err := readOwnedFile("/", path.Join(ConfigDir[1:], FileExecutorBinding), 0, ExecutorBindingFileSize)
+	if err != nil {
+		return ExecutorBinding{}, err
+	}
+	b, err := ParseExecutorBinding(data)
+	if err != nil {
+		return ExecutorBinding{}, fmt.Errorf("%s: %w", FileExecutorBinding, err)
+	}
+	return b, nil
+}
+
 // loadTrustFiles is LoadTrustFiles with readOwnedFile's test seams.
 // On failure it returns the zero TrustFiles, never a partial one.
 func loadTrustFiles(start, rel string, owner int) (TrustFiles, error) {

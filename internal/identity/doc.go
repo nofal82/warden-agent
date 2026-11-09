@@ -8,7 +8,7 @@
 //     signing request for it (§4.4); the key never leaves this process
 //     except into the agent's own 0600 state files;
 //   - builds the EnrollRequest of agent-api §4.3 from the enrollment token,
-//     the server UUID, the CSR and the executor binding values (R12, R12b);
+//     the server UUID, the CSR and the executor binding file (R12, R12b);
 //   - reads root-owned trust files only when they cannot have been replaced
 //     by the agent user (R10e), and reads and writes the agent's own state
 //     files atomically with the §4.7 rules;

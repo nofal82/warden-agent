@@ -22,6 +22,8 @@ const (
 	FileEndpoints      = "endpoints.json"
 	FileAgentCA        = "agent-ca.pem"
 	FileControlPlaneCA = "controlplane-ca.pem"
+	// FileExecutorBinding: owner root, mode 0644 (§4.7, R12b).
+	FileExecutorBinding = "executor-binding"
 )
 
 // Read limits of the trust files: the exact server-id length (§4.1), the
