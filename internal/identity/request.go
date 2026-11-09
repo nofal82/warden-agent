@@ -19,8 +19,7 @@ const enrollFormatVersion = 1
 // binding MAC the installer computed over it (R12b). The agent cannot check
 // the MAC (it never sees the secret); it only forwards both values.
 //
-// How the values are read from the executor binding file is defined by
-// agent-packaging.md, not yet written; callers pass them in.
+// ParseExecutorBinding reads them from the executor binding file (§4.7).
 type ExecutorBinding struct {
 	PublicKey [ExecutorPublicKeySize]byte
 	MAC       [BindingMACSize]byte
@@ -39,6 +38,23 @@ func NewExecutorBinding(pub, mac []byte) (ExecutorBinding, error) {
 	copy(b.PublicKey[:], pub)
 	copy(b.MAC[:], mac)
 	return b, nil
+}
+
+// ExecutorBindingFileSize is the exact size of the executor binding file:
+// the public key, then the MAC, raw bytes, nothing else. Name and encoding
+// decided by Nofal on 2026-11-09 (warden-agent #35) because
+// agent-packaging.md, which agent-identity §4.7 names for them, is not
+// written yet.
+const ExecutorBindingFileSize = ExecutorPublicKeySize + BindingMACSize
+
+// ParseExecutorBinding decodes the executor binding file: exactly
+// ExecutorBindingFileSize bytes. The agent cannot check the MAC; the
+// control plane does (R13a).
+func ParseExecutorBinding(data []byte) (ExecutorBinding, error) {
+	if len(data) != ExecutorBindingFileSize {
+		return ExecutorBinding{}, fmt.Errorf("%w: binding file is %d bytes, want %d", ErrInvalidBinding, len(data), ExecutorBindingFileSize)
+	}
+	return NewExecutorBinding(data[:ExecutorPublicKeySize], data[ExecutorPublicKeySize:])
 }
 
 // BuildEnrollRequest builds the EnrollRequest of agent-api §4.3 with
