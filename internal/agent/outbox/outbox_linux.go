@@ -41,6 +41,18 @@ var suffixes = map[Part]string{PartGeneral: ".g", PartReserve: ".r", PartTrust: 
 // randReader names temporary files.
 var randReader = rand.Reader
 
+// openat is unix.Openat; tests replace it to inject transient errors.
+var openat = unix.Openat
+
+// errBadFile marks a definite verdict on a message file: it is not a
+// regular file, has the wrong owner, mode or link count, is a symlink, is
+// too large, is gone, fails the strict check, or changed since it was
+// queued. Only such a file is removed. Any other error (EMFILE, EIO,
+// EINTR, ENOMEM …) is transient: the file is kept and the error returned,
+// because removing a valid signed reply would open a result_sequence gap
+// (R28).
+var errBadFile = errors.New("bad message file")
+
 // maxMessageBytes reads MAX_INBOX_MESSAGE from the contract (R52c: no
 // second copy of a limit) and subtracts the AgentMessage field-3 tag and
 // length prefix, so the AgentMessage carrying the stored bytes stays within
@@ -217,7 +229,10 @@ func (o *Outbox) load(d *os.File) error {
 			changed = true
 			continue
 		}
-		e, why := o.readEntry(fd, seq, part)
+		e, why, err := o.readEntry(fd, seq, part)
+		if err != nil {
+			return fmt.Errorf("outbox: read %s/%s: %w", o.dir, name, err)
+		}
 		if why != "" {
 			if err := unlinkNotDir(fd, name); err != nil {
 				return fmt.Errorf("%w: %s/%s: %w", ErrUnsafeDir, o.dir, name, err)
@@ -291,24 +306,46 @@ func fileName(seq uint64, part Part) string {
 }
 
 // readEntry reads and checks one message file. A non-empty reason means
-// the file fails and must be removed.
-func (o *Outbox) readEntry(fd int, seq uint64, part Part) (entry, string) {
+// the file fails and must be removed; an error means it could not be read
+// and must be kept.
+func (o *Outbox) readEntry(fd int, seq uint64, part Part) (entry, string, error) {
 	b, err := o.readAt(fd, fileName(seq, part), o.maxMsg)
-	if err != nil {
-		return entry{}, err.Error()
+	if why, err := verdict(err); why != "" || err != nil {
+		return entry{}, why, err
 	}
 	if err := o.check(seq, b); err != nil {
-		return entry{}, err.Error()
+		return entry{}, err.Error(), nil
 	}
-	return entry{seq: seq, size: uint64(len(b)), part: part, kind: kindOf(b), digest: sha256.Sum256(b)}, ""
+	return entry{seq: seq, size: uint64(len(b)), part: part, kind: kindOf(b), digest: sha256.Sum256(b)}, "", nil
+}
+
+// verdict splits a readAt error into a removal reason (errBadFile) or a
+// transient error to return.
+func verdict(err error) (string, error) {
+	switch {
+	case err == nil:
+		return "", nil
+	case errors.Is(err, errBadFile):
+		return err.Error(), nil
+	default:
+		return "", err
+	}
+}
+
+func bad(format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{errBadFile}, args...)...)
 }
 
 // readAt reads one file of the directory without following a symlink: it
 // must be a regular file owned by the agent user, with no group or other
 // permission bit, one hard link, and at most limit bytes.
 func (o *Outbox) readAt(dfd int, name string, limit int) ([]byte, error) {
-	fd, err := unix.Openat(dfd, name, readFlags, 0)
-	if err != nil {
+	fd, err := openat(dfd, name, readFlags, 0)
+	switch {
+	case errors.Is(err, unix.ELOOP), errors.Is(err, unix.ENOENT):
+		// ELOOP: a symlink under O_NOFOLLOW. ENOENT: gone.
+		return nil, fmt.Errorf("%w: open: %w", errBadFile, err)
+	case err != nil:
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	f := os.NewFile(uintptr(fd), name) // #nosec G115 -- fd is a valid non-negative descriptor
@@ -319,20 +356,20 @@ func (o *Outbox) readAt(dfd int, name string, limit int) ([]byte, error) {
 	}
 	switch {
 	case st.Mode&unix.S_IFMT != unix.S_IFREG:
-		return nil, errors.New("not a regular file")
+		return nil, bad("not a regular file")
 	case int64(st.Uid) != int64(o.uid) || st.Mode&0o077 != 0:
-		return nil, errors.New("wrong owner or mode")
+		return nil, bad("wrong owner or mode")
 	case st.Nlink != 1:
-		return nil, errors.New("more than one hard link")
+		return nil, bad("more than one hard link")
 	case st.Size < 0 || st.Size > int64(limit):
-		return nil, errors.New("too large")
+		return nil, bad("too large")
 	}
 	b, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
 	}
 	if len(b) > limit {
-		return nil, errors.New("too large")
+		return nil, bad("too large")
 	}
 	return b, nil
 }
@@ -626,7 +663,10 @@ func (o *Outbox) Next() (Message, bool, error) {
 			return Message{}, false, nil
 		}
 		e := o.entries[i]
-		b, why := o.reread(fd, e)
+		b, why, err := o.reread(fd, e)
+		if err != nil {
+			return Message{}, false, fmt.Errorf("outbox: read message %d: %w", e.seq, err)
+		}
 		if why != "" {
 			if err := o.remove(fd, i); err != nil {
 				return Message{}, false, err
@@ -640,18 +680,20 @@ func (o *Outbox) Next() (Message, bool, error) {
 	}
 }
 
-func (o *Outbox) reread(fd int, e entry) ([]byte, string) {
+// reread reads a queued message again: a non-empty reason means remove
+// it, an error means keep it and report.
+func (o *Outbox) reread(fd int, e entry) ([]byte, string, error) {
 	b, err := o.readAt(fd, fileName(e.seq, e.part), o.maxMsg)
-	if err != nil {
-		return nil, err.Error()
+	if why, err := verdict(err); why != "" || err != nil {
+		return nil, why, err
 	}
 	if err := o.check(e.seq, b); err != nil {
-		return b, err.Error()
+		return b, err.Error(), nil
 	}
 	if sum := sha256.Sum256(b); !bytes.Equal(sum[:], e.digest[:]) || uint64(len(b)) != e.size {
-		return b, "content changed since it was queued"
+		return b, "content changed since it was queued", nil
 	}
-	return b, ""
+	return b, "", nil
 }
 
 // Ack applies one MessageAck (R32). ACCEPTED and DUPLICATE remove the
@@ -717,7 +759,10 @@ func (o *Outbox) Recheck() (int, error) {
 	removed := 0
 	for i := 0; i < len(o.entries); {
 		e := o.entries[i]
-		b, why := o.reread(fd, e)
+		b, why, err := o.reread(fd, e)
+		if err != nil {
+			return removed, fmt.Errorf("outbox: read message %d: %w", e.seq, err)
+		}
 		if why == "" {
 			i++
 			continue
