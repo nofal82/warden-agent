@@ -255,7 +255,7 @@ func statusDelivery(t testing.TB, id uint64, challenge []byte) []byte {
 
 // endStatus ends a stream with code and the given details.
 func endStatus(code codes.Code, details ...*anypb.Any) error {
-	return status.FromProto(&spb.Status{Code: int32(code), Message: "test end", Details: details}).Err()
+	return status.FromProto(&spb.Status{Code: int32(code), Message: "test end", Details: details}).Err() // #nosec G115 -- gRPC codes are below 17
 }
 
 func endDetail(t testing.TB, r agentapiv1.EndReason) *anypb.Any {
@@ -993,7 +993,7 @@ func TestRunReconnectSchedule(t *testing.T) {
 			if tc.code == codes.Unavailable && (uniformMax != controlplane.ReconnectFirstMax || len(clk.jitters) < 3) {
 				t.Errorf("uniform max = %v, jitter calls = %v", uniformMax, clk.jitters)
 			}
-			if n := srv.dials.Load(); n < int32(len(tc.want)) || n > int32(len(tc.want))+1 {
+			if n := srv.dials.Load(); n < int32(len(tc.want)) || n > int32(len(tc.want))+1 { // #nosec G115 -- at most 4 waits
 				t.Errorf("dials = %d for %d waits", n, len(tc.want))
 			}
 		})

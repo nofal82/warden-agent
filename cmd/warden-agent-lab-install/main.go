@@ -77,5 +77,6 @@ func productionEnv() (env, error) {
 		root: "/", rootUID: 0, rootGID: 0,
 		agentUID: uid, agentGID: gid,
 		now: time.Now, rand: rand.Reader,
+		outboxFS: statOutboxFS,
 	}, nil
 }

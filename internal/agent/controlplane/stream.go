@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"log/slog"
 	"net"
 	"time"
 
@@ -93,8 +92,11 @@ type StreamConfig struct {
 	// Now is the clock for certificate checks and agent_time_ms; nil
 	// means time.Now.
 	Now func() time.Time
-	// Log receives local reports (never payloads, R15); nil discards.
-	Log *slog.Logger
+	// OnEnd runs after every stream end, before the reconnect wait, with
+	// the error that ended it and how long it was up after Welcome, so the
+	// caller can report it locally. The package itself never logs. Nil
+	// skips it.
+	OnEnd func(err error, up time.Duration)
 }
 
 // timings are the stream's durations; production uses defaultTimings,
@@ -134,24 +136,6 @@ type ConnectClient struct {
 	dialer func(context.Context, string) (net.Conn, error)
 }
 
-// NewConnectClient checks cfg and returns a client. Nothing is dialled.
-func NewConnectClient(cfg StreamConfig) (*ConnectClient, error) {
-	return nil, errors.New("not implemented")
-}
-
-// Run holds the stream until ctx is done, reconnecting under §4.9 after
-// every end, and returns ctx's error.
-func (c *ConnectClient) Run(ctx context.Context) error {
-	return errors.New("not implemented")
-}
-
-// RunOnce dials, runs one stream until it ends, and closes the
-// connection. It returns how long the stream was up after Welcome (zero
-// when no Welcome arrived) and why it ended.
-func (c *ConnectClient) RunOnce(ctx context.Context) (time.Duration, error) {
-	return 0, errors.New("not implemented")
-}
-
 // EndAction is what the reconnect loop does after a stream ended.
 type EndAction int
 
@@ -169,44 +153,10 @@ const (
 	EndRecheckOutbox
 )
 
-// EndActionOf maps the error that ended a stream to an EndAction.
-func EndActionOf(err error) EndAction {
-	return EndReconnectLongest
-}
-
-// ReconnectDelay is the un-jittered delay before reconnect number n
-// (n ≥ 2): ReconnectBase doubled n-2 times, at most ReconnectCap. The first
-// reconnect (n ≤ 1) waits a uniform random delay in [0, ReconnectFirstMax]
-// instead and is not covered here.
-func ReconnectDelay(n int) time.Duration {
-	return 0
-}
-
-// RetryLaterDelay is the un-jittered delay before the n-th consecutive
-// retry of a RETRY_LATER message (n ≥ 1): RetryLaterFirst doubled n-1
-// times, at most RetryLaterCap.
-func RetryLaterDelay(n int) time.Duration {
-	return 0
-}
-
-// DecodeControl applies §4.5 and R12 to one ControlMessage from the
-// control plane: the size limit, the strict decoder, exactly one member,
-// and the field limits of §4.5 (Welcome, Delivery and its content,
-// MessageAck with its outcome and reason pairing).
-func DecodeControl(b []byte) (*agentapiv1.ControlMessage, error) {
-	return nil, errors.New("not implemented")
-}
-
 // HealthInput is what a HealthReport is built from.
 type HealthInput struct {
 	Now               time.Time
 	ExecutorAvailable bool
 	Outbox            outbox.Stats
 	CAFileSHA256      [][]byte
-}
-
-// BuildHealth returns the HealthReport of R39–R41 for in. It never
-// carries the instance ID.
-func BuildHealth(in HealthInput) *agentapiv1.HealthReport {
-	return nil
 }
