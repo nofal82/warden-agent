@@ -197,13 +197,13 @@ func TestOpenStorageConfirmation(t *testing.T) {
 		if err := syscall.Statfs(dir, &st); err != nil {
 			t.Fatal(err)
 		}
-		if uint64(st.Blocks)*uint64(st.Bsize) <= outbox.StorageBudget {
+		if uint64(st.Blocks)*uint64(st.Bsize) <= outbox.StorageBudget { // #nosec G115 -- block counts and sizes are non-negative
 			t.Skip("tmp filesystem is within the storage budget")
 		}
 		_, err := openTimed(t, dir, outbox.Options{})
 		if !errors.Is(err, outbox.ErrStorageUnconfirmed) {
 			t.Fatalf("Open on a %d-byte filesystem: err = %v, want ErrStorageUnconfirmed",
-				uint64(st.Blocks)*uint64(st.Bsize), err)
+				uint64(st.Blocks)*uint64(st.Bsize), err) // #nosec G115 -- block counts and sizes are non-negative
 		}
 	})
 }
@@ -214,7 +214,7 @@ type tamper func(t *testing.T, path, outside string, valid []byte)
 
 func writeOver(b []byte) tamper {
 	return func(t *testing.T, p, _ string, _ []byte) {
-		if err := os.WriteFile(p, b, 0o600); err != nil {
+		if err := os.WriteFile(p, b, 0o600); err != nil { // #nosec G304 G703 -- test file under t.TempDir()
 			t.Fatal(err)
 		}
 	}
@@ -259,7 +259,7 @@ func badFileCases(t *testing.T) []struct {
 		{"world writable", func(t *testing.T, p, _ string, _ []byte) { chmod(t, p, 0o666) }},
 		{"symlink to a valid copy outside", func(t *testing.T, p, out string, v []byte) {
 			target := filepath.Join(out, "copy")
-			if err := os.WriteFile(target, v, 0o600); err != nil {
+			if err := os.WriteFile(target, v, 0o600); err != nil { // #nosec G304 G703 -- test file under t.TempDir()
 				t.Fatal(err)
 			}
 			replaceWithSymlink(t, p, target)
@@ -329,7 +329,7 @@ func TestOpenRemovesBadMessageFiles(t *testing.T) {
 			enqueue(t, o, envResult(1))
 			enqueue(t, o, envResult(2))
 			p := mustMsgPath(t, dir, 2)
-			valid, err := os.ReadFile(p)
+			valid, err := os.ReadFile(p) // #nosec G304 -- test file under t.TempDir()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -501,7 +501,7 @@ func TestStatsMatchDiskAfterReload(t *testing.T) {
 			}
 			ps := parts[filepath.Ext(n)[1:]]
 			ps.Files++
-			ps.Bytes += uint64(fi.Size())
+			ps.Bytes += uint64(fi.Size()) // #nosec G115 -- block counts and sizes are non-negative
 		}
 		if st.General != *parts["g"] || st.Reserve != *parts["r"] || st.Trust != *parts["t"] {
 			t.Fatalf("%s: parts %+v/%+v/%+v, disk %+v/%+v/%+v", what,

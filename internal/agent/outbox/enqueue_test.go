@@ -105,7 +105,7 @@ func TestEnqueueStoresExactBytes(t *testing.T) {
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok && (st.Nlink != 1 || int(st.Uid) != os.Geteuid()) {
 			t.Fatalf("seq %d: nlink %d uid %d", seq, st.Nlink, st.Uid)
 		}
-		got, err := os.ReadFile(path)
+		got, err := os.ReadFile(path) // #nosec G304 G703 -- test file under t.TempDir()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestEnqueueDoesNotAliasPayloadOrResult(t *testing.T) {
 	p.GetSignedReply().Signed[0] ^= 0xff
 	p.GetSignedReply().Kind = agentapiv1.ReplyKind_REPLY_KIND_STATUS
 
-	got, err := os.ReadFile(filepath.Join(dir, fileName(1, "g")))
+	got, err := os.ReadFile(filepath.Join(dir, fileName(1, "g"))) // #nosec G304 -- test file under t.TempDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestConcurrentEnqueue(t *testing.T) {
 		go func(w int) {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
-				s, err := o.Enqueue(recovery(byte(w*each + i)))
+				s, err := o.Enqueue(recovery(byte(w*each + i))) // #nosec G115 -- test seed, wraps by design
 				if err != nil {
 					errs <- err
 					return

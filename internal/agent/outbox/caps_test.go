@@ -318,19 +318,30 @@ func TestConditionFullUntilAcked(t *testing.T) {
 // TestGeneralFileCapAndHighWater: R33 OUTBOX_MAX_MESSAGES, item 1, AC26.
 func TestGeneralFileCapAndHighWater(t *testing.T) {
 	if testing.Short() {
-		t.Skip("writes 20,000 files")
+		t.Skip("loads 20,000 files")
 	}
-	o, dir, _ := fresh(t)
+	rec := func(i uint64) *agentapiv1.OutboxPayload { return recovery(byte(i)) } // #nosec G115 -- test seed, wraps by design
 	high := outbox.MaxGeneralFiles * 8 / 10
-	for i := 1; i <= outbox.MaxGeneralFiles; i++ {
-		enqueue(t, o, recovery(byte(i)))
-		c := o.Stats().Condition
-		switch {
-		case i == high-1 && c != outbox.ConditionNone:
-			t.Fatalf("%d files: Condition %v, want None", i, c)
-		case i == high && c != outbox.ConditionHighWater:
-			t.Fatalf("%d files: Condition %v, want HighWater", i, c)
+	{
+		dir := newDir(t)
+		seedGeneral(t, dir, uint64(high-2), rec)
+		o := openOrFail(t, dir, newFakeFS())
+		for i := high - 1; i <= high; i++ {
+			enqueue(t, o, recovery(byte(i))) // #nosec G115 -- test seed, wraps by design
+			c := o.Stats().Condition
+			switch {
+			case i == high-1 && c != outbox.ConditionNone:
+				t.Fatalf("%d files: Condition %v, want None", i, c)
+			case i == high && c != outbox.ConditionHighWater:
+				t.Fatalf("%d files: Condition %v, want HighWater", i, c)
+			}
 		}
+	}
+	dir := newDir(t)
+	seedGeneral(t, dir, outbox.MaxGeneralFiles-2, rec)
+	o := openOrFail(t, dir, newFakeFS())
+	for i := outbox.MaxGeneralFiles - 1; i <= outbox.MaxGeneralFiles; i++ {
+		enqueue(t, o, recovery(byte(i))) // #nosec G115 -- test seed, wraps by design
 	}
 	before := snapshot(t, dir)
 	if _, err := o.Enqueue(recovery(0)); !errors.Is(err, outbox.ErrFull) {
@@ -365,10 +376,16 @@ func TestGeneralFileCapAndHighWater(t *testing.T) {
 // TestGeneralByteCapAndHighWater: R33 OUTBOX_MAX_BYTES, item 1.
 func TestGeneralByteCapAndHighWater(t *testing.T) {
 	if testing.Short() {
-		t.Skip("writes 64 MiB")
+		t.Skip("loads about 64 MiB")
 	}
-	o, dir, _ := fresh(t)
 	p := bigReply(agentapiv1.ReplyKind_REPLY_KIND_STATUS, 1)
+	dir := newDir(t)
+	// Start just under high water: about 920 of the ~1,170 messages that fit.
+	seedGeneral(t, dir, 920, func(uint64) *agentapiv1.OutboxPayload { return p })
+	o := openOrFail(t, dir, newFakeFS())
+	if c := o.Stats().Condition; c != outbox.ConditionNone {
+		t.Fatalf("seeded Condition = %v, want None", c)
+	}
 	size := uint64(len(encode(t, 1, p)))
 	for i := 0; ; i++ {
 		before := o.Stats().General.Bytes
@@ -394,8 +411,14 @@ func TestGeneralByteCapAndHighWater(t *testing.T) {
 			t.Fatal("general byte cap never reached")
 		}
 	}
-	if _, err := o.Enqueue(advisory(1)); !errors.Is(err, outbox.ErrFull) {
-		t.Fatalf("advisory: err = %v, want ErrFull", err)
+	// A small advisory may still fit under the byte cap; it must never
+	// go into a reserve, and the cap must hold either way.
+	if s, err := o.Enqueue(advisory(1)); err == nil {
+		if suffixOf(t, dir, s) != "g" {
+			t.Fatal("advisory written outside the general part")
+		}
+	} else if !errors.Is(err, outbox.ErrFull) {
+		t.Fatalf("advisory: err = %v, want nil or ErrFull", err)
 	}
 	if b := o.Stats().General.Bytes; b > outbox.MaxGeneralBytes {
 		t.Fatalf("General.Bytes = %d > cap", b)

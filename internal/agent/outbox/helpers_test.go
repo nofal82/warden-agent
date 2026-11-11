@@ -3,10 +3,10 @@ package outbox_test
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -70,7 +70,7 @@ func newDir(t *testing.T) string {
 	if err := os.Mkdir(d, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(d, 0o700); err != nil {
+	if err := os.Chmod(d, 0o700); err != nil { // #nosec G302 -- a directory needs its x bit; 0700 is owner only
 		t.Fatal(err)
 	}
 	return d
@@ -125,7 +125,7 @@ func fresh(t *testing.T) (*outbox.Outbox, string, *fakeFS) {
 func fill(n int, seed byte) []byte {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = byte(i*31) ^ seed
+		b[i] = byte(i*31) ^ seed // #nosec G115 -- test seed, wraps by design
 	}
 	return b
 }
@@ -301,7 +301,7 @@ func suffixOf(t *testing.T, dir string, seq uint64) string {
 
 func readWatermark(t *testing.T, dir string) uint64 {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, outbox.WatermarkFile))
+	b, err := os.ReadFile(filepath.Join(dir, outbox.WatermarkFile)) // #nosec G304 -- test file under t.TempDir()
 	if err != nil {
 		t.Fatalf("read watermark: %v", err)
 	}
@@ -335,7 +335,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := os.ReadFile(p)
+		b, _ := os.ReadFile(p) // #nosec G304 -- test file under t.TempDir()
 		m[e.Name()] = fmt.Sprintf("%v|%x", fi.Mode(), b)
 	}
 	return m
@@ -371,13 +371,8 @@ func messageFiles(t *testing.T, dir string) []string {
 
 func equalSeqs(t *testing.T, what string, got, want []uint64) {
 	t.Helper()
-	if len(got) != len(want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("%s = %v, want %v", what, got, want)
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("%s = %v, want %v", what, got, want)
-		}
 	}
 }
 
@@ -398,18 +393,24 @@ func mustBytesEqual(t *testing.T, what string, got, want []byte) {
 	}
 }
 
-func isErr(err error, targets ...error) bool {
-	for _, tg := range targets {
-		if errors.Is(err, tg) {
-			return true
-		}
-	}
-	return false
-}
-
 // mixed is one payload of every kind the outbox carries (R30).
 func mixed() []*agentapiv1.OutboxPayload {
 	return []*agentapiv1.OutboxPayload{
 		envResult(1), trustResult(2), statusReply(3), advisory(4), oversize(), recovery(6),
 	}
+}
+
+// seedGeneral writes n general-part message files (seq 1 … n) straight to
+// dir, without the outbox and without fsync, and the watermark n+1, so the
+// cap tests start near a limit without 20,000 durable writes. Open then
+// loads and checks them like any other files.
+func seedGeneral(t *testing.T, dir string, n uint64, payload func(i uint64) *agentapiv1.OutboxPayload) {
+	t.Helper()
+	for i := uint64(1); i <= n; i++ {
+		b := encode(t, i, payload(i))
+		if err := os.WriteFile(filepath.Join(dir, fileName(i, "g")), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWatermark(t, dir, n+1)
 }

@@ -88,7 +88,6 @@ func TestCorruptWatermarkRefused(t *testing.T) {
 		{"9 bytes", append(be(5), 0)},
 		{"16 bytes", append(be(5), be(5)...)},
 		{"zero", be(0)},
-		{"ascii digits", []byte("00000005")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

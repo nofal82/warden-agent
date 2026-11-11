@@ -209,16 +209,16 @@ func TestNextSkipsFileRemovedOrCorruptedBehindBack(t *testing.T) {
 		}, false},
 		{"garbage", func(t *testing.T, p, _ string) { writeOver(fill(80, 1))(t, p, "", nil) }, true},
 		{"truncated", func(t *testing.T, p, _ string) {
-			b, _ := os.ReadFile(p)
+			b, _ := os.ReadFile(p) // #nosec G304 G703 -- test file under t.TempDir()
 			writeOver(b[:len(b)/2])(t, p, "", nil)
 		}, true},
 		{"seq of another message", func(t *testing.T, p, _ string) {
 			writeOver(encode(t, 3, envResult(1)))(t, p, "", nil)
 		}, true},
 		{"symlink to a valid copy", func(t *testing.T, p, out string) {
-			b, _ := os.ReadFile(p)
+			b, _ := os.ReadFile(p) // #nosec G304 G703 -- test file under t.TempDir()
 			target := out + "/copy"
-			if err := os.WriteFile(target, b, 0o600); err != nil {
+			if err := os.WriteFile(target, b, 0o600); err != nil { // #nosec G304 G703 -- test file under t.TempDir()
 				t.Fatal(err)
 			}
 			replaceWithSymlink(t, p, target)
