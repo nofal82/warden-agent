@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -50,10 +51,15 @@ type session struct {
 
 	lastHealth time.Time
 	lastConds  []agentapiv1.AgentCondition
+
+	in       chan recvd         // filled by receive only
+	cancel   context.CancelFunc // ends the stream (watchdog)
+	sendFrom atomic.Int64       // UnixNano when the send in progress began; 0 when none
+	wedged   atomic.Bool        // the watchdog ended the stream
 }
 
-func newSession(c *ConnectClient, cs grpc.ClientStream, l streamLimits) *session {
-	return &session{c: c, cs: cs, l: l, inflight: map[uint64]time.Time{}}
+func newSession(c *ConnectClient, cs grpc.ClientStream, l streamLimits, cancel context.CancelFunc) *session {
+	return &session{c: c, cs: cs, l: l, inflight: map[uint64]time.Time{}, in: make(chan recvd, 1), cancel: cancel}
 }
 
 func (s *session) run(ctx context.Context) (time.Duration, error) {
@@ -62,8 +68,9 @@ func (s *session) run(ctx context.Context) (time.Duration, error) {
 			s.resume.Stop()
 		}
 	}()
-	in := make(chan recvd, 1)
+	in := s.in
 	go s.receive(ctx, in)
+	go s.watchdog(ctx)
 
 	if err := s.sendHello(); err != nil {
 		return 0, err
@@ -95,6 +102,9 @@ func (s *session) run(ctx context.Context) (time.Duration, error) {
 		select {
 		case <-ctx.Done():
 			stopAck()
+			if s.wedged.Load() {
+				return up(), fmt.Errorf("%w: send blocked", ErrAckTimeout)
+			}
 			return up(), ctx.Err()
 		case r := <-in:
 			stopAck()
@@ -199,7 +209,10 @@ func (s *session) sendHealth(force bool) error {
 	})
 	since := time.Since(s.lastHealth)
 	changed := !slices.Equal(h.GetConditions(), s.lastConds)
-	if !force && (since < s.c.t.HealthMinGap || (!changed && since < s.c.t.HealthInterval)) {
+	// The check runs on a HealthMinGap tick, so an unchanged report goes
+	// out on the first tick at or after HealthInterval-HealthMinGap: never
+	// later than HEALTH_INTERVAL after the last one (R39).
+	if !force && (since < s.c.t.HealthMinGap || (!changed && since < s.c.t.HealthInterval-s.c.t.HealthMinGap)) {
 		return nil
 	}
 	if err := s.send(&agentapiv1.AgentMessage{Body: &agentapiv1.AgentMessage_Health{Health: h}}); err != nil {
@@ -308,15 +321,51 @@ func (s *session) sendRaw(b []byte) error {
 	if len(b) > s.l.send {
 		return fmt.Errorf("controlplane: message of %d bytes over the send limit", len(b))
 	}
-	if err := s.cs.SendMsg(&rawFrame{b: b}); err != nil {
-		if errors.Is(err, io.EOF) {
-			// The stream ended; the real status comes from RecvMsg.
-			var f rawFrame
-			return streamError(s.cs.RecvMsg(&f), s.cs)
-		}
-		return streamError(err, s.cs)
+	s.sendFrom.Store(time.Now().UnixNano())
+	err := s.cs.SendMsg(&rawFrame{b: b})
+	s.sendFrom.Store(0)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if s.wedged.Load() {
+		return fmt.Errorf("%w: send blocked", ErrAckTimeout)
+	}
+	if errors.Is(err, io.EOF) {
+		// The stream ended; its status reaches the receive goroutine,
+		// the only caller of RecvMsg (gRPC allows one at a time).
+		select {
+		case r := <-s.in:
+			if r.err != nil {
+				return r.err
+			}
+			return fmt.Errorf("%w: stream closed during a send", ErrProtocol)
+		case <-time.After(s.c.t.AckTimeout):
+			return fmt.Errorf("%w: no status after the stream closed", ErrAckTimeout)
+		}
+	}
+	return streamError(err, s.cs)
+}
+
+// watchdog ends the stream when one send has been blocked for
+// MESSAGE_ACK_TIMEOUT: a peer that never opens its flow-control window
+// would otherwise hold the send loop, so neither the acknowledgement
+// timeout nor the health tick could run (R32, R47).
+func (s *session) watchdog(ctx context.Context) {
+	t := time.NewTicker(max(s.c.t.AckTimeout/4, time.Millisecond))
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			from := s.sendFrom.Load()
+			if from != 0 && time.Since(time.Unix(0, from)) >= s.c.t.AckTimeout {
+				s.wedged.Store(true)
+				s.cancel()
+				return
+			}
+		}
+	}
 }
 
 // streamError reduces the error that ended a stream to a StatusError
@@ -329,7 +378,9 @@ func streamError(err error, cs grpc.ClientStream) error {
 		return &StatusError{Code: codes.OK}
 	}
 	st := status.Convert(err)
-	if st.Code() == codes.ResourceExhausted && cs != nil {
+	// Only a status with no detail can be the agent's own limit: the
+	// control plane's RATE_LIMITED or unknown reasons carry one (R45).
+	if st.Code() == codes.ResourceExhausted && cs != nil && len(st.Proto().GetDetails()) == 0 {
 		if h, herr := cs.Header(); herr == nil && len(h) > 0 {
 			return fmt.Errorf("%w: over the size limit", ErrControlRefused)
 		}

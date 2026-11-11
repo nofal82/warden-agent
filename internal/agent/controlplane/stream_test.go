@@ -999,3 +999,81 @@ func TestRunReconnectSchedule(t *testing.T) {
 		})
 	}
 }
+
+// R39: with nothing changing, a HealthReport still goes out at least every
+// HEALTH_INTERVAL (the check runs on a HealthMinGap tick, so a naive
+// "since >= interval" test would send one interval plus a gap late).
+func TestConnectHealthAtLeastEveryInterval(t *testing.T) {
+	t.Parallel()
+	p := newStreamPKI(t)
+	var gaps []time.Duration
+	srv := startStream(t, p, func(s *session) error {
+		if _, err := s.next(5 * time.Second); err != nil {
+			return err
+		}
+		if err := s.send(goodWelcome(t)); err != nil {
+			return err
+		}
+		var last time.Time
+		for len(gaps) < 2 {
+			b, err := s.next(2 * time.Second)
+			if err != nil {
+				return err
+			}
+			if m := decodeAgent(b); m == nil || m.GetHealth() == nil {
+				continue
+			}
+			if !last.IsZero() {
+				gaps = append(gaps, time.Since(last))
+			}
+			last = time.Now()
+		}
+		return nil
+	})
+	c := newConnect(t, streamCfg(p, newFakeOutbox(t, 0)), srv, func(tm *controlplane.Timings) {
+		tm.HealthMinGap, tm.HealthInterval = 50*time.Millisecond, 300*time.Millisecond
+	})
+	_, _ = c.RunOnce(shortCtx(t, 5*time.Second))
+	if len(gaps) != 2 {
+		t.Fatalf("health reports seen = %d gaps, want 2", len(gaps))
+	}
+	for _, g := range gaps {
+		if g < 50*time.Millisecond || g > 300*time.Millisecond+40*time.Millisecond {
+			t.Errorf("health gap %v, want within [50ms, 300ms] (+ scheduling slack)", g)
+		}
+	}
+}
+
+// R45 after Welcome: response headers have arrived, yet a
+// RESOURCE_EXHAUSTED that carries a detail is the control plane's answer,
+// never the agent's own size limit. RATE_LIMITED keeps its own row and an
+// unknown reason takes the longest backoff.
+func TestConnectResourceExhaustedAfterWelcome(t *testing.T) {
+	t.Parallel()
+	p := newStreamPKI(t)
+	for _, tc := range []struct {
+		reason agentapiv1.EndReason
+		want   controlplane.EndAction
+	}{
+		{agentapiv1.EndReason_END_REASON_RATE_LIMITED, controlplane.EndReconnect},
+		{agentapiv1.EndReason(99), controlplane.EndReconnectLongest},
+	} {
+		t.Run(tc.reason.String(), func(t *testing.T) {
+			t.Parallel()
+			srv := startStream(t, p, func(s *session) error {
+				if _, err := s.next(5 * time.Second); err != nil {
+					return err
+				}
+				if err := s.send(goodWelcome(t)); err != nil {
+					return err
+				}
+				return endStatus(codes.ResourceExhausted, endDetail(t, tc.reason))
+			})
+			c := newConnect(t, streamCfg(p, newFakeOutbox(t, 0)), srv, nil)
+			_, err := c.RunOnce(shortCtx(t, 5*time.Second))
+			if got := controlplane.EndActionOf(err); got != tc.want {
+				t.Fatalf("RunOnce = %v, EndActionOf = %v, want %v", err, got, tc.want)
+			}
+		})
+	}
+}

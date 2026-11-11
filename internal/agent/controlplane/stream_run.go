@@ -221,7 +221,7 @@ func (c *ConnectClient) RunOnce(ctx context.Context) (time.Duration, error) {
 	if err != nil {
 		return 0, streamError(err, cs)
 	}
-	s := newSession(c, cs, l)
+	s := newSession(c, cs, l, cancel)
 	return s.run(sctx)
 }
 
