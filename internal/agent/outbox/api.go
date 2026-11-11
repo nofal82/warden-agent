@@ -75,6 +75,11 @@ var (
 	ErrStorageUnconfirmed = errors.New("outbox: storage limit not confirmed")
 	// ErrCorruptWatermark: the watermark file exists but is not valid.
 	ErrCorruptWatermark = errors.New("outbox: corrupt watermark")
+	// ErrNoWatermark: the watermark file is missing. Open never recreates
+	// it, so message_seq cannot restart after the outbox drains (R29).
+	ErrNoWatermark = errors.New("outbox: watermark missing")
+	// ErrNotEmpty: Create was called on a directory that is in use.
+	ErrNotEmpty = errors.New("outbox: directory not empty")
 	// ErrSequenceExhausted: no message_seq is left.
 	ErrSequenceExhausted = errors.New("outbox: message_seq exhausted")
 )

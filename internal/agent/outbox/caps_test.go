@@ -287,7 +287,7 @@ func TestReservesAreSeparate(t *testing.T) {
 // TestConditionFullUntilAcked: R33 item 2 (OUTBOX_FULL from a general
 // refusal until the general part is under 90 % of both limits).
 func TestConditionFullUntilAcked(t *testing.T) {
-	o, _, fs := fresh(t)
+	o, dir, fs := fresh(t)
 	enqueue(t, o, recovery(1))
 	enqueue(t, o, recovery(2))
 	if c := o.Stats().Condition; c != outbox.ConditionNone {
@@ -306,12 +306,37 @@ func TestConditionFullUntilAcked(t *testing.T) {
 	}
 	fs.setAvail(1 << 40)
 	if c := o.Stats().Condition; c != outbox.ConditionFull {
-		t.Fatalf("Condition before any ack = %v, want Full", c)
+		t.Fatalf("Condition before the next write = %v, want Full", c)
 	}
-	mustNext(t, o, 1)
-	ack(t, o, 1, accepted)
+	// The floor is re-checked on the next write: space is back, so the
+	// write goes into the general part and OUTBOX_FULL clears.
+	if s := enqueue(t, o, advisory(2)); suffixOf(t, dir, s) != "g" {
+		t.Fatal("advisory not in the general part")
+	}
 	if c := o.Stats().Condition; c != outbox.ConditionNone {
-		t.Fatalf("Condition after an ack = %v, want None", c)
+		t.Fatalf("Condition after a general write with space = %v, want None", c)
+	}
+}
+
+// TestTransientStatfsErrorDoesNotStickFull: one statfs failure makes the
+// general part full for that write only; the next write re-checks, so
+// OUTBOX_FULL cannot stay set and keep the control plane from signing for
+// this server (R33 item 4; security review MEDIUM).
+func TestTransientStatfsErrorDoesNotStickFull(t *testing.T) {
+	o, dir, fs := fresh(t)
+	fs.setErr(errors.New("statfs: transient"))
+	if _, err := o.Enqueue(advisory(1)); !errors.Is(err, outbox.ErrFull) {
+		t.Fatalf("err = %v, want ErrFull", err)
+	}
+	if c := o.Stats().Condition; c != outbox.ConditionFull {
+		t.Fatalf("Condition = %v, want Full", c)
+	}
+	fs.setErr(nil)
+	if s := enqueue(t, o, advisory(2)); suffixOf(t, dir, s) != "g" {
+		t.Fatal("advisory not in the general part")
+	}
+	if c := o.Stats().Condition; c != outbox.ConditionNone {
+		t.Fatalf("Condition = %v, want None", c)
 	}
 }
 

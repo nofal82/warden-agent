@@ -153,7 +153,6 @@ func TestWatermarkRecoveredFromFiles(t *testing.T) {
 		wm   uint64 // 0: remove the watermark
 		want uint64
 	}{
-		{"missing", 0, 4},
 		{"lower than a file", 2, 4},
 		{"equal to the last file", 3, 4},
 		{"exact", 4, 4},
@@ -242,5 +241,62 @@ func TestParseWatermark(t *testing.T) {
 				t.Fatalf("err = %v, want ErrCorruptWatermark", err)
 			}
 		})
+	}
+}
+
+// TestMissingWatermarkFailsClosed: the watermark survives the outbox
+// emptying, and Open never recreates a lost one, so message_seq never
+// restarts (R29, must-apply 7).
+func TestMissingWatermarkFailsClosed(t *testing.T) {
+	for _, drained := range []bool{true, false} {
+		name := "with messages"
+		if drained {
+			name = "drained"
+		}
+		t.Run(name, func(t *testing.T) {
+			o, dir, fs := fresh(t)
+			seqs := enqueueN(t, o, 3)
+			if drained {
+				for _, s := range seqs {
+					mustNext(t, o, s)
+					ack(t, o, s, accepted)
+				}
+				if wm := readWatermark(t, dir); wm != 4 {
+					t.Fatalf("watermark after drain = %d, want 4", wm)
+				}
+			}
+			if err := os.Remove(filepath.Join(dir, outbox.WatermarkFile)); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshot(t, dir)
+			if _, err := openTimed(t, dir, opts(fs)); !errors.Is(err, outbox.ErrNoWatermark) {
+				t.Fatalf("err = %v, want ErrNoWatermark", err)
+			}
+			sameSnapshot(t, "outbox dir", before, snapshot(t, dir))
+			if !drained {
+				if err := outbox.Create(dir); !errors.Is(err, outbox.ErrNotEmpty) {
+					t.Fatalf("Create on a used dir: err = %v, want ErrNotEmpty", err)
+				}
+			}
+		})
+	}
+}
+
+// TestCreate: Create writes the first watermark into an empty directory
+// only.
+func TestCreate(t *testing.T) {
+	dir := newDir(t) // newDir calls Create
+	if wm := readWatermark(t, dir); wm != 1 {
+		t.Fatalf("watermark = %d, want 1", wm)
+	}
+	if err := outbox.Create(dir); !errors.Is(err, outbox.ErrNotEmpty) {
+		t.Fatalf("second Create: err = %v, want ErrNotEmpty", err)
+	}
+	if err := outbox.Create("relative/dir"); !errors.Is(err, outbox.ErrUnsafeDir) {
+		t.Fatalf("relative: err = %v, want ErrUnsafeDir", err)
+	}
+	o := openOrFail(t, dir, newFakeFS())
+	if s := enqueue(t, o, recovery(1)); s != 1 {
+		t.Fatalf("first seq = %d, want 1", s)
 	}
 }

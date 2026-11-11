@@ -101,7 +101,8 @@ type Outbox struct {
 	entries  []entry // ascending seq
 	parts    map[Part]*PartStats
 	rejected uint64
-	full     bool
+	full     bool // a general cap was hit; cleared under 90 % of both caps
+	noSpace  bool // the free-space floor or statfs refused; re-checked on the next write
 	inflight map[uint64]bool
 	sendFrom uint64 // Next returns the first entry with seq >= sendFrom
 }
@@ -447,12 +448,14 @@ func parseWatermark(b []byte) (uint64, error) {
 	return v, nil
 }
 
-// readWatermark returns the stored next sequence, or 1 when the file does
-// not exist yet (first start).
+// readWatermark returns the stored next sequence.
 func (o *Outbox) readWatermark(fd int) (uint64, error) {
 	b, err := o.readAt(fd, WatermarkFile, watermarkSz+1)
 	if errors.Is(err, unix.ENOENT) {
-		return 1, nil
+		// Never recreated here: after the outbox drains, a missing
+		// watermark would restart message_seq at 1 (R29, must-apply 7).
+		// Only Create writes the first one.
+		return 0, fmt.Errorf("%w: %s/%s", ErrNoWatermark, o.dir, WatermarkFile)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("%w: %s/%s: %w", ErrCorruptWatermark, o.dir, WatermarkFile, err)
@@ -553,10 +556,18 @@ func (o *Outbox) Enqueue(p *agentapiv1.OutboxPayload) (uint64, error) {
 // the payload may use (never the floor there: R33).
 func (o *Outbox) choosePart(fd int, size uint64, overflow Part) (Part, error) {
 	g := o.parts[PartGeneral]
-	if g.Files+1 <= MaxGeneralFiles && g.Bytes+size <= MaxGeneralBytes && o.floorOK(fd, size) {
-		return PartGeneral, nil
+	if g.Files+1 > MaxGeneralFiles || g.Bytes+size > MaxGeneralBytes {
+		o.full = true
+	} else {
+		// Re-checked on every general write, so one failed check (a
+		// statfs error, a moment of low space) does not leave
+		// OUTBOX_FULL set, which would stop the control plane signing
+		// for this server (R33 item 4).
+		o.noSpace = !o.floorOK(fd, size)
+		if !o.noSpace {
+			return PartGeneral, nil
+		}
 	}
-	o.full = true
 	if overflow == PartGeneral {
 		return 0, ErrFull
 	}
@@ -803,10 +814,46 @@ func (o *Outbox) Stats() Stats {
 	}
 	g := s.General
 	switch {
-	case o.full:
+	case o.full || o.noSpace:
 		s.Condition = ConditionFull
 	case g.Files*5 >= MaxGeneralFiles*4 || g.Bytes*5 >= MaxGeneralBytes*4:
 		s.Condition = ConditionHighWater
 	}
 	return s
+}
+
+// Create prepares a new, empty outbox directory: it writes the first
+// watermark (next message_seq 1). It is for the installer or the agent's
+// first enrollment only (agent-packaging.md), never for a normal start:
+// Open refuses a directory without a watermark, so an outbox that drained
+// and then lost its watermark fails closed instead of reusing sequences
+// (R29). Create refuses a directory that already has a watermark or any
+// other entry.
+func Create(dir string) error {
+	uid := os.Geteuid()
+	if uid == 0 {
+		return fmt.Errorf("%w: refusing to run as root", ErrUnsafeDir)
+	}
+	if !path.IsAbs(dir) || path.Clean(dir) != dir {
+		return fmt.Errorf("%w: %q is not an absolute clean path", ErrUnsafeDir, dir)
+	}
+	o := &Outbox{dir: dir, uid: uid}
+	d, err := o.openDir()
+	if err != nil {
+		return err
+	}
+	defer closeDir(d)
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return fmt.Errorf("outbox: list %s: %w", dir, err)
+	}
+	if len(names) != 0 {
+		return fmt.Errorf("%w: %s is not empty", ErrNotEmpty, dir)
+	}
+	var wm [watermarkSz]byte
+	binary.BigEndian.PutUint64(wm[:], 1)
+	if err := writeAt(dirFD(d), WatermarkFile, wm[:]); err != nil {
+		return fmt.Errorf("outbox: watermark: %w", err)
+	}
+	return nil
 }

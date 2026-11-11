@@ -73,6 +73,9 @@ func newDir(t *testing.T) string {
 	if err := os.Chmod(d, 0o700); err != nil { // #nosec G302 -- a directory needs its x bit; 0700 is owner only
 		t.Fatal(err)
 	}
+	if err := outbox.Create(d); err != nil {
+		t.Fatal(err)
+	}
 	return d
 }
 
