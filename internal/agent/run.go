@@ -45,6 +45,35 @@ type Deps struct {
 	NewSender   func(trusted []*x509.Certificate, ep identity.Endpoints, now func() time.Time) (identity.EnrollFunc, error)
 	Enroll      func(ctx context.Context, d *identity.StateDir, in identity.EnrollInput, send identity.EnrollFunc) (identity.Identity, error)
 	Now         func() time.Time
+	// InstanceID returns this boot's instance ID (agent-identity R31d).
+	InstanceID func() (string, error)
+	// OpenOutbox opens the outbox (agent-api R29). ErrNoWatermark from it
+	// is answered by CreateOutbox only right after this run enrolled.
+	OpenOutbox func() (controlplane.Outbox, error)
+	// CreateOutbox writes the first watermark of an empty outbox.
+	CreateOutbox func() error
+	// Connect holds the Connect stream until ctx is done.
+	Connect func(ctx context.Context, cfg controlplane.StreamConfig) error
+}
+
+// OutboxDir is the outbox directory: a directory inside the outbox's
+// dedicated filesystem, which is mounted at OutboxMount (agent-api R29,
+// R33 "Storage"; lab layout until agent-packaging.md exists).
+const (
+	OutboxMount = "/var/lib/warden-agent/outbox"
+	OutboxDir   = OutboxMount + "/queue"
+)
+
+// AgentVersion is this binary's version for Hello (agent-api R10).
+const AgentVersion = "0.1.0-m1"
+
+// Serve is the whole agent: Run (start-up and enrollment), then the
+// instance ID, the outbox and the Connect stream until ctx is done. A new
+// outbox gets its first watermark only when this run enrolled (the
+// server's first enrollment); otherwise a missing watermark stops the
+// agent (R29: message_seq must never restart).
+func Serve(ctx context.Context, deps Deps) error {
+	return errors.New("not implemented")
 }
 
 // DefaultDeps returns the production steps with trust as the trust check.

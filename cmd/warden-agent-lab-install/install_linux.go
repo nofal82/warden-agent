@@ -30,7 +30,32 @@ type env struct {
 	agentUID, agentGID int
 	now                func() time.Time
 	rand               io.Reader
+	// outboxFS reports the filesystem of the outbox mount point (fd) and
+	// whether it is a separate mount from its parent (parentFD). Nil
+	// refuses: the installer never writes without a confirmed outbox
+	// filesystem (agent-api R33 "Storage").
+	outboxFS func(parentFD, fd int) (outboxFS, error)
 }
+
+// outboxFS is what the installer checks about the outbox's filesystem.
+type outboxFS struct {
+	totalBytes uint64 // statfs size of the filesystem
+	separate   bool   // a different device from the parent directory
+}
+
+// The outbox's dedicated filesystem (agent-api R29, R33 "Storage"; lab
+// layout, agent-packaging.md not written). The admin creates and mounts
+// the image before the installer runs (cmd/warden-agent-lab/README.md);
+// the installer checks it, creates the queue directory for the agent user
+// and writes a mount unit so it is mounted again after a reboot. The agent
+// writes the first watermark on its first enrollment.
+const (
+	dirOutbox     = "outbox" // inside dirAgentVar: the mount point
+	dirQueue      = "queue"  // inside dirOutbox: the outbox directory
+	outboxImage   = "/var/lib/warden-agent-outbox.img"
+	fileMountUnit = `var-lib-warden\x2dagent-outbox.mount`
+	outboxBudget  = 96 << 20 // OUTBOX_STORAGE_BUDGET
+)
 
 // Paths relative to env.root. File names not fixed by a spec
 // (result-key.seed, the unit) are lab decisions recorded in the PR, since
