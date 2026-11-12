@@ -10,6 +10,7 @@ import (
 
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
 	"github.com/nofal82/warden-agent/internal/agent/outbox"
+	"github.com/nofal82/warden-agent/internal/agent/telemetry"
 )
 
 // Constants of R6, R32, R39, R49 and §4.9.
@@ -89,6 +90,14 @@ type StreamConfig struct {
 	// OnWelcome runs after the first valid Welcome of each stream, for
 	// agent-identity R18a (StateDir.AfterHandshake). Nil skips it.
 	OnWelcome func()
+	// Telemetry is the telemetry buffer, uploaded with UploadTelemetry on
+	// the stream's connection after Welcome (R5, R43, R44). Nil: no
+	// uploads.
+	Telemetry TelemetrySource
+	// TelemetryStats and RedactDrops feed the HealthReport (R44; redaction
+	// R41a). Nil reports nothing.
+	TelemetryStats func() telemetry.Stats
+	RedactDrops    func() []*agentapiv1.RedactDropCount
 	// Now is the clock for certificate checks and agent_time_ms; nil
 	// means time.Now.
 	Now func() time.Time
@@ -159,4 +168,6 @@ type HealthInput struct {
 	ExecutorAvailable bool
 	Outbox            outbox.Stats
 	CAFileSHA256      [][]byte
+	Telemetry         telemetry.Stats
+	RedactDrops       []*agentapiv1.RedactDropCount
 }

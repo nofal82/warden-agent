@@ -312,7 +312,11 @@ func TestRedactLogRuleID(t *testing.T) {
 func TestRedactLogBudget(t *testing.T) {
 	t.Parallel()
 	clk := &stepClock{t: t0}
-	p := newPipeline(t, redact.WithClock(clk.now))
+	// The public redactor gets a fixed clock: this test is about the
+	// budget, and under -race a 60 KiB item can pass the 50 ms item
+	// deadline (TestRedactLogDeadline covers that).
+	pub := pubredact.New(pubredact.WithClock(func() time.Time { return t0 }))
+	p := redact.New(pub, nil, redact.WithClock(clk.now))
 	line := strings.Repeat("upstream timed out ", 900)[:15<<10]
 	lines := []string{line, line, line, line}
 	size := 4*len(line) + 3

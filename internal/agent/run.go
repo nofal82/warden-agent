@@ -58,6 +58,11 @@ type Deps struct {
 	CreateOutbox func() error
 	// Connect holds the Connect stream until ctx is done.
 	Connect func(ctx context.Context, cfg controlplane.StreamConfig) error
+	// StartLogs starts log collection (M1 loop) and returns what the
+	// stream uploads and reports; nil collects nothing. An error is
+	// reported and the agent runs without telemetry: a collection fault
+	// never stops signed or structural traffic.
+	StartLogs func(ctx context.Context, serverID, instanceID string, log *slog.Logger) (Telemetry, error)
 	// Log receives local reports; nil discards (Main sets its logger).
 	Log *slog.Logger
 }
@@ -93,6 +98,17 @@ func Serve(ctx context.Context, deps Deps) error {
 		return err
 	}
 	tf, id, d := st.tf, st.id, st.dir
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // stops log collection when the stream loop ends
+	var tel Telemetry
+	if deps.StartLogs != nil {
+		t, err := deps.StartLogs(ctx, tf.ServerID, inst, logger(deps.Log))
+		if err != nil {
+			logger(deps.Log).Error("agent: log collection not started", "error", err.Error())
+		} else {
+			tel = t
+		}
+	}
 	cfg := controlplane.StreamConfig{
 		Endpoint:   tf.Endpoints.Agent,
 		ServerName: tf.Endpoints.ServerName,
@@ -107,6 +123,9 @@ func Serve(ctx context.Context, deps Deps) error {
 		ExecutorAvailable: func() bool { return false },
 		CAFileSHA256:      caHashes(tf.ControlPlaneCAs),
 		Outbox:            ob,
+		Telemetry:         tel.Source,
+		TelemetryStats:    tel.Stats,
+		RedactDrops:       tel.Drops,
 		OnWelcome:         func() { afterHandshake(logger(deps.Log), d, id) },
 		OnEnd:             reportEnd(logger(deps.Log)),
 		Now:               deps.Now,
@@ -173,6 +192,7 @@ func DefaultDeps(trust TrustFunc) Deps {
 		},
 		CreateOutbox: func() error { return outbox.Create(OutboxDir) },
 		Connect:      connect,
+		StartLogs:    startLogs,
 	}
 }
 

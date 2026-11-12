@@ -177,7 +177,7 @@ func runTelemetry(t *testing.T, p streamPKI, ts *telemetryServer, src controlpla
 	}
 	c := newConnect(t, cfg, ts.srv, nil)
 	controlplane.SetConnectClock(c, newFakeClock())
-	_, _ = c.RunOnce(shortCtx(t, 20*time.Second))
+	_, _ = c.RunOnce(shortCtx(t, 40*time.Second)) // above TelemetryDeadline, so the call deadline is its own
 }
 
 // R5, R44, R47: uploads start only after Welcome, on the stream's own
