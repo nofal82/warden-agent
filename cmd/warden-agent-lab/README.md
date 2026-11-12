@@ -35,3 +35,64 @@ enrollment; a later start that finds no watermark refuses to run, so
 
 The instance ID (agent-identity R31d) lives in `/run/warden-agent`
 (`RuntimeDirectory=`, kept across restarts, cleared at boot).
+
+## Lab install: read access to the M1 logs
+
+The agent runs as the unprivileged `warden-agent` user. It reads only what
+that user can read and never changes a permission or a group membership
+to read more (warden `specs/README.md`, "M1 loop"). A source it cannot
+read is logged locally ("logs: source not read") and is not escalated.
+The admin grants read access once, as root.
+
+The files the agent tails (log rule set version 1, `internal/agent/logs`):
+
+| Rule | Path | Unit |
+| --- | --- | --- |
+| `nginx-error` | `/var/log/nginx/error.log` | `nginx.service` |
+| `apache-error` | `/var/log/apache2/error.log` (Ubuntu, Debian) | `apache2.service` |
+| `httpd-error` | `/var/log/httpd/error_log` (RHEL family) | `httpd.service` |
+| `php-fpm-error` | `/var/log/php<X.Y>-fpm.log` (Ubuntu, Debian) | `php<X.Y>-fpm.service` |
+| `php-fpm-rhel-error` | `/var/log/php-fpm/error.log` | `php-fpm.service` |
+| `mysql-error` | `/var/log/mysql/error.log` (Ubuntu, Debian) | `mysql.service` |
+| `mysqld-rhel-error` | `/var/log/mysql/mysqld.log` (RHEL MySQL) | `mysqld.service` |
+| `mariadb-rhel-error` | `/var/log/mariadb/mariadb.log` (RHEL MariaDB) | `mariadb.service` |
+| `postgresql-error` | `/var/log/postgresql/postgresql-<N>-main.log` | `postgresql@<N>-main.service` |
+| `postgresql-rhel-error` | `/var/lib/pgsql/data/log/postgresql-<Day>.log` | `postgresql.service` |
+| `postgresql-pgdg-error` | `/var/lib/pgsql/<N>/data/log/postgresql-<Day>.log` | `postgresql-<N>.service` |
+
+Only error-level lines are selected, and each is redacted before it is
+buffered. journald is not read in M1.
+
+**Ubuntu and Debian.** These logs belong to group `adm`:
+
+```
+usermod -aG adm warden-agent
+systemctl restart warden-agent-lab
+```
+
+**RHEL, Rocky and Alma.** There is no `adm` group for these logs, and the
+directories are root-only or service-only. Use ACLs. The default ACLs keep
+files that logrotate or the service creates later readable:
+
+```
+for d in /var/log/nginx /var/log/httpd /var/log/php-fpm /var/log/mariadb /var/log/mysql; do
+  [ -d "$d" ] || continue
+  setfacl -m u:warden-agent:rx "$d"
+  setfacl -d -m u:warden-agent:r "$d"
+  find "$d" -maxdepth 1 -type f -exec setfacl -m u:warden-agent:r {} +
+done
+# PostgreSQL (AppStream). For PGDG use /var/lib/pgsql/<N>/data/log, and x on /var/lib/pgsql/<N> too.
+setfacl -m u:warden-agent:x /var/lib/pgsql /var/lib/pgsql/data
+setfacl -m u:warden-agent:rx /var/lib/pgsql/data/log
+setfacl -d -m u:warden-agent:r /var/lib/pgsql/data/log
+find /var/lib/pgsql/data/log -maxdepth 1 -type f -exec setfacl -m u:warden-agent:r {} +
+```
+
+PostgreSQL checks its data directory's permissions at start. An `x`-only
+ACL entry leaves the mode bits unchanged, but restart PostgreSQL once on
+the lab server to confirm.
+
+The agent refuses a log that is a symlink, has a symlink anywhere in its
+path, has more than one hard link, or is owned by `warden-agent` itself.
+Read positions are kept in `/var/lib/warden-agent/log-offsets`. On the
+first start every log is read from its end, so no history is sent.
