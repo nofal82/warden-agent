@@ -20,6 +20,11 @@ type rawFrame struct{ b []byte }
 func (rawCodec) Name() string { return "proto" }
 
 func (rawCodec) Marshal(v any) (mem.BufferSlice, error) {
+	// A frame the stream already encoded: a stored OutboxMessage goes out
+	// with the same bytes every time (R29).
+	if f, ok := v.(*rawFrame); ok {
+		return mem.BufferSlice{mem.SliceBuffer(f.b)}, nil
+	}
 	m, ok := v.(proto.Message)
 	if !ok {
 		return nil, errors.New("controlplane: codec: not a protobuf message")

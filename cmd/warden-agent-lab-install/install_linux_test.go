@@ -34,6 +34,11 @@ func testEnv(root string) env {
 		agentGID: os.Getgid(),
 		now:      func() time.Time { return testNow },
 		rand:     rand.Reader,
+		// The admin mounted a dedicated filesystem within the outbox
+		// budget (agent-api R33 "Storage").
+		outboxFS: func(int, int) (outboxFS, error) {
+			return outboxFS{totalBytes: outboxBudget, separate: true}, nil
+		},
 	}
 }
 
@@ -56,6 +61,10 @@ func newRoot(t *testing.T, fx *fixture) string {
 		mkdir(t, filepath.Join(root, d), 0o755)
 	}
 	mkdir(t, filepath.Join(root, "root"), 0o700)
+	// The outbox mount point exists before the installer runs: the admin
+	// creates and mounts the image first (root-owned, no group/other write).
+	mkdir(t, filepath.Join(root, "var/lib/warden-agent"), 0o700)
+	mkdir(t, filepath.Join(root, "var/lib/warden-agent/outbox"), 0o755)
 	if err := os.WriteFile(filepath.Join(root, bundleRel), fx.encode(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +226,13 @@ func TestInstallWritesTrustAndState(t *testing.T) {
 					t.Errorf("unit lacks %q", want)
 				}
 			}
+			for _, want := range []string{"RequiresMountsFor=/var/lib/warden-agent/outbox",
+				"RuntimeDirectory=warden-agent", "RuntimeDirectoryPreserve=yes"} {
+				if !strings.Contains(unit, want) {
+					t.Errorf("unit lacks %q", want)
+				}
+			}
+			assertOutboxInstalled(t, root)
 			if _, err := os.Lstat(filepath.Join(root, bundleRel)); !errors.Is(err, fs.ErrNotExist) {
 				t.Errorf("bundle not removed: %v", err)
 			}

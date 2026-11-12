@@ -132,9 +132,16 @@ func (c *EnrollClient) Enroll(ctx context.Context, req *agentapiv1.EnrollRequest
 }
 
 func (c *EnrollClient) dialOptions() []grpc.DialOption {
+	return commonDialOptions(c.tls, c.limits.response, c.limits.request, c.dialer)
+}
+
+// commonDialOptions are the R2 and R3 options of every connection: TLS
+// from cfg (never insecure), no proxy, no service config, no gRPC retry,
+// the header-list limit, fixed windows, the size limits and the raw codec.
+func commonDialOptions(cfg *tls.Config, recv, send int, dialer func(context.Context, string) (net.Conn, error)) []grpc.DialOption {
 	opts := []grpc.DialOption{
 		// credentials.NewTLS clones the config; never insecure (R3).
-		grpc.WithTransportCredentials(credentials.NewTLS(c.tls)),
+		grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
 		grpc.WithNoProxy(),
 		grpc.WithDisableServiceConfig(),
 		grpc.WithDisableRetry(),
@@ -142,13 +149,13 @@ func (c *EnrollClient) dialOptions() []grpc.DialOption {
 		grpc.WithInitialWindowSize(StreamWindow),
 		grpc.WithInitialConnWindowSize(ConnWindow),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(c.limits.response),
-			grpc.MaxCallSendMsgSize(c.limits.request),
+			grpc.MaxCallRecvMsgSize(recv),
+			grpc.MaxCallSendMsgSize(send),
 			grpc.ForceCodecV2(rawCodec{}),
 		),
 	}
-	if c.dialer != nil {
-		opts = append(opts, grpc.WithContextDialer(c.dialer))
+	if dialer != nil {
+		opts = append(opts, grpc.WithContextDialer(dialer))
 	}
 	return opts
 }
@@ -158,7 +165,11 @@ func (c *EnrollClient) dialOptions() []grpc.DialOption {
 // on its own backoff inside the deadline, and every reconnect counts
 // against the enrollment endpoint's per-source limits.
 func waitReady(ctx context.Context, conn *grpc.ClientConn) error {
-	dctx, cancel := context.WithTimeout(ctx, DialDeadline)
+	return waitReadyWithin(ctx, conn, DialDeadline)
+}
+
+func waitReadyWithin(ctx context.Context, conn *grpc.ClientConn, deadline time.Duration) error {
+	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	conn.Connect()
 	for {

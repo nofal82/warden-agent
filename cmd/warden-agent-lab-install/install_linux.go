@@ -30,7 +30,32 @@ type env struct {
 	agentUID, agentGID int
 	now                func() time.Time
 	rand               io.Reader
+	// outboxFS reports the filesystem of the outbox mount point (fd) and
+	// whether it is a separate mount from its parent (parentFD). Nil
+	// refuses: the installer never writes without a confirmed outbox
+	// filesystem (agent-api R33 "Storage").
+	outboxFS func(parentFD, fd int) (outboxFS, error)
 }
+
+// outboxFS is what the installer checks about the outbox's filesystem.
+type outboxFS struct {
+	totalBytes uint64 // statfs size of the filesystem
+	separate   bool   // a different device from the parent directory
+}
+
+// The outbox's dedicated filesystem (agent-api R29, R33 "Storage"; lab
+// layout, agent-packaging.md not written). The admin creates and mounts
+// the image before the installer runs (cmd/warden-agent-lab/README.md);
+// the installer checks it, creates the queue directory for the agent user
+// and writes a mount unit so it is mounted again after a reboot. The agent
+// writes the first watermark on its first enrollment.
+const (
+	dirOutbox     = "outbox" // inside dirAgentVar: the mount point
+	dirQueue      = "queue"  // inside dirOutbox: the outbox directory
+	outboxImage   = "/var/lib/warden-agent-outbox.img"
+	fileMountUnit = `var-lib-warden\x2dagent-outbox.mount`
+	outboxBudget  = 96 << 20 // OUTBOX_STORAGE_BUDGET
+)
 
 // Paths relative to env.root. File names not fixed by a spec
 // (result-key.seed, the unit) are lab decisions recorded in the PR, since
@@ -74,9 +99,30 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ReadWritePaths=/var/lib/warden-agent
+RequiresMountsFor=/var/lib/warden-agent/outbox
+RuntimeDirectory=warden-agent
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 MemoryMax=128M
 CPUQuota=20%
 TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// mountUnit mounts the outbox image again after a reboot (agent-api R29:
+// the outbox survives reboots). The admin creates the image and mounts it
+// the first time (cmd/warden-agent-lab/README.md).
+const mountUnit = `# M1 lab only (decision 0013). Written by warden-agent-lab-install; removed in M2.
+[Unit]
+Description=Warden agent outbox filesystem, M1 lab (agent-api R33 storage)
+
+[Mount]
+What=` + outboxImage + `
+Where=/var/lib/warden-agent/outbox
+Type=ext4
+Options=loop,nodev,nosuid,noexec
 
 [Install]
 WantedBy=multi-user.target
@@ -127,7 +173,7 @@ func install(e env, bundleRel string) error {
 		return err
 	}
 	defer d.close()
-	if err := d.preflight(); err != nil {
+	if err := d.preflight(e); err != nil {
 		return err
 	}
 	if err := d.create(e); err != nil {
@@ -178,6 +224,7 @@ func writeAll(d *targets, e env, b *bundle) error {
 		output{&d.state, dirStatePath, identity.FileToken, a, ag, 0o600, []byte(b.Token)},
 		output{&d.state, dirStatePath, identity.FileTokenExpires, a, ag, 0o600, []byte(strconv.FormatInt(b.ExpiresAt, 10))},
 		output{&d.systemd, dirSystemd, fileUnit, r, rg, 0o644, []byte(labUnit)},
+		output{&d.systemd, dirSystemd, fileMountUnit, r, rg, 0o644, []byte(mountUnit)},
 	)
 	for _, o := range outs {
 		if err := writeNoReplace(*o.dir, o.dirName, o.name, o.uid, o.gid, o.mode, o.data); err != nil {
@@ -187,17 +234,60 @@ func writeAll(d *targets, e env, b *bundle) error {
 	return nil
 }
 
-const dirStatePath = dirAgentVar + "/" + dirState
+const (
+	dirStatePath  = dirAgentVar + "/" + dirState
+	dirOutboxPath = dirAgentVar + "/" + dirOutbox
+)
+
+// checkOutboxFS confirms the outbox filesystem: a separate mount from its
+// parent, no larger than OUTBOX_STORAGE_BUDGET. The agent checks the size
+// again at every start (outbox.Open).
+func checkOutboxFS(e env, parentFD, fd int) error {
+	if e.outboxFS == nil {
+		return fmt.Errorf("%w: %s: outbox filesystem not confirmed", errUnsafe, dirOutboxPath)
+	}
+	fs, err := e.outboxFS(parentFD, fd)
+	if err != nil {
+		return fmt.Errorf("lab-install: %s: %w", dirOutboxPath, err)
+	}
+	if !fs.separate {
+		return fmt.Errorf("%w: %s is not a separate filesystem; mount the outbox image first", errUnsafe, dirOutboxPath)
+	}
+	if fs.totalBytes == 0 || fs.totalBytes > outboxBudget {
+		return fmt.Errorf("%w: %s filesystem is %d bytes, want 1 to %d", errUnsafe, dirOutboxPath, fs.totalBytes, outboxBudget)
+	}
+	return nil
+}
+
+// statOutboxFS is the production outboxFS: fstat of both directories for
+// the device, fstatfs of the mount point for the size.
+func statOutboxFS(parentFD, fd int) (outboxFS, error) {
+	var p, m unix.Stat_t
+	if err := unix.Fstat(parentFD, &p); err != nil {
+		return outboxFS{}, err
+	}
+	if err := unix.Fstat(fd, &m); err != nil {
+		return outboxFS{}, err
+	}
+	var st unix.Statfs_t
+	if err := unix.Fstatfs(fd, &st); err != nil {
+		return outboxFS{}, err
+	}
+	total := st.Blocks * uint64(st.Bsize) // #nosec G115 -- Bsize is a positive block size
+	return outboxFS{totalBytes: total, separate: p.Dev != m.Dev}, nil
+}
 
 // targets holds the checked directory descriptors; -1 means the directory
 // does not exist yet and create makes it.
 type targets struct {
 	etc, varLib, systemd        int
 	exec, conf, agentVar, state int
+	outbox, queue               int // the outbox mount point (required) and the queue in it
+	outboxParent                int // agentVar, kept for the separate-mount check
 }
 
 func openTargets(rootFD int, e env) (*targets, error) {
-	d := &targets{etc: -1, varLib: -1, systemd: -1, exec: -1, conf: -1, agentVar: -1, state: -1}
+	d := &targets{etc: -1, varLib: -1, systemd: -1, exec: -1, conf: -1, agentVar: -1, state: -1, outbox: -1, queue: -1, outboxParent: -1}
 	var err error
 	open := func(dst *int, parent int, rel string) {
 		if err == nil {
@@ -216,6 +306,15 @@ func openTargets(rootFD int, e env) (*targets, error) {
 	optional(&d.conf, d.etc, "warden-agent", dirAgentConf, e.rootUID, 0o022)
 	optional(&d.agentVar, d.varLib, "warden-agent", dirAgentVar, e.agentUID, 0o077)
 	optional(&d.state, d.agentVar, dirState, dirStatePath, e.agentUID, 0o077)
+	// The outbox filesystem is mounted by the admin before the installer
+	// runs, so its mount point must already exist (agent-api R33 "Storage").
+	if err == nil && d.agentVar < 0 {
+		err = fmt.Errorf("%w: %s/%s: mount the outbox filesystem first", errUnsafe, dirAgentVar, dirOutbox)
+	}
+	if err == nil {
+		d.outbox, err = openDir(d.agentVar, dirOutbox, dirOutboxPath, e.rootUID, 0o022)
+		d.outboxParent = d.agentVar
+	}
 	if err != nil {
 		d.close()
 		return nil, err
@@ -224,14 +323,20 @@ func openTargets(rootFD int, e env) (*targets, error) {
 }
 
 func (d *targets) close() {
-	for _, fd := range []int{d.etc, d.varLib, d.systemd, d.exec, d.conf, d.agentVar, d.state} {
+	for _, fd := range []int{d.etc, d.varLib, d.systemd, d.exec, d.conf, d.agentVar, d.state, d.outbox, d.queue} {
 		closeFD(fd)
 	}
 }
 
-// preflight refuses, before anything is written, when any target name is
-// already taken (a file, a directory or a symlink).
-func (d *targets) preflight() error {
+// preflight refuses, before anything is written, when the outbox
+// filesystem is not confirmed or any target name is already taken (a
+// file, a directory or a symlink). An existing queue is refused too: a
+// reinstall must never give the agent a fresh outbox whose message_seq
+// restarts (R29).
+func (d *targets) preflight(e env) error {
+	if err := checkOutboxFS(e, d.outboxParent, d.outbox); err != nil {
+		return err
+	}
 	names := []struct {
 		fd      int
 		dir     string
@@ -241,7 +346,8 @@ func (d *targets) preflight() error {
 		{d.conf, dirAgentConf, []string{identity.FileServerID, identity.FileEndpoints, identity.FileAgentCA,
 			identity.FileControlPlaneCA, identity.FileExecutorBinding, path.Base(labtrust.MarkerPath)}},
 		{d.state, dirStatePath, []string{identity.FileToken, identity.FileTokenExpires}},
-		{d.systemd, dirSystemd, []string{fileUnit}},
+		{d.systemd, dirSystemd, []string{fileUnit, fileMountUnit}},
+		{d.outbox, dirOutboxPath, []string{dirQueue}},
 	}
 	for _, n := range names {
 		if n.fd < 0 {
@@ -277,6 +383,7 @@ func (d *targets) create(e env) error {
 		{&d.conf, &d.etc, "warden-agent", dirAgentConf, e.rootUID, e.rootGID, 0o755},
 		{&d.agentVar, &d.varLib, "warden-agent", dirAgentVar, e.agentUID, e.agentGID, 0o700},
 		{&d.state, &d.agentVar, dirState, dirStatePath, e.agentUID, e.agentGID, 0o700},
+		{&d.queue, &d.outbox, dirQueue, dirOutboxPath + "/" + dirQueue, e.agentUID, e.agentGID, 0o700},
 	}
 	for _, s := range steps {
 		if *s.dst >= 0 {

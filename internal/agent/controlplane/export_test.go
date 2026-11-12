@@ -40,3 +40,24 @@ func DecodeEnrollResponse(b []byte) ([]byte, error) {
 func RunEnrollWithClock(ctx context.Context, d *identity.StateDir, in identity.EnrollInput, send identity.EnrollFunc, c Clock) (identity.Identity, error) {
 	return runEnroll(ctx, d, in, send, c)
 }
+
+// Timings are the stream's durations (stream.go); tests shorten them.
+type Timings = timings
+
+// DefaultTimings are the production durations.
+var DefaultTimings = defaultTimings
+
+// SetConnectDialer replaces gRPC's TCP dialer of a ConnectClient, so tests
+// reach an in-process bufconn server and never open a socket.
+func SetConnectDialer(c *ConnectClient, d func(context.Context, string) (net.Conn, error)) {
+	c.dialer = d
+}
+
+// SetStreamTimings replaces the stream's durations.
+func SetStreamTimings(c *ConnectClient, t Timings) { c.t = t }
+
+// SetConnectClock replaces the reconnect loop's clock (Now, Sleep, Jitter).
+func SetConnectClock(c *ConnectClient, k Clock) { c.clock = k }
+
+// SetConnectUniform replaces the first reconnect's uniform random delay.
+func SetConnectUniform(c *ConnectClient, u func(max time.Duration) time.Duration) { c.uniform = u }
