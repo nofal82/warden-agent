@@ -20,8 +20,15 @@ import (
 const (
 	// DefaultInterval is the production poll interval.
 	DefaultInterval = 2 * time.Second
-	// pollBytes bounds the input read from one source in one poll.
+	// pollBytes bounds the input read from one source in one poll, and
+	// pollTotal from all sources together: the raw lines held before
+	// redaction stay within pollTotal (agent memory budget), however many
+	// sources a service user creates.
 	pollBytes = 256 << 10
+	pollTotal = 1 << 20
+	// maxSourcesPerRule bounds the files one rule tails (a service user
+	// can create many matching names in its own log directory).
+	maxSourcesPerRule = 8
 	// discoverEvery: sources are looked up again every this many polls.
 	discoverEvery = 15
 	// maxDirEntries bounds one directory listing.
@@ -60,6 +67,8 @@ type Collector struct {
 	cfg   Config
 	log   *slog.Logger
 	polls int
+	// restarts counts starts that found the busy marker (R9a).
+	restarts uint64
 	// unreadableDirs are rule directories the agent may not list.
 	unreadableDirs []string
 	sources        map[string]*source
@@ -89,7 +98,15 @@ func NewCollector(cfg Config) (*Collector, error) {
 		log.Warn("logs: offsets state unusable; every source starts at its end", "error", err.Error())
 		pos = map[string]Position{}
 	}
-	return &Collector{cfg: cfg, log: log, sources: map[string]*source{}, pos: pos, reported: map[string]string{}}, nil
+	c := &Collector{cfg: cfg, log: log, sources: map[string]*source{}, pos: pos, reported: map[string]string{}}
+	if busyLeft(cfg.StatePath + busySuffix) {
+		// R9a: the previous process stopped while redacting; the lines of
+		// that poll were persisted as read and are skipped. Counted, never
+		// sent.
+		c.restarts = 1
+		log.Warn("logs: previous run stopped while redacting; the lines of that poll were skipped (R9a)")
+	}
+	return c, nil
 }
 
 func checkConfig(cfg Config) error {
@@ -146,9 +163,23 @@ func (c *Collector) PollOnce(ctx context.Context) {
 	c.polls++
 	var work []pending
 	unreadable := slices.Clone(c.unreadableDirs)
-	for _, path := range sortedKeys(c.sources) {
+	keys := sortedKeys(c.sources)
+	// Round-robin start, so one busy source cannot starve the others of
+	// the shared per-poll budget.
+	if len(keys) > 0 {
+		k := c.polls % len(keys)
+		keys = append(keys[k:], keys[:k]...)
+	}
+	budget := pollTotal
+	for _, path := range keys {
 		s := c.sources[path]
-		lines, pos, err := s.t.Poll(pollBytes)
+		if budget <= 0 {
+			break
+		}
+		lines, pos, err := s.t.Poll(min(pollBytes, budget))
+		for _, l := range lines {
+			budget -= len(l) + 1
+		}
 		c.report(path, err, s.t.Problem())
 		if errors.Is(s.t.Problem(), ErrUnreadable) {
 			unreadable = append(unreadable, path)
@@ -170,15 +201,26 @@ func (c *Collector) PollOnce(ctx context.Context) {
 		}
 		c.saved = true
 	}
+	if len(work) == 0 {
+		return
+	}
+	marked := setBusy(c.cfg.StatePath + busySuffix)
 	for _, w := range work {
 		for _, line := range w.lines {
 			if ctx.Err() != nil {
-				return
+				break
 			}
 			c.handle(ctx, w.src, strings.TrimSuffix(line, "\r"))
 		}
 	}
+	if marked {
+		clearBusy(c.cfg.StatePath + busySuffix)
+	}
 }
+
+// RestartsSkipped is 1 when this collector started after a process that
+// stopped while redacting (R9a "the restart is counted"), else 0.
+func (c *Collector) RestartsSkipped() uint64 { return c.restarts }
 
 func (c *Collector) handle(ctx context.Context, s *source, line string) {
 	if !s.rule.Matches(line) {
@@ -201,6 +243,7 @@ func (c *Collector) discover() {
 	found := map[string]bool{}
 	c.unreadableDirs = nil
 	for _, r := range c.cfg.Rules {
+		perRule := 0
 		for _, d := range c.ruleDirs(r) {
 			names, err := listDir(d.dir, maxDirEntries)
 			if err != nil {
@@ -214,9 +257,10 @@ func (c *Collector) discover() {
 					continue
 				}
 				path := filepath.Join(d.dir, name)
-				if found[path] || len(found) >= maxEntries {
+				if found[path] || len(found) >= maxEntries || perRule >= maxSourcesPerRule {
 					continue
 				}
+				perRule++
 				found[path] = true
 				if _, ok := c.sources[path]; ok {
 					continue

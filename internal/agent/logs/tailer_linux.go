@@ -34,6 +34,9 @@ type Tailer struct {
 	// while skipping.
 	readOff  int64
 	skipping bool
+	// buf is reused across reads, so an idle or busy source allocates
+	// nothing per poll.
+	buf []byte
 	// saved is the position to resume at the first open; nil means
 	// "start at the end" (first start: no history).
 	saved  *Position
@@ -110,14 +113,18 @@ func (t *Tailer) Poll(maxBytes int) ([]string, Position, error) {
 			return nil, t.pos(), nil
 		}
 	}
-	if _, _, size, err := fileID(t.f); err != nil {
+	_, _, size, err := fileID(t.f)
+	if err != nil {
 		return nil, t.pos(), fmt.Errorf("logs: stat %s: %w", t.path, err)
-	} else if size < t.readOff { // copytruncate or truncation
+	}
+	if size < t.readOff { // copytruncate or truncation
 		t.off, t.readOff, t.skipping = 0, 0, false
 	}
-	lines, err := t.read(maxBytes)
-	if err != nil || len(lines) > 0 {
-		return lines, t.pos(), err
+	if size > t.readOff {
+		lines, err := t.read(maxBytes, size)
+		if err != nil || len(lines) > 0 {
+			return lines, t.pos(), err
+		}
 	}
 	// Nothing new in the open file: has the path been rotated?
 	dev, ino, err := pathID(t.path)
@@ -139,13 +146,26 @@ func (t *Tailer) Poll(maxBytes int) ([]string, Position, error) {
 		}
 		return nil, t.pos(), nil
 	}
-	lines, err = t.read(maxBytes)
+	_, _, size, err = fileID(t.f)
+	if err != nil || size == 0 {
+		return nil, t.pos(), err
+	}
+	lines, err := t.read(maxBytes, size)
 	return lines, t.pos(), err
 }
 
-func (t *Tailer) read(maxBytes int) ([]string, error) {
+// read reads at most what is new (size - readOff), bounded by maxBytes
+// (at least one whole line) and maxChunk, into the reused buffer.
+func (t *Tailer) read(maxBytes int, size int64) ([]string, error) {
 	maxBytes = max(maxBytes, 1)
-	buf := make([]byte, min(max(maxBytes, MaxLineRead+1), maxChunk))
+	want := int(min(size-t.readOff, int64(min(max(maxBytes, MaxLineRead+1), maxChunk))))
+	if want <= 0 {
+		return nil, nil
+	}
+	if cap(t.buf) < want {
+		t.buf = make([]byte, want)
+	}
+	buf := t.buf[:want]
 	n, err := t.f.ReadAt(buf, t.readOff)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("logs: read %s: %w", t.path, err)
@@ -202,6 +222,6 @@ func (t *Tailer) Close() error {
 		return nil
 	}
 	err := t.f.Close()
-	t.f = nil
+	t.f, t.buf = nil, nil
 	return err
 }
