@@ -51,7 +51,8 @@ type Deps struct {
 	// InstanceID returns this boot's instance ID (agent-identity R31d).
 	InstanceID func() (string, error)
 	// OpenOutbox opens the outbox (agent-api R29). ErrNoWatermark from it
-	// is answered by CreateOutbox only right after this run enrolled.
+	// is answered by CreateOutbox only before the first handshake (this
+	// run enrolled, or the token file is still present).
 	OpenOutbox func() (controlplane.Outbox, error)
 	// CreateOutbox writes the first watermark of an empty outbox.
 	CreateOutbox func() error
@@ -74,9 +75,10 @@ const AgentVersion = "0.1.0-m1"
 
 // Serve is the whole agent: Run (start-up and enrollment), then the
 // instance ID, the outbox and the Connect stream until ctx is done. A new
-// outbox gets its first watermark only when this run enrolled (the
-// server's first enrollment); otherwise a missing watermark stops the
-// agent (R29: message_seq must never restart).
+// outbox gets its first watermark only while no message can have been sent
+// with this identity: this run enrolled, or the token file is still there
+// (removed only after the first handshake). Otherwise a missing watermark
+// stops the agent (R29: message_seq must never restart).
 func Serve(ctx context.Context, deps Deps) error {
 	st, err := start(ctx, deps)
 	if err != nil {
@@ -86,7 +88,7 @@ func Serve(ctx context.Context, deps Deps) error {
 	if err != nil {
 		return fmt.Errorf("agent: instance ID: %w", err)
 	}
-	ob, err := openOutbox(deps, st.enrolled)
+	ob, err := openOutbox(deps, st.firstWatermark)
 	if err != nil {
 		return err
 	}
@@ -112,9 +114,9 @@ func Serve(ctx context.Context, deps Deps) error {
 	return deps.Connect(ctx, cfg)
 }
 
-func openOutbox(deps Deps, enrolled bool) (controlplane.Outbox, error) {
+func openOutbox(deps Deps, firstWatermark bool) (controlplane.Outbox, error) {
 	ob, err := deps.OpenOutbox()
-	if errors.Is(err, outbox.ErrNoWatermark) && enrolled {
+	if errors.Is(err, outbox.ErrNoWatermark) && firstWatermark {
 		if err := deps.CreateOutbox(); err != nil {
 			return nil, fmt.Errorf("agent: create outbox: %w", err)
 		}
@@ -193,10 +195,16 @@ func Run(ctx context.Context, deps Deps) (identity.Identity, error) {
 
 // started is what start-up hands to Serve.
 type started struct {
-	id       identity.Identity
-	tf       identity.TrustFiles
-	dir      *identity.StateDir
-	enrolled bool // this run enrolled (R18a case 3)
+	id  identity.Identity
+	tf  identity.TrustFiles
+	dir *identity.StateDir
+	// firstWatermark: no message can have been sent with this identity
+	// yet, so a missing outbox watermark is a new outbox. True when this
+	// run enrolled (R18a case 3), or when identity.pem is valid and the
+	// token file is still there (case 1 after a crash between enrollment
+	// and the first watermark): AfterHandshake removes the token after
+	// the first Welcome, before any delivery.
+	firstWatermark bool
 }
 
 func start(ctx context.Context, deps Deps) (started, error) {
@@ -220,7 +228,9 @@ func start(ctx context.Context, deps Deps) (started, error) {
 		return started{}, fmt.Errorf("agent: start-up state: %w", err)
 	}
 	switch st.State {
-	case identity.StartUseIdentity, identity.StartUsePrevious:
+	case identity.StartUseIdentity:
+		return started{id: st.Identity, tf: tf, dir: d, firstWatermark: st.TokenPresent}, nil
+	case identity.StartUsePrevious:
 		return started{id: st.Identity, tf: tf, dir: d}, nil
 	case identity.StartTokenExpired:
 		return started{}, identity.ErrTokenExpired
@@ -229,7 +239,7 @@ func start(ctx context.Context, deps Deps) (started, error) {
 		if err != nil {
 			return started{}, err
 		}
-		return started{id: id, tf: tf, dir: d, enrolled: true}, nil
+		return started{id: id, tf: tf, dir: d, firstWatermark: true}, nil
 	default:
 		return started{}, ErrNoIdentity
 	}

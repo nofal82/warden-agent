@@ -218,3 +218,50 @@ func TestServeRefusesWithoutConnecting(t *testing.T) {
 		})
 	}
 }
+
+// A crash between enrollment and the first watermark leaves identity.pem
+// next to the token file: R18a case 1 with the token still present. The
+// token is removed only after the first handshake, so no message can have
+// been sent yet and message_seq cannot restart: the restart creates the
+// watermark and connects instead of refusing until re-enrollment.
+func TestServeCreatesOutboxAfterCrashBeforeWatermark(t *testing.T) {
+	t.Parallel()
+	files := withToken()
+	files[identity.FileIdentity] = identityPEM(t)
+	f, deps := newFixture(t, files)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := withServe(f, &deps, cancel, 1)
+	if err := agent.Serve(ctx, deps); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Serve = %v, want a clean stop", err)
+	}
+	calls := f.rec.got()
+	if count(calls, "Enroll") != 0 || count(calls, "CreateOutbox") != 1 || s.connect != 1 {
+		t.Fatalf("calls = %v, want no Enroll, one CreateOutbox, one Connect", calls)
+	}
+	i := slices.Index(calls, "CreateOutbox")
+	if j := slices.Index(calls, "Connect"); j < i {
+		t.Fatalf("calls = %v: Connect before CreateOutbox", calls)
+	}
+}
+
+// Once the first handshake removed the token, a missing watermark is
+// never answered by Create (covered with no token above); a Create error
+// stops the agent before any connection.
+func TestServeCreateOutboxErrorAfterCrashStops(t *testing.T) {
+	t.Parallel()
+	files := withToken()
+	files[identity.FileIdentity] = identityPEM(t)
+	f, deps := newFixture(t, files)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := withServe(f, &deps, cancel, 1)
+	errCreate := errors.New("create refused")
+	deps.CreateOutbox = func() error { f.rec.add("CreateOutbox"); return errCreate }
+	if err := agent.Serve(ctx, deps); !errors.Is(err, errCreate) {
+		t.Fatalf("Serve = %v, want %v", err, errCreate)
+	}
+	if s.connect != 0 {
+		t.Fatal("connected after a failed Create")
+	}
+}
