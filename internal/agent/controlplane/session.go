@@ -17,6 +17,7 @@ import (
 
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
 	"github.com/nofal82/warden-agent/internal/agent/outbox"
+	"github.com/nofal82/warden-agent/internal/agent/telemetry"
 )
 
 // §4.4 Hello patterns.
@@ -35,11 +36,14 @@ type recvd struct {
 
 // session is one Connect stream. Every send happens on the goroutine that
 // runs run; a second goroutine only receives, so gRPC's rule of one
-// sender and one receiver at a time holds.
+// sender and one receiver at a time holds. A third goroutine makes
+// UploadTelemetry calls, which are separate RPCs, not stream sends.
 type session struct {
 	c  *ConnectClient
 	cs grpc.ClientStream
 	l  streamLimits
+	// conn is the stream's connection; UploadTelemetry runs on it (R5).
+	conn *grpc.ClientConn
 
 	inflight map[uint64]time.Time // message_seq → when it was sent
 	retryN   int                  // consecutive RETRY_LATER (§4.9 reset on ACCEPTED)
@@ -82,6 +86,12 @@ func (s *session) run(ctx context.Context) (time.Duration, error) {
 	up := func() time.Duration { return time.Since(welcomed) }
 	if s.c.cfg.OnWelcome != nil {
 		s.c.cfg.OnWelcome()
+	}
+	if s.c.cfg.Telemetry != nil && s.conn != nil {
+		uctx, ucancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); s.uploadTelemetry(uctx, s.conn) }()
+		defer func() { ucancel(); <-done }()
 	}
 	// R32: every stream starts again from the oldest unacknowledged message.
 	s.c.cfg.Outbox.Rewind()
@@ -206,6 +216,8 @@ func (s *session) sendHealth(force bool) error {
 		ExecutorAvailable: cfg.ExecutorAvailable != nil && cfg.ExecutorAvailable(),
 		Outbox:            cfg.Outbox.Stats(),
 		CAFileSHA256:      cfg.CAFileSHA256,
+		Telemetry:         telemetryStats(cfg),
+		RedactDrops:       redactDrops(cfg),
 	})
 	since := time.Since(s.lastHealth)
 	changed := !slices.Equal(h.GetConditions(), s.lastConds)
@@ -387,4 +399,18 @@ func streamError(err error, cs grpc.ClientStream) error {
 	}
 	reason, _ := ParseEndDetail(st)
 	return &StatusError{Code: st.Code(), Reason: reason, HasDetail: len(st.Proto().GetDetails()) > 0}
+}
+
+func telemetryStats(cfg StreamConfig) telemetry.Stats {
+	if cfg.TelemetryStats == nil {
+		return telemetry.Stats{}
+	}
+	return cfg.TelemetryStats()
+}
+
+func redactDrops(cfg StreamConfig) []*agentapiv1.RedactDropCount {
+	if cfg.RedactDrops == nil {
+		return nil
+	}
+	return cfg.RedactDrops()
 }

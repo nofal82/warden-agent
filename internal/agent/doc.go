@@ -11,6 +11,8 @@
 // (package labtrust). This package never imports labtrust, so the release
 // binary cannot contain it.
 //
-// What it does not do yet: the mutual-TLS agent stream and log collection.
-// An agent that already has an identity stops after start-up.
+// After start-up, Serve holds the Connect stream and starts the M1 log
+// collection (StartLogs): the fixed rule set of package logs, the
+// redaction pipeline of internal/redact, and the in-memory telemetry
+// buffer, uploaded with UploadTelemetry on the stream's connection.
 package agent

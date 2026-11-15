@@ -222,6 +222,7 @@ func (c *ConnectClient) RunOnce(ctx context.Context) (time.Duration, error) {
 		return 0, streamError(err, cs)
 	}
 	s := newSession(c, cs, l, cancel)
+	s.conn = conn
 	return s.run(sctx)
 }
 
@@ -382,6 +383,9 @@ func BuildHealth(in HealthInput) *agentapiv1.HealthReport {
 	case outbox.ConditionHighWater:
 		conds = append(conds, agentapiv1.AgentCondition_AGENT_CONDITION_OUTBOX_HIGH_WATER)
 	}
+	if in.Telemetry.Dropping {
+		conds = append(conds, agentapiv1.AgentCondition_AGENT_CONDITION_TELEMETRY_DROPPING)
+	}
 	hashes := make([][]byte, 0, len(in.CAFileSHA256))
 	for _, h := range in.CAFileSHA256 {
 		hashes = append(hashes, bytes.Clone(h))
@@ -389,13 +393,15 @@ func BuildHealth(in HealthInput) *agentapiv1.HealthReport {
 	slices.SortFunc(hashes, bytes.Compare)
 	hashes = slices.CompactFunc(hashes, bytes.Equal)
 	return &agentapiv1.HealthReport{
-		AgentTimeMs:          max(in.Now.UnixMilli(), 1),
-		Conditions:           conds,
-		ControlplaneCaSha256: hashes,
-		OutboxMessages:       uint32(min(in.Outbox.Messages, maxOutboxMessages)), // #nosec G115 -- capped at 1,000,000
-		OutboxBytes:          min(in.Outbox.Bytes, maxCounter),
-		RejectedMessages:     min(in.Outbox.Rejected, maxCounter),
-		RedactRulesVersion:   redact.RulesVersion,
+		AgentTimeMs:             max(in.Now.UnixMilli(), 1),
+		Conditions:              conds,
+		ControlplaneCaSha256:    hashes,
+		OutboxMessages:          uint32(min(in.Outbox.Messages, maxOutboxMessages)), // #nosec G115 -- capped at 1,000,000
+		OutboxBytes:             min(in.Outbox.Bytes, maxCounter),
+		RejectedMessages:        min(in.Outbox.Rejected, maxCounter),
+		RedactRulesVersion:      redact.RulesVersion,
+		TelemetryDroppedBatches: min(in.Telemetry.DroppedTotal, maxCounter),
+		RedactDrops:             healthDrops(in.RedactDrops),
 	}
 }
 
