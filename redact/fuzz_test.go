@@ -392,6 +392,7 @@ func benignEvent(t *testing.T) string {
 // in a separate step without -race (issue #48), so the 50 ms bound is
 // checked on code built the way it ships.
 func TestWorstCaseTime(t *testing.T) {
+	requireWallClock(t)
 	limit := ItemDeadline
 	red := New(WithClock(frozenClock))
 	if err := red.Err(); err != nil {

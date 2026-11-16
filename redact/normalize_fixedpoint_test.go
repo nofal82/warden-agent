@@ -174,6 +174,7 @@ func adversarialAlternating(depth int) string {
 // redactor without the cap (bounded only by the deadline, which it checks
 // between passes) would return ErrDeadline instead.
 func TestRedactPassCapFailsFast(t *testing.T) {
+	requireWallClock(t)
 	inputs := map[string]string{
 		"nested backslash at the cap":    nestedBackslash(NormMaxPasses, "0026"),
 		"nested backslash far past cap":  nestedBackslash(64, "0026"),
