@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/status"
 
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
@@ -65,11 +66,14 @@ var knownCompressors = []string{"gzip", "deflate", "zstd", "snappy", "s2", "lz4"
 
 // EnrollClient sends one EnrollRequest per call to the enrollment endpoint.
 type EnrollClient struct {
-	target string
-	tls    *tls.Config
-	limits enrollLimits
+	endpoint string // host:port, checked by Target; logged on a failed dial
+	target   string
+	tls      *tls.Config
+	limits   enrollLimits
 	// dialer replaces gRPC's TCP dialer in tests only (export_test.go).
 	dialer func(context.Context, string) (net.Conn, error)
+	// resolver replaces the dns resolver in tests only (export_test.go).
+	resolver resolver.Builder
 }
 
 // NewEnrollClient returns a client for the enrollment endpoint (endpoint
@@ -96,7 +100,7 @@ func NewEnrollClient(endpoint string, trustedCAs []*x509.Certificate, serverName
 	if err != nil {
 		return nil, err
 	}
-	return &EnrollClient{target: target, tls: cfg, limits: l}, nil
+	return &EnrollClient{endpoint: endpoint, target: target, tls: cfg, limits: l}, nil
 }
 
 // Enroll sends req once, on a new connection that is closed before it
@@ -113,12 +117,13 @@ func (c *EnrollClient) Enroll(ctx context.Context, req *agentapiv1.EnrollRequest
 	}
 	ctx, cancel := context.WithTimeout(ctx, EnrollDeadline)
 	defer cancel()
-	conn, err := grpc.NewClient(c.target, c.dialOptions()...)
+	p := &dialProbe{}
+	conn, err := grpc.NewClient(c.target, c.dialOptions(p)...)
 	if err != nil {
 		return nil, fmt.Errorf("controlplane: enroll client: %w", err)
 	}
 	defer func() { _ = conn.Close() }() // nothing to do on a close error; the attempt's outcome stands
-	if err := waitReady(ctx, conn); err != nil {
+	if err := waitReady(ctx, conn, c.endpoint, p); err != nil {
 		return nil, err
 	}
 	var (
@@ -131,17 +136,28 @@ func (c *EnrollClient) Enroll(ctx context.Context, req *agentapiv1.EnrollRequest
 	return c.decode(frame.b)
 }
 
-func (c *EnrollClient) dialOptions() []grpc.DialOption {
-	return commonDialOptions(c.tls, c.limits.response, c.limits.request, c.dialer)
+func (c *EnrollClient) dialOptions(p *dialProbe) []grpc.DialOption {
+	return commonDialOptions(c.tls, c.limits.response, c.limits.request, dialHooks{c.dialer, c.resolver, p})
+}
+
+// dialHooks are the per-attempt dial parts: the failure probe, and the
+// dialer and resolver that tests replace (nil in production).
+type dialHooks struct {
+	dialer   func(context.Context, string) (net.Conn, error)
+	resolver resolver.Builder
+	probe    *dialProbe
 }
 
 // commonDialOptions are the R2 and R3 options of every connection: TLS
 // from cfg (never insecure), no proxy, no service config, no gRPC retry,
 // the header-list limit, fixed windows, the size limits and the raw codec.
-func commonDialOptions(cfg *tls.Config, recv, send int, dialer func(context.Context, string) (net.Conn, error)) []grpc.DialOption {
+// The dialer and the TLS handshake are wrapped by h.probe, which only
+// observes their errors (issue #46).
+func commonDialOptions(cfg *tls.Config, recv, send int, h dialHooks) []grpc.DialOption {
 	opts := []grpc.DialOption{
 		// credentials.NewTLS clones the config; never insecure (R3).
-		grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
+		grpc.WithTransportCredentials(probeCreds{TransportCredentials: credentials.NewTLS(cfg), p: h.probe}),
+		grpc.WithContextDialer(h.probe.dialer(h.dialer)),
 		grpc.WithNoProxy(),
 		grpc.WithDisableServiceConfig(),
 		grpc.WithDisableRetry(),
@@ -154,8 +170,8 @@ func commonDialOptions(cfg *tls.Config, recv, send int, dialer func(context.Cont
 			grpc.ForceCodecV2(rawCodec{}),
 		),
 	}
-	if dialer != nil {
-		opts = append(opts, grpc.WithContextDialer(dialer))
+	if h.resolver != nil {
+		opts = append(opts, grpc.WithResolvers(h.resolver))
 	}
 	return opts
 }
@@ -164,11 +180,13 @@ func commonDialOptions(cfg *tls.Config, recv, send int, dialer func(context.Cont
 // (R47). A first failure ends the attempt: gRPC would otherwise reconnect
 // on its own backoff inside the deadline, and every reconnect counts
 // against the enrollment endpoint's per-source limits.
-func waitReady(ctx context.Context, conn *grpc.ClientConn) error {
-	return waitReadyWithin(ctx, conn, DialDeadline)
+func waitReady(ctx context.Context, conn *grpc.ClientConn, endpoint string, p *dialProbe) error {
+	return waitReadyWithin(ctx, conn, DialDeadline, endpoint, p)
 }
 
-func waitReadyWithin(ctx context.Context, conn *grpc.ClientConn, deadline time.Duration) error {
+// waitReadyWithin returns a *DialError naming endpoint and the class p
+// recorded when the connection does not become READY.
+func waitReadyWithin(ctx context.Context, conn *grpc.ClientConn, deadline time.Duration, endpoint string, p *dialProbe) error {
 	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	conn.Connect()
@@ -178,10 +196,10 @@ func waitReadyWithin(ctx context.Context, conn *grpc.ClientConn, deadline time.D
 		case connectivity.Ready:
 			return nil
 		case connectivity.TransientFailure, connectivity.Shutdown:
-			return fmt.Errorf("%w: connection failed", ErrNotConnected)
+			return p.result(endpoint, false)
 		}
 		if !conn.WaitForStateChange(dctx, s) {
-			return fmt.Errorf("%w: dial deadline", ErrNotConnected)
+			return p.result(endpoint, true)
 		}
 	}
 }

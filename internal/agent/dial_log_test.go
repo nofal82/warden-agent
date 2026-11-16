@@ -105,7 +105,9 @@ func TestEnrollDialErrorLoggedOncePerAttempt(t *testing.T) {
 	t.Parallel()
 	const ep = "enroll.example.test:8443"
 	de := &controlplane.DialError{Endpoint: ep, Class: controlplane.DialDNS}
-	deps := enrollDeps(t, de)
+	// The wrapping text must never reach the log: only the endpoint and
+	// the class are logged.
+	deps := enrollDeps(t, fmt.Errorf("%s: %w", fakeKeyPEM(), de))
 	log, buf := jsonLogger()
 	deps.Log = log
 	if _, err := agent.Run(context.Background(), deps); err == nil {

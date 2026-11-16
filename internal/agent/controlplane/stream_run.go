@@ -206,12 +206,13 @@ func (c *ConnectClient) RunOnce(ctx context.Context) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	conn, err := grpc.NewClient(c.target, c.dialOptions(tlsCfg, l)...)
+	p := &dialProbe{}
+	conn, err := grpc.NewClient(c.target, c.dialOptions(tlsCfg, l, p)...)
 	if err != nil {
 		return 0, fmt.Errorf("controlplane: connect client: %w", err)
 	}
 	defer func() { _ = conn.Close() }() // R5: closed before the next one opens
-	if err := waitReadyWithin(ctx, conn, c.t.Dial); err != nil {
+	if err := waitReadyWithin(ctx, conn, c.t.Dial, c.cfg.Endpoint, p); err != nil {
 		return 0, err
 	}
 	sctx, cancel := context.WithCancel(ctx)
@@ -226,8 +227,8 @@ func (c *ConnectClient) RunOnce(ctx context.Context) (time.Duration, error) {
 	return s.run(sctx)
 }
 
-func (c *ConnectClient) dialOptions(cfg *tls.Config, l streamLimits) []grpc.DialOption {
-	opts := commonDialOptions(cfg, l.recv, l.send, c.dialer)
+func (c *ConnectClient) dialOptions(cfg *tls.Config, l streamLimits, p *dialProbe) []grpc.DialOption {
+	opts := commonDialOptions(cfg, l.recv, l.send, dialHooks{c.dialer, c.resolver, p})
 	return append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
 		Time: KeepaliveTime, Timeout: KeepaliveTimeout, PermitWithoutStream: true, // R6
 	}))
