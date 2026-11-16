@@ -98,9 +98,16 @@ func (c *stepClock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
+// newPipeline is a pipeline over the real rule table.
+//
+// The public redactor gets a fixed clock, as in TestRedactLogBudget: these
+// tests are about what is redacted, kept or dropped, and under -race a
+// 16 KiB line can pass the real 50 ms item deadline (issue #48). The
+// deadline itself is covered by TestRedactLogDeadline with a stepping
+// clock, and redact/'s TestWorstCaseTime bounds the real cost.
 func newPipeline(t *testing.T, opts ...redact.Option) *redact.Pipeline {
 	t.Helper()
-	pub := pubredact.New()
+	pub := pubredact.New(pubredact.WithClock(func() time.Time { return t0 }))
 	if err := pub.Err(); err != nil {
 		t.Fatalf("public redactor unavailable: %v", err)
 	}
