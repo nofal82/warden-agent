@@ -730,3 +730,11 @@ func lastN(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// wallClockChecked reports whether wall-clock bounds against the
+// production ItemDeadline are asserted: only in a plain build. The race
+// detector and coverage instrumentation slow the code many times over,
+// so there the inputs run and their results are checked, but not their
+// duration. CI asserts the bounds in a separate step without -race
+// (issue #48).
+func wallClockChecked() bool { return !raceEnabled && testing.CoverMode() == "" }

@@ -194,8 +194,8 @@ func TestRedactPassCapFailsFast(t *testing.T) {
 				t.Errorf("%s, %s: (%q, %v), want ErrNormPasses (pass cap), not the deadline or ErrInternal", name, className(c), out, err)
 			}
 			// A loose sanity bound only; the deterministic proof is the
-			// error kind above.
-			if el > ItemDeadline {
+			// error kind above. Plain builds only (issue #48).
+			if wallClockChecked() && el > ItemDeadline {
 				t.Errorf("%s, %s: %v, over the item deadline %v", name, className(c), el, ItemDeadline)
 			}
 		}
