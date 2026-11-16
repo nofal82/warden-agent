@@ -71,3 +71,6 @@ func SetResolver(c *EnrollClient, b resolver.Builder) { c.resolver = b }
 
 // SetConnectResolver is SetResolver for a ConnectClient.
 func SetConnectResolver(c *ConnectClient, b resolver.Builder) { c.resolver = b }
+
+// BaseDialer is the production TCP dialer used when no test dialer is set.
+var BaseDialer = baseDialer

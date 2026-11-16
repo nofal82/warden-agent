@@ -70,7 +70,10 @@ func (p *dialProbe) markDialed() {
 
 // result is the class for an attempt that failed: deadline reports
 // whether the dial deadline expired rather than gRPC giving up. When the
-// dialer was never called, the resolver produced no address.
+// dialer was never called, the resolver produced no address ("dns" covers
+// every resolver-side failure). Only the first failure of an attempt is
+// kept: with several addresses, one address's class can hide another's,
+// which is acceptable for a diagnostic line.
 func (p *dialProbe) result(endpoint string, deadline bool) *DialError {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -90,7 +93,7 @@ func (p *dialProbe) result(endpoint string, deadline bool) *DialError {
 // dialer wraps base (gRPC's plain TCP dial when nil) to record failures.
 func (p *dialProbe) dialer(base func(context.Context, string) (net.Conn, error)) func(context.Context, string) (net.Conn, error) {
 	if base == nil {
-		var d net.Dialer
+		d := baseDialer()
 		base = func(ctx context.Context, addr string) (net.Conn, error) {
 			return d.DialContext(ctx, "tcp", addr)
 		}
@@ -103,6 +106,13 @@ func (p *dialProbe) dialer(base func(context.Context, string) (net.Conn, error))
 		}
 		return conn, err
 	}
+}
+
+// baseDialer matches gRPC's own default TCP dialer: SO_KEEPALIVE on with
+// the OS timings, not Go's 15 s probes, so wrapping the dialer for the
+// probe changes no socket behaviour.
+func baseDialer() *net.Dialer {
+	return &net.Dialer{KeepAliveConfig: net.KeepAliveConfig{Enable: true, Idle: -1, Interval: -1, Count: -1}}
 }
 
 // netClass classifies a dial error.

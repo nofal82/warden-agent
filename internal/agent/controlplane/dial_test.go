@@ -311,3 +311,14 @@ func TestConnectRunOnEndSeesDialError(t *testing.T) {
 		t.Fatal("OnEnd never called")
 	}
 }
+
+// TestBaseDialerKeepsGRPCKeepalive pins the production dialer to gRPC's
+// default socket behaviour: TCP keepalive on with the OS timings.
+func TestBaseDialerKeepsGRPCKeepalive(t *testing.T) {
+	t.Parallel()
+	d := controlplane.BaseDialer()
+	want := net.KeepAliveConfig{Enable: true, Idle: -1, Interval: -1, Count: -1}
+	if d.KeepAliveConfig != want || d.KeepAlive != 0 || d.Timeout != 0 {
+		t.Fatalf("dialer = %+v, want only KeepAliveConfig %+v", d, want)
+	}
+}
