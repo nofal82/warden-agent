@@ -24,7 +24,7 @@ import (
 	pubredact "github.com/nofal82/warden-agent/redact"
 )
 
-const dropWarnMsg = "logs: lines dropped by redaction"
+const dropRecordText = "logs: lines dropped by redaction"
 
 // jumpClock is the public redactor's clock. While jump is set every
 // reading moves it a second on, so the pass started for the next item
@@ -139,7 +139,7 @@ func (d *dropEnv) newWarns(t *testing.T) []map[string]any {
 		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
 			t.Fatalf("log line is not JSON: %v", err)
 		}
-		if rec["msg"] == dropWarnMsg {
+		if rec["msg"] == dropRecordText {
 			all = append(all, rec)
 		}
 	}
