@@ -61,6 +61,7 @@ endif
 test: ## Tests with race detector, coverage and coverage gate
 ifneq ($(HAS_GO),)
 	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
+	WARDEN_REQUIRE_WALLCLOCK=1 $(GO) test -count=1 -run '^(TestWorstCaseTime|TestRedactPassCapFailsFast)$$' ./redact/
 	python3 .github/scripts/coverage_gate.py coverage.out
 else
 	@echo "test: no Go packages yet"

@@ -2,5 +2,6 @@
 
 package redact
 
-// raceEnabled widens timing bounds: the race detector slows code 5–10x.
+// raceEnabled turns off wall-clock bounds (wallClockChecked): the race
+// detector slows the redactor about 30x.
 const raceEnabled = true

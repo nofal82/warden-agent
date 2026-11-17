@@ -385,11 +385,15 @@ func benignEvent(t *testing.T) string {
 	return ev.String()
 }
 
+// TestWorstCaseTime bounds the real cost of the worst inputs by the
+// production ItemDeadline. Under the race detector (about 30x slower) or
+// coverage the inputs still run and their errors are checked, but the
+// wall-clock bound is asserted only in a plain build: CI runs this test
+// in a separate step without -race (issue #48), so the 50 ms bound is
+// checked on code built the way it ships.
 func TestWorstCaseTime(t *testing.T) {
+	requireWallClock(t)
 	limit := ItemDeadline
-	if raceEnabled {
-		limit *= 10
-	}
 	red := New(WithClock(frozenClock))
 	if err := red.Err(); err != nil {
 		t.Fatalf("New: %v", err)
@@ -418,14 +422,14 @@ func TestWorstCaseTime(t *testing.T) {
 				t.Fatalf("%s: error %v", c.name, err)
 			}
 		}
-		if best > limit {
+		if wallClockChecked() && best > limit {
 			t.Errorf("%s: %v per item, over %v", c.name, best, limit)
 		}
 	}
 	// With the real clock, a benign maximum-size event finishes inside the
 	// deadline (not asserted under the race detector, which is 5-10x slower,
 	// nor under coverage instrumentation, which also slows it down).
-	if !raceEnabled && testing.CoverMode() == "" {
+	if wallClockChecked() {
 		if _, _, err := New().Redact(bg, Field{Class: EText, MaxBytes: ExtractMaxBytes}, benignEvent(t), nil); err != nil {
 			t.Errorf("benign 64 KiB event with the real clock: %v", err)
 		}

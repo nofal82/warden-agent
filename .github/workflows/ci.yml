@@ -112,6 +112,11 @@ jobs:
       - name: Tests with race detector and coverage
         if: steps.pkgs.outputs.present == 'true'
         run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Redaction wall-clock bounds (plain build, no race detector)
+        if: steps.pkgs.outputs.present == 'true'
+        env:
+          WARDEN_REQUIRE_WALLCLOCK: '1'
+        run: go test -count=1 -run '^(TestWorstCaseTime|TestRedactPassCapFailsFast)$' ./redact/
       - name: Coverage gate
         if: steps.pkgs.outputs.present == 'true'
         run: python3 .github/scripts/coverage_gate.py coverage.out
