@@ -8,6 +8,7 @@ package redact
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -385,15 +386,16 @@ func benignEvent(t *testing.T) string {
 	return ev.String()
 }
 
-// TestWorstCaseTime bounds the real cost of the worst inputs by the
-// production ItemDeadline. Under the race detector (about 30x slower) or
-// coverage the inputs still run and their errors are checked, but the
-// wall-clock bound is asserted only in a plain build: CI runs this test
-// in a separate step without -race (issue #48), so the 50 ms bound is
-// checked on code built the way it ships.
+// TestWorstCaseTime bounds the real cost of the worst inputs by
+// timingGateBound (the intake ItemDeadline, 50 ms). Under the race
+// detector (about 30x slower) or coverage the inputs still run and their
+// errors are checked, but the wall-clock bound is asserted only in a
+// plain build: CI runs this test in a separate step without -race
+// (issue #48), so the 50 ms bound is checked on code built the way it
+// ships.
 func TestWorstCaseTime(t *testing.T) {
 	requireWallClock(t)
-	limit := ItemDeadline
+	limit := timingGateBound
 	red := New(WithClock(frozenClock))
 	if err := red.Err(); err != nil {
 		t.Fatalf("New: %v", err)
@@ -434,4 +436,38 @@ func TestWorstCaseTime(t *testing.T) {
 			t.Errorf("benign 64 KiB event with the real clock: %v", err)
 		}
 	}
+}
+
+// FuzzCheckDeadline checks the WithDeadline bounds (#52): a deadline is
+// accepted iff MinItemDeadline <= d <= MaxItemDeadline, and a Redactor
+// built with an out-of-range deadline fails closed with
+// ErrRulesUnavailable (no new error value: the §4.9 list is closed).
+func FuzzCheckDeadline(f *testing.F) {
+	for _, d := range []int64{
+		0, -1, 1, math.MinInt64, math.MaxInt64,
+		int64(MinItemDeadline) - 1, int64(MinItemDeadline), int64(MinItemDeadline) + 1,
+		int64(AgentItemDeadline),
+		int64(MaxItemDeadline) - 1, int64(MaxItemDeadline), int64(MaxItemDeadline) + 1,
+		int64(time.Hour * 24 * 365 * 100),
+	} {
+		f.Add(d)
+	}
+	f.Fuzz(func(t *testing.T, n int64) {
+		d := time.Duration(n)
+		in := d >= MinItemDeadline && d <= MaxItemDeadline
+		if err := checkDeadline(d); (err == nil) != in {
+			t.Fatalf("checkDeadline(%d) = %v, in range %v", n, err, in)
+		}
+		r := New(WithClock(frozenClock), WithDeadline(d))
+		err := r.Err()
+		if (err == nil) != in {
+			t.Fatalf("New(WithDeadline(%d)).Err() = %v, in range %v", n, err, in)
+		}
+		if !in && !errors.Is(err, ErrRulesUnavailable) {
+			t.Fatalf("New(WithDeadline(%d)).Err() = %v, want ErrRulesUnavailable", n, err)
+		}
+		if in && r.Deadline() != d {
+			t.Fatalf("Deadline() = %v, want %v", r.Deadline(), d)
+		}
+	})
 }

@@ -196,8 +196,8 @@ func TestRedactPassCapFailsFast(t *testing.T) {
 			}
 			// A loose sanity bound only; the deterministic proof is the
 			// error kind above. Plain builds only (issue #48).
-			if wallClockChecked() && el > ItemDeadline {
-				t.Errorf("%s, %s: %v, over the item deadline %v", name, className(c), el, ItemDeadline)
+			if wallClockChecked() && el > timingGateBound {
+				t.Errorf("%s, %s: %v, over the timing gate %v", name, className(c), el, timingGateBound)
 			}
 		}
 		if out, _, err := testRedactor().RedactGroup(bg, fieldFor(TText), []string{"ok", in}, nil); !errors.Is(err, ErrNormPasses) || errors.Is(err, ErrInternal) || out != nil {
