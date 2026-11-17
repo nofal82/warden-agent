@@ -32,7 +32,7 @@ type pass struct {
 }
 
 func (r *Redactor) newPass(ctx context.Context, f Field, m mode) *pass {
-	return &pass{r: r, f: f, class: f.Class, mode: m, ctx: ctx, now: r.cfg.now, end: r.cfg.now().Add(ItemDeadline)}
+	return &pass{r: r, f: f, class: f.Class, mode: m, ctx: ctx, now: r.cfg.now, end: r.cfg.now().Add(r.cfg.deadline)}
 }
 
 // check enforces the per-item deadline (R36) and the caller's context.

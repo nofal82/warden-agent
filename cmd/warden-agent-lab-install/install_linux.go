@@ -106,6 +106,7 @@ RuntimeDirectory=warden-agent
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 MemoryMax=128M
+# The agent's 250 ms redaction deadline (redaction R36) is derived from this quota; re-review it if the quota changes.
 CPUQuota=20%
 TasksMax=64
 

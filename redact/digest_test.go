@@ -81,7 +81,10 @@ func canonicalTable(rules []detector, maxPasses int) string {
 	for _, re := range []*regexp.Regexp{pseudonymRe, uuidRe, hexRunRe, unitNamePattern} {
 		field("module-re", re.String())
 	}
-	field("limits", fmt.Sprint(MaxEventInput, MaxLine, ItemDeadline))
+	// The per-item deadline is a scheduling bound, not a rule: it is left out
+	// so the agent (AgentItemDeadline) and intake (ItemDeadline) share one
+	// digest (§4.5 digest row as amended, #52).
+	field("limits", fmt.Sprint(MaxEventInput, MaxLine))
 	// Normalisation tables (R25a–R28b).
 	for _, e := range simpleEscapes {
 		field("escape", fmt.Sprintf("%s>%d", e.text, e.b))

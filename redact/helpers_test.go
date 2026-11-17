@@ -732,6 +732,13 @@ func lastN(s string, n int) string {
 	return s[len(s)-n:]
 }
 
+// timingGateBound is the wall-clock bound of the plain-build timing gates
+// (TestWorstCaseTime, the normalisation pass-cap test). It is pinned to
+// the intake ItemDeadline (50 ms), not to the agent's AgentItemDeadline
+// (250 ms, #52): the larger agent budget absorbs scheduling stalls on a
+// loaded server, it must not loosen the cost bound the gates prove.
+const timingGateBound = 50 * time.Millisecond
+
 // wallClockChecked reports whether wall-clock bounds against the
 // production ItemDeadline are asserted: only in a plain build. The race
 // detector and coverage instrumentation slow the code many times over,

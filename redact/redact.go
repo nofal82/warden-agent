@@ -2,6 +2,7 @@ package redact
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 )
@@ -23,13 +24,30 @@ const (
 
 // Limits from §7 and the contract specs they cite.
 const (
-	ItemDeadline           = 50 * time.Millisecond // REDACT_ITEM_DEADLINE (R36)
+	ItemDeadline           = 50 * time.Millisecond // REDACT_ITEM_DEADLINE: intake (R49) and the default
 	MaxEventInput          = 64 << 10              // REDACT_MAX_EVENT_INPUT (R39)
 	MaxLine                = 16 << 10              // REDACT_MAX_LINE (R39)
 	ExtractMaxBytes        = 4096                  // LogEvent.extract (agent-api §4.7)
 	LabelValueMaxBytes     = 256                   // label value (agent-api §4.7)
 	UnitNameMaxBytes       = 256                   // unit name (typed-action-catalog §4.2)
 	ReleaseVersionMaxBytes = 32                    // SemVer (agent-api §4.6)
+)
+
+// Per-item deadlines (R36, R49, §7; Go reviewer ruling, 17 Nov 2026). The
+// agent's log-event redactor runs under the agent unit's CPUQuota=20%, so a
+// starved worker needs longer than the control plane's intake pass. The
+// deadline is a scheduling bound, not a rule: it is outside the rule-set
+// digest (§4.5) and needs no REDACT_RULES_VERSION change.
+const (
+	// AgentItemDeadline is REDACT_ITEM_DEADLINE for the agent's log events,
+	// derived from CPUQuota=20%; reviewed again if that quota changes.
+	AgentItemDeadline = 250 * time.Millisecond
+	// MinItemDeadline and MaxItemDeadline bound WithDeadline to the two
+	// values the spec states: nothing tighter than intake, nothing looser
+	// than the agent's ruling. A later ruling raises AgentItemDeadline and
+	// with it this bound, in one reviewed change.
+	MinItemDeadline = ItemDeadline
+	MaxItemDeadline = AgentItemDeadline
 )
 
 // RulesVersion is REDACT_RULES_VERSION (§4.5). Raise it on every change to
@@ -103,12 +121,37 @@ type Report struct {
 type Option func(*config)
 
 type config struct {
-	now func() time.Time
+	now      func() time.Time
+	deadline time.Duration
+	bad      bool // an option was out of range: fail closed (R42)
 }
 
 // WithClock sets the clock used for the per-item deadline (R36).
 func WithClock(now func() time.Time) Option {
 	return func(c *config) { c.now = now }
+}
+
+// WithDeadline sets the per-item deadline (R36). It exists for the agent's
+// log-event redactor (AgentItemDeadline); it is a build-time choice, never a
+// setting. A value outside [MinItemDeadline, MaxItemDeadline] makes the
+// Redactor unusable (ErrRulesUnavailable), so every item is dropped rather
+// than scanned under an unchecked bound.
+func WithDeadline(d time.Duration) Option {
+	return func(c *config) {
+		if checkDeadline(d) != nil {
+			c.bad = true
+			return
+		}
+		c.deadline = d
+	}
+}
+
+// checkDeadline is the validator of WithDeadline.
+func checkDeadline(d time.Duration) error {
+	if d < MinItemDeadline || d > MaxItemDeadline {
+		return errors.New("redact: item deadline out of range")
+	}
+	return nil
 }
 
 // Redactor applies the compiled rule table. It keeps no state between
@@ -125,14 +168,14 @@ type Redactor struct {
 func New(opts ...Option) (r *Redactor) {
 	defer func() {
 		if recover() != nil {
-			r = &Redactor{cfg: config{now: time.Now}, err: ErrRulesUnavailable}
+			r = &Redactor{cfg: config{now: time.Now, deadline: ItemDeadline}, err: ErrRulesUnavailable}
 		}
 	}()
 	return newRedactor(defaultRules(), opts...)
 }
 
 func newRedactor(rules []detector, opts ...Option) *Redactor {
-	r := &Redactor{cfg: config{now: time.Now}, rules: rules}
+	r := &Redactor{cfg: config{now: time.Now, deadline: ItemDeadline}, rules: rules}
 	for _, o := range opts {
 		o(&r.cfg)
 	}
@@ -150,14 +193,18 @@ func newRedactor(rules []detector, opts ...Option) *Redactor {
 		}
 	}
 	r.markers = markerSet(ids)
-	if !selfTest(rules) {
+	if r.cfg.bad || !selfTest(rules) {
 		r.err = ErrRulesUnavailable
 	}
 	return r
 }
 
-// Err reports whether the rule set is usable: nil or ErrRulesUnavailable.
+// Err reports whether the redactor is usable: nil or ErrRulesUnavailable
+// (failed self-test, or an option out of range).
 func (r *Redactor) Err() error { return r.err }
+
+// Deadline returns the per-item deadline in effect (R36).
+func (r *Redactor) Deadline() time.Duration { return r.cfg.deadline }
 
 // Redact redacts one field of class TName, TPath, TText, EText or LValue.
 // p is the agent's pseudonymizer, or nil (no key, or the control plane).
