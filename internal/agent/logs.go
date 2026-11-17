@@ -30,7 +30,7 @@ type Telemetry struct {
 // redaction pipeline and the telemetry buffer, until ctx is done. Every
 // line goes through the pipeline before the buffer (redaction R1, R2).
 func startLogs(ctx context.Context, serverID, instanceID string, log *slog.Logger) (Telemetry, error) {
-	pipe := redact.New(pubredact.New(), nil) // no pseudonym key in M1: user names get the R12c marker
+	pipe := redact.New(redact.NewRedactor(), nil) // no pseudonym key in M1: user names get the R12c marker
 	if !pipe.RulesAvailable() {
 		// R42: nothing scanned is sent; every item is dropped and counted.
 		log.Error("agent: redaction unavailable — data not sent")

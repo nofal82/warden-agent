@@ -26,8 +26,11 @@ func TestDeadlineConstants(t *testing.T) {
 	}
 	// The plain-build timing gates must keep proving the 50 ms cost bound,
 	// not the larger agent scheduling budget.
-	if timingGateBound != 50*time.Millisecond || timingGateBound != ItemDeadline {
-		t.Errorf("timingGateBound = %v, want 50ms == ItemDeadline", timingGateBound)
+	if timingGateBound != 50*time.Millisecond {
+		t.Errorf("timingGateBound = %v, want 50ms", timingGateBound)
+	}
+	if timingGateBound != ItemDeadline {
+		t.Errorf("timingGateBound = %v, want ItemDeadline %v", timingGateBound, ItemDeadline)
 	}
 	if timingGateBound == AgentItemDeadline {
 		t.Errorf("timingGateBound equals AgentItemDeadline: the timing gates were loosened")

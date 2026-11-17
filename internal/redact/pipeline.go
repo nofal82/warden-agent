@@ -76,6 +76,13 @@ type Pipeline struct {
 	replaced    map[replKey]uint64
 }
 
+// NewRedactor builds the agent's log-event redactor with the agent's
+// per-item deadline (R36: 250 ms, derived from the unit's CPUQuota=20%).
+// The deadline option is applied last, so no caller option can change it.
+func NewRedactor(opts ...pubredact.Option) *pubredact.Redactor {
+	return pubredact.New(append(slices.Clip(opts), pubredact.WithDeadline(pubredact.AgentItemDeadline))...)
+}
+
 // New wraps r. p is the agent's pseudonymizer, or nil when no key is
 // loaded: user names then get the user-name marker (R12c).
 func New(r *pubredact.Redactor, p *pubredact.Pseudonymizer, opts ...Option) *Pipeline {
