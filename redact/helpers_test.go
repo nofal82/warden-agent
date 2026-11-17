@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -729,4 +730,23 @@ func lastN(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// wallClockChecked reports whether wall-clock bounds against the
+// production ItemDeadline are asserted: only in a plain build. The race
+// detector and coverage instrumentation slow the code many times over,
+// so there the inputs run and their results are checked, but not their
+// duration. CI asserts the bounds in a separate step without -race
+// (issue #48).
+func wallClockChecked() bool { return !raceEnabled && testing.CoverMode() == "" }
+
+// requireWallClock fails the test when the CI step that exists to assert
+// the wall-clock bounds (WARDEN_REQUIRE_WALLCLOCK=1) runs in a build where
+// they are not asserted, for example with -race or -cover in GOFLAGS, so
+// that step can never pass without checking anything.
+func requireWallClock(t *testing.T) {
+	t.Helper()
+	if os.Getenv("WARDEN_REQUIRE_WALLCLOCK") == "1" && !wallClockChecked() {
+		t.Fatal("WARDEN_REQUIRE_WALLCLOCK=1 but this build has -race or coverage: the wall-clock bounds would not be asserted")
+	}
 }
