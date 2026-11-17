@@ -90,3 +90,14 @@ func TestNewRedactorDeadline(t *testing.T) {
 		t.Errorf("pubredact.New().Deadline() = %v, want ItemDeadline (intake)", d)
 	}
 }
+
+// A bad caller option still fails closed even though the agent deadline is
+// appended after it: a later valid option never clears an invalid one (R42).
+func TestNewRedactorBadOptionFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, d := range []time.Duration{0, pubredact.MaxItemDeadline + 1} {
+		if err := redact.NewRedactor(pubredact.WithDeadline(d)).Err(); !errors.Is(err, pubredact.ErrRulesUnavailable) {
+			t.Errorf("NewRedactor(WithDeadline(%v)).Err() = %v, want ErrRulesUnavailable", d, err)
+		}
+	}
+}

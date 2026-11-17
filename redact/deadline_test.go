@@ -21,8 +21,8 @@ func TestDeadlineConstants(t *testing.T) {
 	if AgentItemDeadline != 250*time.Millisecond {
 		t.Errorf("AgentItemDeadline = %v, want 250ms", AgentItemDeadline)
 	}
-	if MinItemDeadline != ItemDeadline || MaxItemDeadline != 400*time.Millisecond {
-		t.Errorf("bounds = [%v, %v], want [50ms, 400ms]", MinItemDeadline, MaxItemDeadline)
+	if MinItemDeadline != ItemDeadline || MaxItemDeadline != AgentItemDeadline {
+		t.Errorf("bounds = [%v, %v], want [50ms, 250ms]", MinItemDeadline, MaxItemDeadline)
 	}
 	// The plain-build timing gates must keep proving the 50 ms cost bound,
 	// not the larger agent scheduling budget.

@@ -42,11 +42,12 @@ const (
 	// AgentItemDeadline is REDACT_ITEM_DEADLINE for the agent's log events,
 	// derived from CPUQuota=20%; reviewed again if that quota changes.
 	AgentItemDeadline = 250 * time.Millisecond
-	// MinItemDeadline and MaxItemDeadline bound WithDeadline. Nothing is
-	// tighter than intake; 400 ms is the top of the next step the ruling
-	// names if agent TIMEOUT drops persist at 250 ms.
+	// MinItemDeadline and MaxItemDeadline bound WithDeadline to the two
+	// values the spec states: nothing tighter than intake, nothing looser
+	// than the agent's ruling. A later ruling raises AgentItemDeadline and
+	// with it this bound, in one reviewed change.
 	MinItemDeadline = ItemDeadline
-	MaxItemDeadline = 400 * time.Millisecond
+	MaxItemDeadline = AgentItemDeadline
 )
 
 // RulesVersion is REDACT_RULES_VERSION (§4.5). Raise it on every change to
