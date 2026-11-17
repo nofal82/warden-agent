@@ -33,6 +33,10 @@ const (
 	discoverEvery = 15
 	// maxDirEntries bounds one directory listing.
 	maxDirEntries = 1024
+	// dropWarnEvery is the shortest gap between two "lines dropped"
+	// warnings: a starved agent may drop a line in every poll, and its
+	// journal must not grow with them.
+	dropWarnEvery = time.Minute
 )
 
 var ruleIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
@@ -56,6 +60,8 @@ type Config struct {
 	Log *slog.Logger
 }
 
+type dropKey struct{ rule, reason string }
+
 type source struct {
 	rule Rule
 	unit string
@@ -74,6 +80,13 @@ type Collector struct {
 	sources        map[string]*source
 	pos            map[string]Position
 	saved          bool // pos is what the state file holds
+	// drops are the lines the pipeline dropped since the last drop
+	// warning, per rule and reason; the keys are bounded by the rules and
+	// the R41 reasons. dropsTotal counts every drop since start.
+	drops      map[dropKey]uint64
+	dropsTotal uint64
+	lastWarn   time.Time
+	warned     bool
 
 	mu         sync.Mutex
 	unreadable []string
@@ -98,7 +111,7 @@ func NewCollector(cfg Config) (*Collector, error) {
 		log.Warn("logs: offsets state unusable; every source starts at its end", "error", err.Error())
 		pos = map[string]Position{}
 	}
-	c := &Collector{cfg: cfg, log: log, sources: map[string]*source{}, pos: pos, reported: map[string]string{}}
+	c := &Collector{cfg: cfg, log: log, sources: map[string]*source{}, pos: pos, reported: map[string]string{}, drops: map[dropKey]uint64{}}
 	if busyLeft(cfg.StatePath + busySuffix) {
 		// R9a: the previous process stopped while redacting; the lines of
 		// that poll were persisted as read and are skipped. Counted, never
@@ -143,6 +156,7 @@ func (c *Collector) Run(ctx context.Context) error {
 }
 
 func (c *Collector) close() {
+	c.flushDrops() // a burst just before a stop is never silent
 	for _, s := range c.sources {
 		_ = s.t.Close()
 	}
@@ -157,6 +171,7 @@ type pending struct {
 // any line read in this poll is passed to the redactor (redaction R9a);
 // when they cannot be saved, the lines are not passed on at all.
 func (c *Collector) PollOnce(ctx context.Context) {
+	defer c.warnDrops()
 	if c.polls%discoverEvery == 0 {
 		c.discover()
 	}
@@ -230,9 +245,60 @@ func (c *Collector) handle(ctx context.Context, s *source, line string) {
 		RuleID: s.rule.ID, UnitID: s.unit, Lines: []string{line}, ObservedAt: c.cfg.Now(),
 	})
 	if err != nil {
-		return // dropped and counted by the pipeline (redaction R35, R41)
+		// Dropped and counted by the pipeline (redaction R35, R41); kept
+		// here too so the drop is reported locally, never silently lost.
+		reason := "ERROR"
+		var de *redact.DropError
+		if errors.As(err, &de) {
+			reason = de.Reason
+		}
+		c.drops[dropKey{s.rule.ID, reason}]++
+		c.dropsTotal++
+		return
 	}
 	c.cfg.Sink(ev)
+}
+
+// warnDrops logs the lines dropped since the last warning, at most once
+// per dropWarnEvery (a clock that went backwards allows it at once). The
+// record holds rule IDs, reasons and counts only, never content (R4).
+func (c *Collector) warnDrops() {
+	if len(c.drops) == 0 {
+		return
+	}
+	now := c.cfg.Now()
+	if c.warned && !now.Before(c.lastWarn) && now.Sub(c.lastWarn) < dropWarnEvery {
+		return
+	}
+	c.logDrops(now)
+}
+
+// flushDrops logs pending drops at once, whatever the rate limit; it runs
+// once, when the collector stops.
+func (c *Collector) flushDrops() {
+	if len(c.drops) > 0 {
+		c.logDrops(c.cfg.Now())
+	}
+}
+
+func (c *Collector) logDrops(now time.Time) {
+	keys := make([]dropKey, 0, len(c.drops))
+	var n uint64
+	for k, v := range c.drops {
+		keys = append(keys, k)
+		n += v
+	}
+	slices.SortFunc(keys, func(a, b dropKey) int {
+		return strings.Compare(a.rule+"/"+a.reason, b.rule+"/"+b.reason)
+	})
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = fmt.Sprintf("%s/%s=%d", k.rule, k.reason, c.drops[k])
+	}
+	c.log.Warn("logs: lines dropped by redaction",
+		"dropped", n, "total", c.dropsTotal, "reasons", strings.Join(parts, ","))
+	clear(c.drops)
+	c.lastWarn, c.warned = now, true
 }
 
 // discover finds the files of every rule. A file seen for the first time
