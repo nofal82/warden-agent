@@ -11,6 +11,7 @@ package logs_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"encoding/json"
 	"log/slog"
 	"strings"
@@ -352,4 +353,25 @@ func TestDropWarnPollContinues(t *testing.T) {
 	if got := d.pipe.Dropped(pubredact.EText, "BUDGET"); got != 1 {
 		t.Errorf("pipeline Dropped(E_TEXT, BUDGET) = %d, want 1", got)
 	}
+}
+
+// (j) Drops still pending inside the minute are logged when Run stops,
+// so a burst just before a restart is never silent (security review LOW).
+func TestDropWarnFlushedOnStop(t *testing.T) {
+	d := newDropEnv(t)
+	d.clk.jump.Store(true)
+	appendFile(t, d.nginxLog, nginxErr("upstream timed out"))
+	d.poll(t, t0.Add(time.Second))
+	checkWarn(t, oneWarn(t, d), 1, 1, "nginx-error/TIMEOUT=1")
+
+	appendFile(t, d.nginxLog, nginxErr("upstream timed out"))
+	d.poll(t, t0.Add(2*time.Second))
+	noWarn(t, d, "inside the minute")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := d.c.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
+	}
+	checkWarn(t, oneWarn(t, d), 1, 2, "nginx-error/TIMEOUT=1")
 }
