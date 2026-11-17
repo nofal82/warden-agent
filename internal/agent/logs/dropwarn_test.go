@@ -64,25 +64,27 @@ func (f *fakeNow) set(t time.Time) {
 
 type dropEnv struct {
 	*env
-	clk  *jumpClock
-	now  *fakeNow
-	c    *logs.Collector
-	seen int // drop WARN records already returned by newWarns
+	clk *jumpClock
+	now *fakeNow
+	// budget is the pipeline's minute-window clock; it moves only in
+	// spendBudget.
+	budget *fakeNow
+	c      *logs.Collector
+	seen   int // drop WARN records already returned by newWarns
 }
 
 // newDropEnv builds a collector whose pipeline uses a controllable
-// redactor clock and a fixed budget clock (the minute window never
-// resets), logs JSON, and has already done its first poll over empty
+// redactor clock and a budget clock that moves only in spendBudget, logs JSON, and has already done its first poll over empty
 // files so later appends are read.
 func newDropEnv(t *testing.T) *dropEnv {
 	t.Helper()
 	e := newEnv(t)
-	d := &dropEnv{env: e, clk: &jumpClock{t: t0}, now: &fakeNow{t: t0}}
+	d := &dropEnv{env: e, clk: &jumpClock{t: t0}, now: &fakeNow{t: t0}, budget: &fakeNow{t: t0}}
 	pub := pubredact.New(pubredact.WithClock(d.clk.now))
 	if err := pub.Err(); err != nil {
 		t.Fatalf("public redactor unavailable: %v", err)
 	}
-	e.pipe = redact.New(pub, nil, redact.WithClock(func() time.Time { return t0 }))
+	e.pipe = redact.New(pub, nil, redact.WithClock(d.budget.now))
 	writeFile(t, e.nginxLog, "")
 	writeFile(t, e.pgLog, "")
 	c, err := logs.NewCollector(logs.Config{
@@ -111,9 +113,12 @@ func (d *dropEnv) poll(t *testing.T, at time.Time) {
 	d.c.PollOnce(pollCtx(t))
 }
 
-// spendBudget leaves exactly left bytes of the pipeline's minute budget.
+// spendBudget starts a new minute window of the pipeline's budget (so
+// lines redacted earlier in the test do not count) and leaves exactly
+// left bytes of it.
 func (d *dropEnv) spendBudget(t *testing.T, left int) {
 	t.Helper()
+	d.budget.set(d.budget.now().Add(time.Minute))
 	in := redact.LogInput{
 		RuleID: "nginx-error", UnitID: "nginx.service", ObservedAt: t0,
 		Lines: []string{strings.Repeat("x", redact.BytesPerMinute-left)},

@@ -94,7 +94,7 @@ func New(r *pubredact.Redactor, p *pubredact.Pseudonymizer, opts ...Option) *Pip
 func (p *Pipeline) RulesAvailable() bool { return p.r != nil && p.r.Err() == nil }
 
 // RedactLog returns the redacted LogEvent of in, or an error wrapping
-// ErrDropped after counting the drop (R35, R41).
+// a *DropError (wrapping ErrDropped) after counting the drop (R35, R41).
 func (p *Pipeline) RedactLog(ctx context.Context, in LogInput) (ev *agentapiv1.LogEvent, err error) {
 	defer func() {
 		if recover() != nil { // R35: a panic is recovered per item
@@ -153,11 +153,26 @@ func (p *Pipeline) spend(n int) bool {
 	return true
 }
 
+// DropError is returned for every dropped item, so a caller can report
+// the drop by class and reason without parsing text. It carries no input
+// content (R4) and wraps ErrDropped.
+type DropError struct {
+	Class  pubredact.Class
+	Reason string // an R41 reason, e.g. TIMEOUT or BUDGET
+}
+
+func (e *DropError) Error() string {
+	return fmt.Sprintf("%v: class %d, %s", ErrDropped, e.Class, e.Reason)
+}
+
+// Unwrap lets errors.Is(err, ErrDropped) hold for every drop.
+func (e *DropError) Unwrap() error { return ErrDropped }
+
 func (p *Pipeline) drop(c pubredact.Class, reason string) error {
 	p.mu.Lock()
 	p.dropped[dropKey{c, reason}]++
 	p.mu.Unlock()
-	return fmt.Errorf("%w: class %d, %s", ErrDropped, c, reason)
+	return &DropError{Class: c, Reason: reason}
 }
 
 func (p *Pipeline) count(c pubredact.Class, rep pubredact.Report) {
