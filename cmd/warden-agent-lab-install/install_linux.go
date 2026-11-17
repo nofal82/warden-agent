@@ -84,6 +84,9 @@ const labUnit = `# M1 lab only (decision 0013). Written by warden-agent-lab-inst
 Description=Warden agent, M1 lab build (control-plane CA trusted without a keyset)
 After=network-online.target
 Wants=network-online.target
+# [Unit], not [Service]: systemd ignores it there, and the agent would then
+# start before the outbox filesystem is mounted (agent-api R29, R33).
+RequiresMountsFor=/var/lib/warden-agent/outbox
 
 [Service]
 Type=simple
@@ -99,7 +102,6 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ReadWritePaths=/var/lib/warden-agent
-RequiresMountsFor=/var/lib/warden-agent/outbox
 RuntimeDirectory=warden-agent
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes

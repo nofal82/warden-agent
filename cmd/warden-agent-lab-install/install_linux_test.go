@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -414,4 +415,111 @@ func TestInstallInvalidBundleWritesNothing(t *testing.T) {
 	}
 	assertNoSecretInError(t, fx, err)
 	assertUnchanged(t, before, snapshot(t, root))
+}
+
+// --- systemd unit structure (issue #46) -----------------------------------
+
+// unitKey is one Key=Value line of a unit file and the section it is in
+// ("" before the first section header).
+type unitKey struct {
+	section, key, value string
+	line                int
+}
+
+// parseUnit is a minimal INI reader for the generated units: section
+// headers "[X]", "Key=Value" lines, "#" comments and blank lines skipped.
+// Any other line is reported, so a malformed unit cannot pass silently.
+func parseUnit(t *testing.T, unit string) []unitKey {
+	t.Helper()
+	var out []unitKey
+	section := ""
+	for i, raw := range strings.Split(unit, "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+			continue
+		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+			section = line[1 : len(line)-1]
+		default:
+			k, v, ok := strings.Cut(line, "=")
+			if !ok || k == "" {
+				t.Errorf("line %d is neither a section, a comment nor Key=Value: %q", i+1, raw)
+				continue
+			}
+			out = append(out, unitKey{section: section, key: k, value: v, line: i + 1})
+		}
+	}
+	return out
+}
+
+// TestLabUnitRequiresMountsForInUnitSection: systemd only honours
+// RequiresMountsFor= in [Unit]; under [Service] it is ignored with a
+// warning, so the agent could start before the outbox filesystem is
+// mounted and write into the root filesystem instead (agent-api R33).
+func TestLabUnitRequiresMountsForInUnitSection(t *testing.T) {
+	t.Parallel()
+	const want = "/var/lib/warden-agent/outbox"
+	inUnit := 0
+	for _, k := range parseUnit(t, labUnit) {
+		if k.key != "RequiresMountsFor" {
+			continue
+		}
+		if k.section != "Unit" {
+			t.Errorf("line %d: RequiresMountsFor=%s is in [%s]; systemd ignores it outside [Unit]", k.line, k.value, k.section)
+			continue
+		}
+		if k.value == want {
+			inUnit++
+		}
+	}
+	if inUnit != 1 {
+		t.Errorf("[Unit] has RequiresMountsFor=%s %d times, want exactly 1", want, inUnit)
+	}
+}
+
+// TestGeneratedUnitsUseOnlyValidSectionKeys: every key of each generated
+// unit is one systemd accepts in its section, and none comes before the
+// first section header. A misplaced key is silently ignored by systemd,
+// which is how the RequiresMountsFor= bug went unnoticed.
+func TestGeneratedUnitsUseOnlyValidSectionKeys(t *testing.T) {
+	t.Parallel()
+	allowed := map[string][]string{
+		"Unit": {"Description", "After", "Wants", "Requires", "RequiresMountsFor"},
+		"Service": {"Type", "User", "Group", "ExecStart", "Restart", "RestartSec",
+			"NoNewPrivileges", "LimitCORE", "ProtectSystem", "ProtectHome", "PrivateTmp",
+			"PrivateDevices", "ReadWritePaths", "RuntimeDirectory", "RuntimeDirectoryMode",
+			"RuntimeDirectoryPreserve", "MemoryMax", "CPUQuota", "TasksMax"},
+		"Mount":   {"What", "Where", "Type", "Options"},
+		"Install": {"WantedBy"},
+	}
+	cases := []struct {
+		name     string
+		unit     string
+		sections []string // sections the unit may contain
+	}{
+		{"labUnit", labUnit, []string{"Unit", "Service", "Install"}},
+		{"mountUnit", mountUnit, []string{"Unit", "Mount", "Install"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			keys := parseUnit(t, tc.unit)
+			if len(keys) == 0 {
+				t.Fatal("unit has no keys")
+			}
+			for _, k := range keys {
+				if k.section == "" {
+					t.Errorf("line %d: %s= appears before the first section", k.line, k.key)
+					continue
+				}
+				if !slices.Contains(tc.sections, k.section) {
+					t.Errorf("line %d: unexpected section [%s]", k.line, k.section)
+					continue
+				}
+				if !slices.Contains(allowed[k.section], k.key) {
+					t.Errorf("line %d: %s= is not valid in [%s]", k.line, k.key, k.section)
+				}
+			}
+		})
+	}
 }

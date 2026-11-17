@@ -302,12 +302,29 @@ func connect(ctx context.Context, cfg controlplane.StreamConfig) error {
 // code and reason name or a local cause, never a payload (R15, R45).
 func reportEnd(log *slog.Logger) func(error, time.Duration) {
 	return func(err error, up time.Duration) {
+		if logUnreachable(log, "connect", err) {
+			return
+		}
 		msg := "none"
 		if err != nil {
 			msg = err.Error()
 		}
 		log.Warn("agent: control-plane stream ended", "error", msg, "up", up.Round(time.Second).String())
 	}
+}
+
+// logUnreachable logs a failed connection attempt (issue #46) and reports
+// whether err was one. It runs once per attempt, and attempts are spaced by
+// the backoff of agent-api R46, so it cannot flood the log. It logs only
+// the configured host:port and the class, never the underlying error,
+// which may carry peer-chosen text (agent-api R15, agent-identity R20).
+func logUnreachable(log *slog.Logger, call string, err error) bool {
+	var de *controlplane.DialError
+	if !errors.As(err, &de) {
+		return false
+	}
+	log.Warn("agent: control-plane endpoint unreachable", "call", call, "endpoint", de.Endpoint, "class", string(de.Class))
+	return true
 }
 
 func logger(l *slog.Logger) *slog.Logger {
@@ -334,7 +351,9 @@ func enroll(ctx context.Context, deps Deps, d *identity.StateDir, tf identity.Tr
 		if err != nil {
 			return nil, fmt.Errorf("agent: enroll client: %w", err)
 		}
-		return s(ctx, req)
+		der, err := s(ctx, req)
+		logUnreachable(logger(deps.Log), "enroll", err)
+		return der, err
 	}
 	in := identity.EnrollInput{ServerID: tf.ServerID, AgentCA: tf.AgentCA, Binding: b}
 	id, err := deps.Enroll(ctx, d, in, send)

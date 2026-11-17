@@ -5,6 +5,8 @@ import (
 	"net"
 	"time"
 
+	"google.golang.org/grpc/resolver"
+
 	"github.com/nofal82/warden-agent/internal/identity"
 )
 
@@ -61,3 +63,14 @@ func SetConnectClock(c *ConnectClient, k Clock) { c.clock = k }
 
 // SetConnectUniform replaces the first reconnect's uniform random delay.
 func SetConnectUniform(c *ConnectClient, u func(max time.Duration) time.Duration) { c.uniform = u }
+
+// SetResolver replaces the name resolver of an EnrollClient (passed to
+// gRPC as grpc.WithResolvers), so tests control name resolution and never
+// query DNS (issue #46).
+func SetResolver(c *EnrollClient, b resolver.Builder) { c.resolver = b }
+
+// SetConnectResolver is SetResolver for a ConnectClient.
+func SetConnectResolver(c *ConnectClient, b resolver.Builder) { c.resolver = b }
+
+// BaseDialer is the production TCP dialer used when no test dialer is set.
+var BaseDialer = baseDialer

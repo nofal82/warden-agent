@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 
+	"google.golang.org/grpc/resolver"
+
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
 	"github.com/nofal82/warden-agent/internal/agent/outbox"
 	"github.com/nofal82/warden-agent/internal/agent/telemetry"
@@ -143,6 +145,8 @@ type ConnectClient struct {
 	uniform func(max time.Duration) time.Duration
 	// dialer replaces gRPC's TCP dialer in tests only (export_test.go).
 	dialer func(context.Context, string) (net.Conn, error)
+	// resolver replaces the dns resolver in tests only (export_test.go).
+	resolver resolver.Builder
 }
 
 // EndAction is what the reconnect loop does after a stream ended.
