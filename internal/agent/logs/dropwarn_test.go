@@ -11,8 +11,8 @@ package logs_test
 import (
 	"bufio"
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"

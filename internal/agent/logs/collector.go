@@ -156,6 +156,7 @@ func (c *Collector) Run(ctx context.Context) error {
 }
 
 func (c *Collector) close() {
+	c.flushDrops() // a burst just before a stop is never silent
 	for _, s := range c.sources {
 		_ = s.t.Close()
 	}
@@ -269,6 +270,18 @@ func (c *Collector) warnDrops() {
 	if c.warned && !now.Before(c.lastWarn) && now.Sub(c.lastWarn) < dropWarnEvery {
 		return
 	}
+	c.logDrops(now)
+}
+
+// flushDrops logs pending drops at once, whatever the rate limit; it runs
+// once, when the collector stops.
+func (c *Collector) flushDrops() {
+	if len(c.drops) > 0 {
+		c.logDrops(c.cfg.Now())
+	}
+}
+
+func (c *Collector) logDrops(now time.Time) {
 	keys := make([]dropKey, 0, len(c.drops))
 	var n uint64
 	for k, v := range c.drops {
