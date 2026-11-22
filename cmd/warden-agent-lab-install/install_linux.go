@@ -106,7 +106,10 @@ RuntimeDirectory=warden-agent
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 MemoryMax=128M
-# The agent's 250 ms redaction deadline (redaction R36) is derived from this quota; re-review it if the quota changes.
+# The agent's 250 ms redaction deadline (redaction R36) is derived from the
+# product unit's CPUQuota=10% (agent-api OQ1, R44a). This lab unit uses 20% as
+# a recorded lab deviation (decision 0013 class) so the lab sweep finishes.
+# Re-review the deadline if the product quota changes.
 CPUQuota=20%
 TasksMax=64
 

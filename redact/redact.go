@@ -34,13 +34,16 @@ const (
 )
 
 // Per-item deadlines (R36, R49, §7; Go reviewer ruling, 17 Nov 2026). The
-// agent's log-event redactor runs under the agent unit's CPUQuota=20%, so a
-// starved worker needs longer than the control plane's intake pass. The
+// agent's log-event redactor runs under the agent unit's CPUQuota=10%
+// (agent-api OQ1, R44a), so a starved worker needs longer than the control
+// plane's intake pass. The M1 lab unit's 20% is a lab deviation (decision
+// 0013 class), not the basis of the deadline. The
 // deadline is a scheduling bound, not a rule: it is outside the rule-set
 // digest (§4.5) and needs no REDACT_RULES_VERSION change.
 const (
 	// AgentItemDeadline is REDACT_ITEM_DEADLINE for the agent's log events,
-	// derived from CPUQuota=20%; reviewed again if that quota changes.
+	// derived from the product unit's CPUQuota=10% (agent-api R44a); reviewed
+	// again if that quota changes.
 	AgentItemDeadline = 250 * time.Millisecond
 	// MinItemDeadline and MaxItemDeadline bound WithDeadline to the two
 	// values the spec states: nothing tighter than intake, nothing looser
