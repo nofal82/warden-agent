@@ -77,7 +77,8 @@ type Pipeline struct {
 }
 
 // NewRedactor builds the agent's log-event redactor with the agent's
-// per-item deadline (R36: 250 ms, derived from the unit's CPUQuota=20%).
+// per-item deadline (R36: 250 ms, derived from the product unit's
+// CPUQuota=10%, agent-api R44a; the lab's 20% is a lab deviation).
 // The deadline option is applied last, so no caller option can change it.
 func NewRedactor(opts ...pubredact.Option) *pubredact.Redactor {
 	return pubredact.New(append(slices.Clip(opts), pubredact.WithDeadline(pubredact.AgentItemDeadline))...)
