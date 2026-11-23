@@ -55,8 +55,8 @@ var v1Table = msgTable{
 		{7, "step_id", "string", o(maxB(63), pat(stepID))},
 		{8, "params", "M:TypedRequest", req},
 		{9, "policy_decision", "M:PolicyDecision", req},
-		{10, "created_at", "int64", o(minI(1), maxI(1<<40 - 1))},
-		{11, "expires_at", "int64", o(minI(1), maxI(1<<40 - 1))},
+		{10, "created_at", "int64", o(minI(1), maxI(1<<40-1))},
+		{11, "expires_at", "int64", o(minI(1), maxI(1<<40-1))},
 		// "No .." (R13 test list) stays hand-written beside the pattern.
 		{12, "idempotency_key", "string", o(minB(1), maxB(128), pat(idempotencyKey))},
 		{13, "envelope_counter", "uint64", o(minU(1), maxU(1<<63-1))},
