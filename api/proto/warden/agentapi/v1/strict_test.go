@@ -831,9 +831,12 @@ func exportedNames(t *testing.T) []string {
 }
 
 // TestStrictUnmarshalOnlyNewExport: the hand-written public API of the
-// package is what it was, plus StrictUnmarshal and nothing else.
+// package is what it was, plus StrictUnmarshal and, from #59, the R11 and
+// R32a peeks and the declared-values check of peek.go, and nothing else.
 func TestStrictUnmarshalOnlyNewExport(t *testing.T) {
-	want := append(slices.Clone(handWrittenExports), "StrictUnmarshal")
+	want := append(slices.Clone(handWrittenExports), "StrictUnmarshal",
+		"CheckDeclared", "ErrMemberUnreadable", "ErrMessageSeqUnreadable", "ErrUndeclared",
+		"PeekMember", "ReadMessageSeq")
 	sort.Strings(want)
 	if got := exportedNames(t); !slices.Equal(got, want) {
 		t.Fatalf("exported hand-written API = %v, want %v", got, want)
