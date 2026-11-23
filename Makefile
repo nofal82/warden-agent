@@ -13,7 +13,7 @@ GOVULNCHECK_VERSION   := v1.9.0
 GITLEAKS_VERSION      := v8.30.1
 
 .DEFAULT_GOAL := help
-.PHONY: help tools rules hooks-test fmt lint sec vuln test fuzz-short ci build clean
+.PHONY: help tools rules hooks-test executor-net fmt lint sec vuln test fuzz-short ci build clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -29,6 +29,10 @@ rules: ## Warden rule checker: no shell, no secrets, os/exec only where allowed
 
 hooks-test: ## Self-test the Claude Code guard hooks
 	python3 .claude/hooks/test_hooks.py
+
+executor-net: ## executor-ipc AC2a: executor has no network deps, dials, resolvers or extra listeners
+	python3 .github/scripts/test_check_executor_net.py
+	python3 .github/scripts/check_executor_net.py
 
 fmt: ## Format Go code
 ifneq ($(HAS_GO),)
@@ -58,9 +62,11 @@ else
 	@echo "vuln: no Go packages yet"
 endif
 
+# The race detector needs cgo, so only this test step sets CGO_ENABLED=1.
+# Binaries are always built CGO_ENABLED=0 (static; see build).
 test: ## Tests with race detector, coverage and coverage gate
 ifneq ($(HAS_GO),)
-	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
+	CGO_ENABLED=1 $(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	WARDEN_REQUIRE_WALLCLOCK=1 $(GO) test -count=1 -run '^(TestWorstCaseTime|TestRedactPassCapFailsFast)$$' ./redact/
 	python3 .github/scripts/coverage_gate.py coverage.out
 else
@@ -78,7 +84,7 @@ fuzz-short: ## Run every Go fuzz test for FUZZTIME each (default 30s)
 	done; \
 	if [ $$found = 0 ]; then echo "fuzz-short: no fuzz tests yet"; fi
 
-ci: rules hooks-test lint sec vuln test ## Everything CI runs, locally
+ci: rules hooks-test executor-net lint sec vuln test ## Everything CI runs, locally
 
 build: ## Build binaries into ./bin
 ifneq ($(HAS_GO),)

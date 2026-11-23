@@ -85,6 +85,10 @@ jobs:
       - name: Module and packages load
         if: steps.pkgs.outputs.present == 'true'
         run: go list ./...
+      - name: Executor has no network (executor-ipc AC2a) and its self-test
+        run: |
+          python3 .github/scripts/test_check_executor_net.py
+          python3 .github/scripts/check_executor_net.py
       - name: Install tools
         if: steps.pkgs.outputs.present == 'true'
         run: |
@@ -111,6 +115,9 @@ jobs:
         run: govulncheck ./...
       - name: Tests with race detector and coverage
         if: steps.pkgs.outputs.present == 'true'
+        env:
+          # The race detector needs cgo. Build steps stay CGO_ENABLED=0.
+          CGO_ENABLED: '1'
         run: go test -race -count=1 -coverprofile=coverage.out ./...
       - name: Redaction wall-clock bounds (plain build, no race detector)
         if: steps.pkgs.outputs.present == 'true'
