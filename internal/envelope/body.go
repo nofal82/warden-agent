@@ -10,9 +10,8 @@ import (
 // Field patterns from action-envelope §4.2. Go regexps are RE2 (linear
 // time), and every input is length-bounded by MaxEnvelopeBytes.
 var (
-	uuidV7RE  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	uuidV4RE  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	uuidAnyRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	uuidV7RE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	uuidV4RE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 	playbookIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
 	stepIDRE     = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
@@ -39,7 +38,7 @@ const (
 // primitive's validator (check 20); here it only has to be present.
 func bodyWithinLimits(b *wardenv1.EnvelopeBody) bool {
 	return uuidV7RE.MatchString(b.GetActionId()) &&
-		uuidAnyRE.MatchString(b.GetTargetServerId()) &&
+		uuidV4RE.MatchString(b.GetTargetServerId()) && // agent-identity §4.1
 		playbookIDRE.MatchString(b.GetPlaybookId()) &&
 		validPlaybookVersion(b.GetPlaybookVersion()) &&
 		len(b.GetPlaybookDigest()) == digestLen &&

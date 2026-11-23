@@ -70,7 +70,7 @@ func TestCheck5FieldValues(t *testing.T) {
 		"action_id_non_hex":         func(b *wardenv1.EnvelopeBody) { b.ActionId = "g1920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e5f" },
 		"action_id_10KB":            func(b *wardenv1.EnvelopeBody) { b.ActionId = strings.Repeat("a", 10*1024) },
 
-		// target_server_id: any-version UUID, lowercase
+		// target_server_id: UUID v4, lowercase (agent-identity.md §4.1)
 		"target_uppercase":   func(b *wardenv1.EnvelopeBody) { b.TargetServerId = strings.ToUpper(serverA) },
 		"target_35_chars":    func(b *wardenv1.EnvelopeBody) { b.TargetServerId = serverA[:35] },
 		"target_non_hex":     func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "zf1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5" },
@@ -243,19 +243,64 @@ func TestCheck5TimestampBoundsAccepted(t *testing.T) {
 	expectAccept(t, vHigh, seal(t, keyA, high), high, keyA)
 }
 
-// Target server id may be any UUID version, as long as it is lowercase.
-func TestCheck5TargetAnyUUIDVersion(t *testing.T) {
-	for _, id := range []string{
-		"6f1c2d3e-4a5b-1c6d-8e7f-90a1b2c3d4e5",
-		"6f1c2d3e-4a5b-7c6d-8e7f-90a1b2c3d4e5",
-		"00000000-0000-0000-0000-000000000000",
-		"6f1c2d3e-4a5b-fc6d-ce7f-90a1b2c3d4e5",
+// target_server_id must be a UUID v4 in lowercase canonical form:
+// action-envelope.md §4.2 field 3 ("server UUID assigned at enrollment,
+// lowercase canonical form, 36 chars; exact format in agent-identity.md")
+// and agent-identity.md §4.1 ("UUID v4, lowercase canonical form, regex
+// ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").
+// Each value below is a well-formed lowercase 36-char UUID of another
+// version or variant, so only the v4 rule can reject it. The verifier is
+// serverA (v4); the values also differ from it, so BODY_INVALID at check 5
+// (not WRONG_HOST at check 11) proves the format check runs first.
+func TestCheck5TargetMustBeUUIDv4(t *testing.T) {
+	v := defaultVerifier(t)
+	for name, id := range map[string]string{
+		"version_1": "6f1c2d3e-4a5b-1c6d-8e7f-90a1b2c3d4e5",
+		"version_3": "6f1c2d3e-4a5b-3c6d-8e7f-90a1b2c3d4e5",
+		"version_5": "6f1c2d3e-4a5b-5c6d-8e7f-90a1b2c3d4e5",
+		"version_7": "6f1c2d3e-4a5b-7c6d-8e7f-90a1b2c3d4e5",
+		"version_8": "6f1c2d3e-4a5b-8c6d-8e7f-90a1b2c3d4e5",
+		"variant_c": "6f1c2d3e-4a5b-4c6d-ce7f-90a1b2c3d4e5",
+		"variant_7": "6f1c2d3e-4a5b-4c6d-7e7f-90a1b2c3d4e5",
+		"variant_0": "6f1c2d3e-4a5b-4c6d-0e7f-90a1b2c3d4e5",
+		"variant_f": "6f1c2d3e-4a5b-4c6d-fe7f-90a1b2c3d4e5",
 	} {
-		t.Run(id, func(t *testing.T) {
-			v := mustVerifier(t, mustKeySet(t, wideKey(keyA)), id, fakeNow)
+		t.Run(name, func(t *testing.T) {
 			body := bodyWith(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = id })
-			expectAccept(t, v, seal(t, keyA, body), body, keyA)
+			expectBodyReject(t, v, marshalDet(t, body), CodeBodyInvalid, 5)
 		})
+	}
+	t.Run("v4_accepted", func(t *testing.T) {
+		body := validBody() // TargetServerId = serverA, a v4
+		expectAccept(t, v, seal(t, keyA, body), body, keyA)
+	})
+}
+
+// Config.ServerID is the executor's own server-id file content, which
+// agent-identity.md §4.1 fixes as a UUID v4 (any other value: R4 fail
+// closed), so NewVerifier must refuse a non-v4 identity.
+func TestNewVerifierServerIDMustBeUUIDv4(t *testing.T) {
+	ks := mustKeySet(t, wideKey(keyA))
+	for name, id := range map[string]string{
+		"version_7": "01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e5f",
+		"version_1": "6f1c2d3e-4a5b-1c6d-8e7f-90a1b2c3d4e5",
+		"uppercase": "6F1C2D3E-4A5B-4C6D-8E7F-90A1B2C3D4E5",
+		"variant_c": "6f1c2d3e-4a5b-4c6d-ce7f-90a1b2c3d4e5",
+		"variant_7": "6f1c2d3e-4a5b-4c6d-7e7f-90a1b2c3d4e5",
+		"nil_uuid":  "00000000-0000-0000-0000-000000000000",
+	} {
+		t.Run(name, func(t *testing.T) {
+			v, err := NewVerifier(Config{Keys: ks, ServerID: id, Now: clockAt(fakeNow)})
+			if err == nil {
+				t.Fatalf("NewVerifier accepted non-v4 ServerID %q", id)
+			}
+			if v != nil {
+				t.Errorf("NewVerifier returned a verifier with an error")
+			}
+		})
+	}
+	if _, err := NewVerifier(Config{Keys: ks, ServerID: serverB, Now: clockAt(fakeNow)}); err != nil {
+		t.Fatalf("NewVerifier rejected v4 ServerID: %v", err)
 	}
 }
 
