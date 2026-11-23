@@ -392,6 +392,7 @@ message ExecutorStatusBody {
   bytes boot_id = 31 [
     (min_bytes) = 16,
     (max_bytes) = 16,
+    (required) = true,
     (redact_class) = REDACT_FIELD_CLASS_X
   ];
   // The highest envelope_counter recorded in the store (action-envelope

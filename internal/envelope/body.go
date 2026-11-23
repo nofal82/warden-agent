@@ -28,6 +28,10 @@ const (
 	maxPlaybookVersion = 32
 	minUnixTime        = 1
 	maxUnixTime        = 1<<40 - 1 // R16
+	// envelope_counter range (§4.2 field 13, R23a). The verifier checks
+	// only the format; it never compares the value with anything.
+	minEnvelopeCounter = 1
+	maxEnvelopeCounter = 1<<63 - 1
 )
 
 // bodyWithinLimits applies the §4.2 limits (check 5). format_version is left to
@@ -44,7 +48,12 @@ func bodyWithinLimits(b *wardenv1.EnvelopeBody) bool {
 		validPolicyDecision(b.GetPolicyDecision()) &&
 		validTime(b.GetCreatedAt()) &&
 		validTime(b.GetExpiresAt()) &&
-		validIdempotencyKey(b.GetIdempotencyKey())
+		validIdempotencyKey(b.GetIdempotencyKey()) &&
+		validEnvelopeCounter(b.GetEnvelopeCounter())
+}
+
+func validEnvelopeCounter(c uint64) bool {
+	return minEnvelopeCounter <= c && c <= maxEnvelopeCounter
 }
 
 func validPlaybookVersion(s string) bool {
