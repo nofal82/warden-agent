@@ -87,6 +87,8 @@ func validBody() *wardenv1.EnvelopeBody {
 		CreatedAt:      fakeNow - 10,
 		ExpiresAt:      fakeNow + 290,
 		IdempotencyKey: validIdemKey,
+		// §4.2 row 13 / R23a: required, 1 … 2^63−1.
+		EnvelopeCounter: 1,
 	}
 }
 

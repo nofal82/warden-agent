@@ -176,9 +176,12 @@ func TestCountersStatusFieldsRejected(t *testing.T) {
 
 // Ranges and lengths are not scanner rules: envelope_counter = 2^63
 // (outside 1 … 2^63−1, R23a) and a 15-byte boot_id (executor-ipc §4.7
-// requires 16) pass the wire scan and Unmarshal. They are rejected by the
-// envelope and status validators. This test pins that split so a later
-// change cannot silently move range checks into, or out of, the scanner.
+// requires 16) pass the wire scan and Unmarshal. The envelope verifier's
+// check 5 rejects the counter (internal/envelope, bodyWithinLimits); the
+// agent never validates status bodies beyond the scan (agent-api R52a,
+// advisory decoders in #59), and the control plane validates them at
+// intake. This test pins that split so a later change cannot silently move
+// range checks into, or out of, the scanner.
 func TestCountersRangesAreNotScanned(t *testing.T) {
 	body := cat(marshalDet(t, validBody()), fVarint(nil, 13, 1<<63))
 	assertSentinel(t, wirescan.Unmarshal(body, &wardenv1.EnvelopeBody{}), nil)

@@ -55,6 +55,12 @@ func attackBodies(tb testing.TB) [][]byte {
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision.AutonomyLevel = 99 })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = 1 << 40 })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.Params = &wardenv1.TypedRequest{} })),
+		// envelope_counter (§4.2 row 13, R23a): 0, 2^63 and 2^64−1 invalid,
+		// 2^63−1 valid.
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = 0 })),
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = 1 << 63 })),
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = math.MaxUint64 })),
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = math.MaxInt64 })),
 		fVarint(append([]byte(nil), base...), 99, 1),
 		fBytes(append([]byte(nil), base...), 2, []byte(validActionID)),
 		fBytes(append([]byte(nil), base...), 9, marshalDet(tb, validBody().PolicyDecision)),

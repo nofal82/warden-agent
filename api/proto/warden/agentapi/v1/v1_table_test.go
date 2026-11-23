@@ -20,6 +20,9 @@ package agentapiv1_test
 //	   field carries the bounds of its present value.
 //	V2 "0 or a … b" carries only the greatest value; a bound that depends
 //	   on the server (100 × online CPUs) or the engine stays hand-written.
+//	   A signed integer whose spec range starts at 0 ("clamped to
+//	   0 … 2^40 − 1", "MySQL 1 … 2^40 − 1, PostgreSQL 0") also carries
+//	   min_int 0, because a negative value is outside every case.
 //	V3 A repeated integer carries counts only; per-element value ranges
 //	   stay hand-written. A repeated string or bytes field's min_bytes and
 //	   max_bytes apply to each element (options.proto).
@@ -32,8 +35,11 @@ package agentapiv1_test
 //	   ExecutorResultBody (the signed result body, 1,024).
 //	V6 A field the spec gives no length beyond a whole-message limit or
 //	   a referenced format carries that bound: SignedEnvelope.body
-//	   max_bytes 16,384; a server_id 36; a unit 256 (as LogEvent.unit_id);
-//	   installed_release_version 32 with the optional SemVer pattern.
+//	   max_bytes 16,384; a server_id 36; a request unit or instance 256
+//	   (as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps
+//	   it at 249); a request container 128 (the name pattern's length; a
+//	   full id is 64); installed_release_version 32 with the optional
+//	   SemVer pattern.
 //
 // Requests and the envelope are outside redaction.md R5's scope, so they
 // carry no redact_class.
@@ -480,7 +486,8 @@ var v1Table = msgTable{
 		{28, "db_instances_truncated", "bool", none},
 		{29, "started_at", "int64", none},
 		{30, "result_sequence", "uint64", none},
-		{31, "boot_id", "bytes", o(exactB(16), rc(clsX))},
+		// "As §4.6.1 field 22": exactly 16 and required (R36a).
+		{31, "boot_id", "bytes", o(exactB(16), req, rc(clsX))},
 		// Absent (0) when none is recorded (V1).
 		{32, "highest_envelope_counter", "uint64", maxU(1<<63 - 1)},
 	}},

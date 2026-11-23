@@ -350,6 +350,37 @@ func TestCheck5WireAttacks(t *testing.T) {
 	}
 }
 
+// --- check 5: envelope_counter (§4.2 row 13, R23a) --------------------------
+
+// envelope_counter is required and must be 1 … 2^63−1 (action-envelope §4.2
+// row 13, R23a). It is a format rule only: the executor never compares it
+// with anything, so every in-range value is accepted and every out-of-range
+// value is BODY_INVALID at check 5. 0 is the field left out (proto3).
+func TestCheck5EnvelopeCounterRange(t *testing.T) {
+	v := defaultVerifier(t)
+	cases := []struct {
+		name    string
+		counter uint64
+		valid   bool
+	}{
+		{"zero_absent", 0, false},
+		{"two_pow_63", 1 << 63, false},
+		{"max_uint64", math.MaxUint64, false},
+		{"one", 1, true},
+		{"max_int64", math.MaxInt64, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := bodyWith(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = c.counter })
+			if c.valid {
+				expectAccept(t, v, seal(t, keyA, body), body, keyA)
+				return
+			}
+			expectBodyReject(t, v, marshalDet(t, body), CodeBodyInvalid, 5)
+		})
+	}
+}
+
 // --- check 6: UNSUPPORTED_FORMAT_VERSION -------------------------------------
 
 func TestCheck6FormatVersion(t *testing.T) {
