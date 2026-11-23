@@ -44,7 +44,7 @@ var v1Table = msgTable{
 		{2, "body", "bytes", o(minB(1), maxB(16384))},
 		{3, "signature", "bytes", exactB(64)},
 	}},
-	// action-envelope §4.2
+	// action-envelope §4.2; created_at and expires_at from R16
 	"EnvelopeBody": {opts: none, fields: []fieldSpec{
 		{1, "format_version", "uint32", formatV1},
 		{2, "action_id", "string", o(exactB(36), pat(uuidV7))},
@@ -55,8 +55,9 @@ var v1Table = msgTable{
 		{7, "step_id", "string", o(maxB(63), pat(stepID))},
 		{8, "params", "M:TypedRequest", req},
 		{9, "policy_decision", "M:PolicyDecision", req},
-		{10, "created_at", "int64", minI(1)},
-		{11, "expires_at", "int64", minI(1)},
+		{10, "created_at", "int64", o(minI(1), maxI(1<<40 - 1))},
+		{11, "expires_at", "int64", o(minI(1), maxI(1<<40 - 1))},
+		// "No .." (R13 test list) stays hand-written beside the pattern.
 		{12, "idempotency_key", "string", o(minB(1), maxB(128), pat(idempotencyKey))},
 		{13, "envelope_counter", "uint64", o(minU(1), maxU(1<<63-1))},
 	}},
