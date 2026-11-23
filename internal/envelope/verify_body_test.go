@@ -262,6 +262,8 @@ func TestCheck5TargetMustBeUUIDv4(t *testing.T) {
 		"version_8": "6f1c2d3e-4a5b-8c6d-8e7f-90a1b2c3d4e5",
 		"variant_c": "6f1c2d3e-4a5b-4c6d-ce7f-90a1b2c3d4e5",
 		"variant_7": "6f1c2d3e-4a5b-4c6d-7e7f-90a1b2c3d4e5",
+		"variant_0": "6f1c2d3e-4a5b-4c6d-0e7f-90a1b2c3d4e5",
+		"variant_f": "6f1c2d3e-4a5b-4c6d-fe7f-90a1b2c3d4e5",
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := bodyWith(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = id })
@@ -282,6 +284,10 @@ func TestNewVerifierServerIDMustBeUUIDv4(t *testing.T) {
 	for name, id := range map[string]string{
 		"version_7": "01920f3e-7c4a-7b2d-8e5f-0a1b2c3d4e5f",
 		"version_1": "6f1c2d3e-4a5b-1c6d-8e7f-90a1b2c3d4e5",
+		"uppercase": "6F1C2D3E-4A5B-4C6D-8E7F-90A1B2C3D4E5",
+		"variant_c": "6f1c2d3e-4a5b-4c6d-ce7f-90a1b2c3d4e5",
+		"variant_7": "6f1c2d3e-4a5b-4c6d-7e7f-90a1b2c3d4e5",
+		"nil_uuid":  "00000000-0000-0000-0000-000000000000",
 	} {
 		t.Run(name, func(t *testing.T) {
 			v, err := NewVerifier(Config{Keys: ks, ServerID: id, Now: clockAt(fakeNow)})
