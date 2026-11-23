@@ -81,8 +81,9 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	if cfg.Now == nil {
 		return nil, errors.New("envelope: Config.Now is nil")
 	}
-	if !uuidAnyRE.MatchString(cfg.ServerID) {
-		return nil, errors.New("envelope: Config.ServerID is not a lowercase canonical UUID")
+	// The server UUID is v4 (agent-identity §4.1).
+	if !uuidV4RE.MatchString(cfg.ServerID) {
+		return nil, errors.New("envelope: Config.ServerID is not a lowercase canonical UUID v4")
 	}
 	return &Verifier{keys: cfg.Keys, serverID: cfg.ServerID, now: cfg.Now}, nil
 }
