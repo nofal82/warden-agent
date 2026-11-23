@@ -383,7 +383,8 @@ func (o *Outbox) check(seq uint64, b []byte) error {
 }
 
 // checkFile is the strict check of one stored message: b decodes with the
-// strict decoder, its message_seq equals seq (the file name's), exactly
+// strict decoder and declares every enum value and required field, its
+// message_seq equals seq (the file name's), exactly
 // one payload member is set, and len(b) is within MaxMessageBytes.
 func checkFile(seq uint64, b []byte) error {
 	limit, err := maxMessageBytes()
@@ -399,6 +400,12 @@ func checkFile(seq uint64, b []byte) error {
 	var m agentapiv1.OutboxMessage
 	if err := agentapiv1.StrictUnmarshal(b, &m); err != nil {
 		return errors.New("fails the strict decoder")
+	}
+	// The scanner accepts any int32 enum value; R12 makes an undeclared one
+	// (or a missing required field) MALFORMED, so such a file is removed
+	// here rather than sent and REJECTED.
+	if err := agentapiv1.CheckDeclared(&m); err != nil {
+		return errors.New("undeclared enum value or missing required field")
 	}
 	if m.GetMessageSeq() != seq {
 		return errors.New("message_seq does not match the file name")

@@ -292,6 +292,9 @@ func DecodeControl(b []byte) (*agentapiv1.ControlMessage, error) {
 	if err := agentapiv1.StrictUnmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("%w: strict decoding failed", ErrControlRefused)
 	}
+	if err := agentapiv1.CheckDeclared(&m); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrControlRefused, err)
+	}
 	if err := checkControl(&m); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrControlRefused, err.Error())
 	}

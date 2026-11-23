@@ -15,8 +15,10 @@ import (
 	agentapiv1 "github.com/nofal82/warden-agent/api/proto/warden/agentapi/v1"
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 	"github.com/nofal82/warden-agent/internal/agent/advisory"
-	"github.com/nofal82/warden-agent/internal/envelope"
 )
+
+// maxSkewSeconds is MAX_SKEW of action-envelope R16.
+const maxSkewSeconds = 60
 
 const (
 	serverA   = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
@@ -105,12 +107,12 @@ func TestCheckEnvelope(t *testing.T) {
 		reason  agentapiv1.AdvisoryReason
 	}{
 		{"valid with envelope_counter (R52a, AC37)", valid, serverA, expiresAt - 100, true, fwd},
-		{"exactly expires_at + MaxSkew forwards (R16)", valid, serverA, expiresAt + envelope.MaxSkew, true, fwd},
+		{"exactly expires_at + MaxSkew forwards (R16)", valid, serverA, expiresAt + maxSkewSeconds, true, fwd},
 		{"not yet valid forwards (executor decides)", valid, serverA, expiresAt - 100_000, true, fwd},
 		{"oversized, undecodable (R11 first)", oversized, serverA, expiresAt, false, big},
-		{"expired by one second", valid, serverA, expiresAt + envelope.MaxSkew + 1, false, expired},
+		{"expired by one second", valid, serverA, expiresAt + maxSkewSeconds + 1, false, expired},
 		{"wrong host", valid, serverB, expiresAt, false, wrongHst},
-		{"expired and wrong host: expiry first", valid, serverB, expiresAt + envelope.MaxSkew + 1, false, expired},
+		{"expired and wrong host: expiry first", valid, serverB, expiresAt + maxSkewSeconds + 1, false, expired},
 		{"outer garbage forwards", []byte{0x0a, 0x05, 0x01}, serverA, expiresAt, true, fwd},
 		{"body with unknown field forwards (R13)", unknownField, serverA, expiresAt, true, fwd},
 		{"body autonomy UNSPECIFIED forwards (V4)", noAutonomy, serverA, expiresAt, true, fwd},
@@ -214,7 +216,7 @@ func TestDecodeStatusRefuses(t *testing.T) {
 func FuzzCheckEnvelope(f *testing.F) {
 	valid := signed(f, marshal(f, body(nil)))
 	f.Add(valid, expiresAt)
-	f.Add(valid, expiresAt+envelope.MaxSkew+1)
+	f.Add(valid, expiresAt+maxSkewSeconds+1)
 	f.Add(signed(f, marshal(f, body(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = serverB }))), expiresAt)
 	f.Add(bytes.Repeat([]byte{0xff}, maxEnv+1), expiresAt)
 	f.Add([]byte{0x0a, 0x05, 0x01}, expiresAt)
