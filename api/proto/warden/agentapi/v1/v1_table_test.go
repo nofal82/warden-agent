@@ -29,6 +29,8 @@ package agentapiv1_test
 //	V4 required: on an enum whose UNSPECIFIED is invalid with no presence
 //	   condition (typed-action-catalog §4.1 and §4.8.1, executor-ipc §4.5),
 //	   and on every field a spec row marks "required" without a condition.
+//	   Ruled by Nofal, PR #60, 2026-11-23: where the spec says UNSPECIFIED
+//	   is invalid, the field is required and the decoder refuses it.
 //	V5 max_message_bytes on the warden.v1 messages a spec gives a whole-
 //	   message limit: SignedEnvelope (MAX_ENVELOPE_BYTES, 16,384),
 //	   IpcRefusal (16), PrimitiveResult (MAX_RESULT_BYTES, 32,768) and
@@ -39,7 +41,8 @@ package agentapiv1_test
 //	   (as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps
 //	   it at 249); a request container 128 (the name pattern's length; a
 //	   full id is 64); installed_release_version 32 with the optional
-//	   SemVer pattern.
+//	   SemVer pattern. Accepted by Nofal, PR #60, 2026-11-23; each derived
+//	   bound names its source at the row or option set that uses it.
 //
 // Requests and the envelope are outside redaction.md R5's scope, so they
 // carry no redact_class.
@@ -47,6 +50,8 @@ var v1Table = msgTable{
 	// action-envelope §4.1
 	"SignedEnvelope": {opts: maxMsg(16384), fields: []fieldSpec{
 		{1, "key_id", "bytes", exactB(32)},
+		// V6: max_bytes from MAX_ENVELOPE_BYTES (16 KiB, action-envelope
+		// R11, OQ3), the whole message's limit, which bounds the body too.
 		{2, "body", "bytes", o(minB(1), maxB(16384))},
 		{3, "signature", "bytes", exactB(64)},
 	}},
@@ -404,6 +409,8 @@ var v1Table = msgTable{
 	// executor-ipc §4.6.1
 	"ExecutorResultBody": {opts: maxMsg(1024), fields: []fieldSpec{
 		{1, "format_version", "uint32", formatV1},
+		// V6: 36 bytes, the canonical UUID form of the server-ID file
+		// (agent-identity §4.1).
 		{2, "server_id", "string", o(maxB(36), pat(optUUIDv4), rc(clsX))},
 		{3, "envelope_sha256", "bytes", o(maxB(32), rc(clsX))},
 		{4, "received_length", "uint32", none},
@@ -430,6 +437,8 @@ var v1Table = msgTable{
 	// executor-ipc §4.6.2
 	"TrustInstallResultBody": {opts: none, fields: []fieldSpec{
 		{1, "format_version", "uint32", formatV1},
+		// V6: 36 bytes, the canonical UUID form of the server-ID file
+		// (agent-identity §4.1).
 		{2, "server_id", "string", o(maxB(36), pat(optUUIDv4), rc(clsX))},
 		{3, "kind", "E:TrustKind", req},
 		{4, "document_sha256", "bytes", o(maxB(32), rc(clsX))},
@@ -457,10 +466,15 @@ var v1Table = msgTable{
 	// (agent-api R52a).
 	"ExecutorStatusBody": {opts: none, fields: []fieldSpec{
 		{1, "format_version", "uint32", formatV1},
+		// V6: 36 bytes, the canonical UUID form of the server-ID file
+		// (agent-identity §4.1).
 		{2, "server_id", "string", o(maxB(36), pat(optUUIDv4), rc(clsX))},
 		{3, "challenge", "bytes", o(maxB(32), rc(clsX))},
 		{4, "executor_time", "int64", none},
 		{5, "binary_version", "string", o(maxB(32), pat(semverPattern), rc(clsX))},
+		// V6: 32 bytes and the optional SemVer pattern, as binary_version
+		// (field 5) and AdminToolRecord.release_version (agent-api
+		// §4.10.1), the same release-version format.
 		{6, "installed_release_version", "string", o(maxB(32), pat(semverOrEmptyPattern), rc(clsNPatterned))},
 		{7, "installed_release_sequence", "uint64", none},
 		{8, "conditions", "repeated E:HealthCondition", o(maxC(32), sorted)},
@@ -552,7 +566,12 @@ var (
 	formatV1 = o(minU(1), maxU(1))
 	// typed-action-catalog §4.3 rule 1; the other path rules stay
 	// hand-written.
-	absPath      = o(minB(1), maxB(4095))
-	unitRef      = o(maxB(256), pat(unitPattern))
+	absPath = o(minB(1), maxB(4095))
+	// V6: 256 bytes is systemd's unit name limit (UNIT_NAME_MAX), the
+	// bound LogEvent.unit_id and DbInstanceHealth.unit_id already use; the
+	// §4.2 pattern itself caps a name at 249.
+	unitRef = o(maxB(256), pat(unitPattern))
+	// V6: 128 bytes is the longest name the §4.2 container pattern allows
+	// (1 + 127); a full container id is 64.
 	containerRef = o(maxB(128), pat(containerAny))
 )
