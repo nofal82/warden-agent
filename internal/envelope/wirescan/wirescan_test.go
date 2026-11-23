@@ -146,7 +146,7 @@ func TestBodyCases(t *testing.T) {
 		{"unknown_99_bytes", bodyMD, fBytes(app(base), 99, []byte("x")), wirescan.ErrUnknownField},
 		{"unknown_99_fixed32", bodyMD, fFixed32(app(base), 99, 1), wirescan.ErrUnknownField},
 		{"unknown_99_fixed64", bodyMD, fFixed64(app(base), 99, 1), wirescan.ErrUnknownField},
-		{"unknown_13", bodyMD, fVarint(app(base), 13, 0), wirescan.ErrUnknownField},
+		{"unknown_14", bodyMD, fVarint(app(base), 14, 0), wirescan.ErrUnknownField},
 		{"unknown_max_number", bodyMD, fVarint(app(base), protowire.MaxValidNumber, 0), wirescan.ErrUnknownField},
 		{"unknown_first", bodyMD, cat(fVarint(nil, 50, 0), base), wirescan.ErrUnknownField},
 		{"unknown_in_pd", bodyMD, withPD(fVarint(app(pd), 99, 1)), wirescan.ErrUnknownField},

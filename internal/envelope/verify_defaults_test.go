@@ -43,6 +43,7 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 	noAction := without(func(b *wardenv1.EnvelopeBody) { b.ActionId = "" })
 	noDigest := without(func(b *wardenv1.EnvelopeBody) { b.PlaybookDigest = nil })
 	noIdem := without(func(b *wardenv1.EnvelopeBody) { b.IdempotencyKey = "" })
+	noCounter := without(func(b *wardenv1.EnvelopeBody) { b.EnvelopeCounter = 0 })
 	noPD := without(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision = nil })
 	noParams := without(func(b *wardenv1.EnvelopeBody) { b.Params = nil })
 	pdWith := func(mut func(p *wardenv1.PolicyDecision), more ...[]byte) []byte {
@@ -78,7 +79,8 @@ func TestCheck5ExplicitDefaults(t *testing.T) {
 		{"created_at_0_int64", withField(t, noCreated, fVarint(nil, 10, 0)), noCreated, CodeBodyInvalid, 5},
 		{"action_id_empty_string", withField(t, noAction, fBytes(nil, 2, nil)), noAction, CodeBodyInvalid, 5},
 		{"playbook_digest_empty_bytes", withField(t, noDigest, fBytes(nil, 6, nil)), noDigest, CodeBodyInvalid, 5},
-		{"idempotency_key_empty_string", fBytes(app(noIdem), 12, nil), noIdem, CodeBodyInvalid, 5},
+		{"idempotency_key_empty_string", withField(t, noIdem, fBytes(nil, 12, nil)), noIdem, CodeBodyInvalid, 5},
+		{"envelope_counter_0_uint64", withField(t, noCounter, fVarint(nil, 13, 0)), noCounter, CodeBodyInvalid, 5},
 		// depth 1: policy_decision
 		{"approval_id_empty_string", pdWith(keepPD, fBytes(nil, 4, nil)), pdWith(keepPD), accepted, 0},
 		{"autonomy_level_0_enum", pdWith(func(p *wardenv1.PolicyDecision) { p.AutonomyLevel = 0 }, fVarint(nil, 2, 0)),

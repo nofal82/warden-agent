@@ -11,6 +11,7 @@ syntax = "proto3";
 
 package warden.v1;
 
+import "warden/v1/options.proto";
 import "warden/v1/typed_request.proto";
 
 option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
@@ -19,56 +20,117 @@ option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv
 // parses before the signature check (R5), so it holds three length-limited
 // byte fields and nothing else.
 message SignedEnvelope {
+  option (max_message_bytes) = 16384;
   // SHA-256 of the raw 32-byte Ed25519 public key that signed body. Exactly
   // 32 bytes.
-  bytes key_id = 1;
+  bytes key_id = 1 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
   // Deterministic encoding of EnvelopeBody, signed as received and never
   // re-marshalled (R3, R4). At least 1 byte.
-  bytes body = 2;
+  bytes body = 2 [
+    (min_bytes) = 1,
+    (max_bytes) = 16384
+  ];
   // Ed25519 over "warden/v1/action-envelope" || 0x00 || body. Exactly 64
   // bytes.
-  bytes signature = 3;
+  bytes signature = 3 [
+    (min_bytes) = 64,
+    (max_bytes) = 64
+  ];
 }
 
 // EnvelopeBody is decoded only after the signature over its bytes verified.
 message EnvelopeBody {
   // Must be 1 (R14).
-  uint32 format_version = 1;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
   // UUID v7, lowercase canonical form.
-  string action_id = 2;
+  string action_id = 2 [
+    (min_bytes) = 36,
+    (max_bytes) = 36,
+    (pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+  ];
   // Server UUID assigned at enrollment, lowercase canonical form (R17).
-  string target_server_id = 3;
+  string target_server_id = 3 [
+    (min_bytes) = 36,
+    (max_bytes) = 36,
+    (pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+  ];
   // ^[a-z][a-z0-9-]{1,62}$
-  string playbook_id = 4;
+  string playbook_id = 4 [
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{1,62}$"
+  ];
   // SemVer 2.0.0 without build metadata, at most 32 characters.
-  string playbook_version = 5;
+  string playbook_version = 5 [
+    (max_bytes) = 32,
+    (pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+  ];
   // SHA-256 of the signed playbook package. Exactly 32 bytes.
-  bytes playbook_digest = 6;
+  bytes playbook_digest = 6 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
   // ^[a-z][a-z0-9-]{0,62}$
-  string step_id = 7;
+  string step_id = 7 [
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{0,62}$"
+  ];
   // Exactly one typed request (R20).
-  TypedRequest params = 8;
+  TypedRequest params = 8 [(required) = true];
   // Required (R21).
-  PolicyDecision policy_decision = 9;
+  PolicyDecision policy_decision = 9 [(required) = true];
   // Unix seconds, 1 … 2^40 − 1.
-  int64 created_at = 10;
+  int64 created_at = 10 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
   // Unix seconds, 1 … 2^40 − 1.
-  int64 expires_at = 11;
+  int64 expires_at = 11 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
   // 1–128 characters, ^[A-Za-z0-9._:-]+$, never containing "..".
-  string idempotency_key = 12;
+  string idempotency_key = 12 [
+    (min_bytes) = 1,
+    (max_bytes) = 128,
+    (pattern) = "^[A-Za-z0-9._:-]+$"
+  ];
+  // Per-server counter the control plane assigns in the signing
+  // transaction, 1 … 2^63 − 1 (R23a). The executor never rejects on its
+  // value; it records the highest in the watermark file and reports it in
+  // ExecutorStatusBody.highest_envelope_counter.
+  uint64 envelope_counter = 13 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
 }
 
 // PolicyDecision records the policy and autonomy decision that allowed the
 // step. The executor enforces the autonomy ceilings (R21).
 message PolicyDecision {
   // UUID v4, lowercase canonical form.
-  string decision_id = 1;
+  string decision_id = 1 [
+    (min_bytes) = 36,
+    (max_bytes) = 36,
+    (pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+  ];
   // UNSPECIFIED is invalid.
-  AutonomyLevel autonomy_level = 2;
+  AutonomyLevel autonomy_level = 2 [(required) = true];
   // SHA-256 of the policy bundle. Exactly 32 bytes.
-  bytes policy_bundle_digest = 3;
+  bytes policy_bundle_digest = 3 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
   // Empty, or UUID v4 (lowercase canonical form) when a human approved.
-  string approval_id = 4;
+  string approval_id = 4 [
+    (max_bytes) = 36,
+    (pattern) = "^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?$"
+  ];
 }
 
 // AutonomyLevel values are defined by policy-and-autonomy.md.

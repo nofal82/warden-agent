@@ -3,13 +3,18 @@
 // Source of truth: warden/specs/typed-action-catalog.md §4.1 and §4.4.
 // Requests hold only scalars, enums and repeated scalars (R3, R3a): no
 // message-typed field, so no request can be nested or recursive. Value
-// limits are enforced by each primitive's validator, not by this file.
+// limits are written as the contract options (agent-api R52c, M2 envelope
+// change); each primitive's validator still enforces them by hand, with
+// the rules the options cannot state (path rules, live checks, per-engine
+// ranges), and never depends on the options.
 // Field numbers are part of the signed wire format. Never renumber or reuse
 // one.
 
 syntax = "proto3";
 
 package warden.v1;
+
+import "warden/v1/options.proto";
 
 option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
 
@@ -71,38 +76,56 @@ enum Signal {
 // P1 fs.usage (read).
 message FsUsageRequest {
   // Absolute path of a mount point.
-  string mount_path = 1;
+  string mount_path = 1 [
+    (min_bytes) = 1,
+    (max_bytes) = 4095
+  ];
 }
 
 // P2 fs.largest_entries (read).
 message FsLargestEntriesRequest {
   // Absolute directory path.
-  string path = 1;
+  string path = 1 [
+    (min_bytes) = 1,
+    (max_bytes) = 4095
+  ];
   // 1 … 4.
-  uint32 max_depth = 2;
+  uint32 max_depth = 2 [
+    (min_uint) = 1,
+    (max_uint) = 4
+  ];
   // 1 … 50.
-  uint32 top_n = 3;
+  uint32 top_n = 3 [
+    (min_uint) = 1,
+    (max_uint) = 50
+  ];
   // 0 … 2^50.
-  uint64 min_size_bytes = 4;
+  uint64 min_size_bytes = 4 [(max_uint) = 1125899906842624];
   // 0 … 31,536,000; 0 means no age filter.
-  uint32 modified_within_seconds = 5;
+  uint32 modified_within_seconds = 5 [(max_uint) = 31536000];
 }
 
 // P3 service.status (read).
 message ServiceStatusRequest {
   // systemd service unit.
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
 }
 
 // P4 web.config_test (read).
 message WebConfigTestRequest {
-  WebServer server = 1;
+  WebServer server = 1 [(required) = true];
 }
 
 // P5 cert.inspect (read).
 message CertInspectRequest {
   // Absolute path to a PEM file.
-  string path = 1;
+  string path = 1 [
+    (min_bytes) = 1,
+    (max_bytes) = 4095
+  ];
 }
 
 // Sort order for P6 process.top.
@@ -114,11 +137,17 @@ enum ProcessOrder {
 
 // P6 process.top (read).
 message ProcessTopRequest {
-  ProcessOrder order_by = 1;
+  ProcessOrder order_by = 1 [(required) = true];
   // 1 … 50.
-  uint32 top_n = 2;
+  uint32 top_n = 2 [
+    (min_uint) = 1,
+    (max_uint) = 50
+  ];
   // 200 … 5000; ignored for PROCESS_ORDER_MEMORY.
-  uint32 sample_ms = 3;
+  uint32 sample_ms = 3 [
+    (min_uint) = 200,
+    (max_uint) = 5000
+  ];
 }
 
 // P7 mem.status (read). No fields.
@@ -127,7 +156,10 @@ message MemStatusRequest {}
 // P8 container.inspect (read).
 message ContainerInspectRequest {
   // Exact full container name or full 64-character id.
-  string container = 1;
+  string container = 1 [
+    (max_bytes) = 128,
+    (pattern) = "^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$"
+  ];
 }
 
 // Fixed queries for P9 db.query_readonly. Statement text lives in the
@@ -143,65 +175,101 @@ enum DbQuery {
 
 // P9 db.query_readonly (read).
 message DbQueryReadonlyRequest {
-  Engine engine = 1;
+  Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  string instance = 2;
-  DbQuery query = 3;
+  string instance = 2 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
+  DbQuery query = 3 [(required) = true];
   // 1 … 100; only for list queries.
-  uint32 limit = 4;
+  uint32 limit = 4 [(max_uint) = 100];
 }
 
 // P10 db.backup_verify (read).
 message DbBackupVerifyRequest {
-  Engine engine = 1;
+  Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  string instance = 2;
+  string instance = 2 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
   // 1 … 16: index into the backup locations declared for this server.
-  uint32 backup_location_id = 3;
+  uint32 backup_location_id = 3 [
+    (min_uint) = 1,
+    (max_uint) = 16
+  ];
   // 1 … 720.
-  uint32 max_age_hours = 4;
+  uint32 max_age_hours = 4 [
+    (min_uint) = 1,
+    (max_uint) = 720
+  ];
   // 1 … 2^50.
-  uint64 min_size_bytes = 5;
+  uint64 min_size_bytes = 5 [
+    (min_uint) = 1,
+    (max_uint) = 1125899906842624
+  ];
 }
 
 // P11 service.restart (act).
 message ServiceRestartRequest {
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
 }
 
 // P12 service.reset_failed (act).
 message ServiceResetFailedRequest {
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
 }
 
 // P13 service.reload (act).
 message ServiceReloadRequest {
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
 }
 
 // P14 service.start (act).
 message ServiceStartRequest {
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
 }
 
 // P15 service.set_cpu_quota (act).
 message ServiceSetCpuQuotaRequest {
-  string unit = 1;
+  string unit = 1 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
   // 10 … 100 × online CPUs, or 0 to remove the limit.
   uint32 cpu_quota_percent = 2;
   // 0 or 2 … 4,194,304.
-  uint32 pid = 3;
+  uint32 pid = 3 [(max_uint) = 4194304];
   // 0 or 1 … 2^62; zero together with pid.
-  uint64 start_time_ticks = 4;
+  uint64 start_time_ticks = 4 [(max_uint) = 4611686018427387904];
 }
 
 // P16 process.signal (act).
 message ProcessSignalRequest {
   // 2 … 4,194,304.
-  uint32 pid = 1;
+  uint32 pid = 1 [
+    (min_uint) = 2,
+    (max_uint) = 4194304
+  ];
   // 1 … 2^62.
-  uint64 start_time_ticks = 2;
-  Signal signal = 3;
+  uint64 start_time_ticks = 2 [
+    (min_uint) = 1,
+    (max_uint) = 4611686018427387904
+  ];
+  Signal signal = 3 [(required) = true];
 }
 
 // Housekeeping roots for P17 file.delete_by_age. There is no path in the
@@ -214,20 +282,32 @@ enum FileDeleteRoot {
 
 // P17 file.delete_by_age (act).
 message FileDeleteByAgeRequest {
-  FileDeleteRoot root = 1;
+  FileDeleteRoot root = 1 [(required) = true];
   // 7 … 365.
-  uint32 min_age_days = 2;
+  uint32 min_age_days = 2 [
+    (min_uint) = 7,
+    (max_uint) = 365
+  ];
   // 1 … 10,000.
-  uint32 max_files = 3;
+  uint32 max_files = 3 [
+    (min_uint) = 1,
+    (max_uint) = 10000
+  ];
   // 1 … 2^44.
-  uint64 max_bytes = 4;
+  uint64 max_bytes = 4 [
+    (min_uint) = 1,
+    (max_uint) = 17592186044416
+  ];
   bool dry_run = 5;
 }
 
 // P18 journal.vacuum (act).
 message JournalVacuumRequest {
   // 7 … 365.
-  uint32 keep_days = 1;
+  uint32 keep_days = 1 [
+    (min_uint) = 7,
+    (max_uint) = 365
+  ];
 }
 
 // P19 pkg.cache_clean (act). No fields.
@@ -236,26 +316,48 @@ message PkgCacheCleanRequest {}
 // P21 container.restart (act).
 message ContainerRestartRequest {
   // Exact full container name or full 64-character id.
-  string container = 1;
+  string container = 1 [
+    (max_bytes) = 128,
+    (pattern) = "^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$"
+  ];
   // 1 … 120.
-  uint32 stop_timeout_seconds = 2;
+  uint32 stop_timeout_seconds = 2 [
+    (min_uint) = 1,
+    (max_uint) = 120
+  ];
 }
 
 // P22 db.terminate_session (act).
 message DbTerminateSessionRequest {
-  Engine engine = 1;
+  Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  string instance = 2;
+  string instance = 2 [
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
+  ];
   // 1 … 20 entries, no duplicates.
-  repeated uint64 session_ids = 3;
+  repeated uint64 session_ids = 3 [
+    (min_count) = 1,
+    (max_count) = 20
+  ];
   // Same count and order as session_ids. PostgreSQL: backend_start in
   // microseconds since the Unix epoch; MySQL/MariaDB: each 0.
-  repeated int64 session_started_at = 4;
+  repeated int64 session_started_at = 4 [(max_count) = 20];
   // MySQL/MariaDB: 1 … 2^40 − 1; PostgreSQL: 0.
-  int64 server_started_at = 5;
+  int64 server_started_at = 5 [
+    (min_int) = 0,
+    (max_int) = 1099511627775
+  ];
   // MySQL/MariaDB: same count and order as session_ids, each exactly 32
   // bytes; PostgreSQL: empty.
-  repeated bytes session_owner_digests = 6;
+  repeated bytes session_owner_digests = 6 [
+    (min_bytes) = 32,
+    (max_bytes) = 32,
+    (max_count) = 20
+  ];
   // 60 … 86,400.
-  uint32 min_idle_seconds = 7;
+  uint32 min_idle_seconds = 7 [
+    (min_uint) = 60,
+    (max_uint) = 86400
+  ];
 }

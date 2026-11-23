@@ -182,8 +182,13 @@ type EnvelopeBody struct {
 	ExpiresAt int64 `protobuf:"varint,11,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	// 1–128 characters, ^[A-Za-z0-9._:-]+$, never containing "..".
 	IdempotencyKey string `protobuf:"bytes,12,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Per-server counter the control plane assigns in the signing
+	// transaction, 1 … 2^63 − 1 (R23a). The executor never rejects on its
+	// value; it records the highest in the watermark file and reports it in
+	// ExecutorStatusBody.highest_envelope_counter.
+	EnvelopeCounter uint64 `protobuf:"varint,13,opt,name=envelope_counter,json=envelopeCounter,proto3" json:"envelope_counter,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *EnvelopeBody) Reset() {
@@ -300,6 +305,13 @@ func (x *EnvelopeBody) GetIdempotencyKey() string {
 	return ""
 }
 
+func (x *EnvelopeBody) GetEnvelopeCounter() uint64 {
+	if x != nil {
+		return x.EnvelopeCounter
+	}
+	return 0
+}
+
 // PolicyDecision records the policy and autonomy decision that allowed the
 // step. The executor enforces the autonomy ceilings (R21).
 type PolicyDecision struct {
@@ -378,34 +390,36 @@ var File_warden_v1_envelope_proto protoreflect.FileDescriptor
 
 const file_warden_v1_envelope_proto_rawDesc = "" +
 	"\n" +
-	"\x18warden/v1/envelope.proto\x12\twarden.v1\x1a\x1dwarden/v1/typed_request.proto\"Y\n" +
-	"\x0eSignedEnvelope\x12\x15\n" +
-	"\x06key_id\x18\x01 \x01(\fR\x05keyId\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\fR\x04body\x12\x1c\n" +
-	"\tsignature\x18\x03 \x01(\fR\tsignature\"\xe6\x03\n" +
-	"\fEnvelopeBody\x12%\n" +
-	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x1b\n" +
-	"\taction_id\x18\x02 \x01(\tR\bactionId\x12(\n" +
-	"\x10target_server_id\x18\x03 \x01(\tR\x0etargetServerId\x12\x1f\n" +
-	"\vplaybook_id\x18\x04 \x01(\tR\n" +
-	"playbookId\x12)\n" +
-	"\x10playbook_version\x18\x05 \x01(\tR\x0fplaybookVersion\x12'\n" +
-	"\x0fplaybook_digest\x18\x06 \x01(\fR\x0eplaybookDigest\x12\x17\n" +
-	"\astep_id\x18\a \x01(\tR\x06stepId\x12/\n" +
-	"\x06params\x18\b \x01(\v2\x17.warden.v1.TypedRequestR\x06params\x12B\n" +
-	"\x0fpolicy_decision\x18\t \x01(\v2\x19.warden.v1.PolicyDecisionR\x0epolicyDecision\x12\x1d\n" +
+	"\x18warden/v1/envelope.proto\x12\twarden.v1\x1a\x17warden/v1/options.proto\x1a\x1dwarden/v1/typed_request.proto\"\x81\x01\n" +
+	"\x0eSignedEnvelope\x12\x1f\n" +
+	"\x06key_id\x18\x01 \x01(\fB\b\x88\xb5\x18 \x90\xb5\x18 R\x05keyId\x12\x1e\n" +
+	"\x04body\x18\x02 \x01(\fB\n" +
+	"\x88\xb5\x18\x01\x90\xb5\x18\x80\x80\x01R\x04body\x12&\n" +
+	"\tsignature\x18\x03 \x01(\fB\b\x88\xb5\x18@\x90\xb5\x18@R\tsignature:\x06\xa8\xbb\x18\x80\x80\x01\"\x97\b\n" +
+	"\fEnvelopeBody\x12/\n" +
+	"\x0eformat_version\x18\x01 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x01R\rformatVersion\x12n\n" +
+	"\taction_id\x18\x02 \x01(\tBQ\x88\xb5\x18$\x90\xb5\x18$ʵ\x18E^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$R\bactionId\x12{\n" +
+	"\x10target_server_id\x18\x03 \x01(\tBQ\x88\xb5\x18$\x90\xb5\x18$ʵ\x18E^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$R\x0etargetServerId\x12?\n" +
+	"\vplaybook_id\x18\x04 \x01(\tB\x1e\x90\xb5\x18?ʵ\x18\x16^[a-z][a-z0-9-]{1,62}$R\n" +
+	"playbookId\x12\xd7\x01\n" +
+	"\x10playbook_version\x18\x05 \x01(\tB\xab\x01\x90\xb5\x18 ʵ\x18\xa2\x01^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$R\x0fplaybookVersion\x121\n" +
+	"\x0fplaybook_digest\x18\x06 \x01(\fB\b\x88\xb5\x18 \x90\xb5\x18 R\x0eplaybookDigest\x127\n" +
+	"\astep_id\x18\a \x01(\tB\x1e\x90\xb5\x18?ʵ\x18\x16^[a-z][a-z0-9-]{0,62}$R\x06stepId\x125\n" +
+	"\x06params\x18\b \x01(\v2\x17.warden.v1.TypedRequestB\x04\xe0\xb5\x18\x01R\x06params\x12H\n" +
+	"\x0fpolicy_decision\x18\t \x01(\v2\x19.warden.v1.PolicyDecisionB\x04\xe0\xb5\x18\x01R\x0epolicyDecision\x12,\n" +
 	"\n" +
 	"created_at\x18\n" +
-	" \x01(\x03R\tcreatedAt\x12\x1d\n" +
+	" \x01(\x03B\r\xb8\xb5\x18\x01\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\tcreatedAt\x12,\n" +
 	"\n" +
-	"expires_at\x18\v \x01(\x03R\texpiresAt\x12'\n" +
-	"\x0fidempotency_key\x18\f \x01(\tR\x0eidempotencyKey\"\xc5\x01\n" +
-	"\x0ePolicyDecision\x12\x1f\n" +
-	"\vdecision_id\x18\x01 \x01(\tR\n" +
-	"decisionId\x12?\n" +
-	"\x0eautonomy_level\x18\x02 \x01(\x0e2\x18.warden.v1.AutonomyLevelR\rautonomyLevel\x120\n" +
-	"\x14policy_bundle_digest\x18\x03 \x01(\fR\x12policyBundleDigest\x12\x1f\n" +
-	"\vapproval_id\x18\x04 \x01(\tR\n" +
+	"expires_at\x18\v \x01(\x03B\r\xb8\xb5\x18\x01\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\texpiresAt\x12H\n" +
+	"\x0fidempotency_key\x18\f \x01(\tB\x1f\x88\xb5\x18\x01\x90\xb5\x18\x80\x01ʵ\x18\x12^[A-Za-z0-9._:-]+$R\x0eidempotencyKey\x12;\n" +
+	"\x10envelope_counter\x18\r \x01(\x04B\x10\xa8\xb5\x18\x01\xb0\xb5\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\x0fenvelopeCounter\"\xfc\x02\n" +
+	"\x0ePolicyDecision\x12r\n" +
+	"\vdecision_id\x18\x01 \x01(\tBQ\x88\xb5\x18$\x90\xb5\x18$ʵ\x18E^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$R\n" +
+	"decisionId\x12E\n" +
+	"\x0eautonomy_level\x18\x02 \x01(\x0e2\x18.warden.v1.AutonomyLevelB\x04\xe0\xb5\x18\x01R\rautonomyLevel\x12:\n" +
+	"\x14policy_bundle_digest\x18\x03 \x01(\fB\b\x88\xb5\x18 \x90\xb5\x18 R\x12policyBundleDigest\x12s\n" +
+	"\vapproval_id\x18\x04 \x01(\tBR\x90\xb5\x18$ʵ\x18J^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?$R\n" +
 	"approvalId*\x8b\x01\n" +
 	"\rAutonomyLevel\x12\x1e\n" +
 	"\x1aAUTONOMY_LEVEL_UNSPECIFIED\x10\x00\x12\x15\n" +
@@ -451,6 +465,7 @@ func file_warden_v1_envelope_proto_init() {
 	if File_warden_v1_envelope_proto != nil {
 		return
 	}
+	file_warden_v1_options_proto_init()
 	file_warden_v1_typed_request_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{

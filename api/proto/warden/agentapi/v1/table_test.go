@@ -244,6 +244,11 @@ var sizeLimitedMessages = map[protoreflect.FullName]bool{
 	"warden.agentapi.v1.HealthReport":   true,
 	"warden.agentapi.v1.TelemetryBatch": true,
 	"warden.agentapi.v1.ControlMessage": true,
+	// warden.v1 (V5 in v1_table_test.go).
+	"warden.v1.SignedEnvelope":     true,
+	"warden.v1.IpcRefusal":         true,
+	"warden.v1.PrimitiveResult":    true,
+	"warden.v1.ExecutorResultBody": true,
 }
 
 // requiredFields is the exact list of §4.10.1 for option 50012.

@@ -3,7 +3,10 @@
 // Source of truth: warden/specs/typed-action-catalog.md §4.1 and §4.4.
 // Requests hold only scalars, enums and repeated scalars (R3, R3a): no
 // message-typed field, so no request can be nested or recursive. Value
-// limits are enforced by each primitive's validator, not by this file.
+// limits are written as the contract options (agent-api R52c, M2 envelope
+// change); each primitive's validator still enforces them by hand, with
+// the rules the options cannot state (path rules, live checks, per-engine
+// ranges), and never depends on the options.
 // Field numbers are part of the signed wire format. Never renumber or reuse
 // one.
 
@@ -1931,7 +1934,7 @@ var File_warden_v1_typed_request_proto protoreflect.FileDescriptor
 
 const file_warden_v1_typed_request_proto_rawDesc = "" +
 	"\n" +
-	"\x1dwarden/v1/typed_request.proto\x12\twarden.v1\"\xf2\f\n" +
+	"\x1dwarden/v1/typed_request.proto\x12\twarden.v1\x1a\x17warden/v1/options.proto\"\xf2\f\n" +
 	"\fTypedRequest\x126\n" +
 	"\bfs_usage\x18\x01 \x01(\v2\x19.warden.v1.FsUsageRequestH\x00R\afsUsage\x12R\n" +
 	"\x12fs_largest_entries\x18\x02 \x01(\v2\".warden.v1.FsLargestEntriesRequestH\x00R\x10fsLargestEntries\x12H\n" +
@@ -1958,79 +1961,81 @@ const file_warden_v1_typed_request_proto_rawDesc = "" +
 	"\x11container_restart\x18\x15 \x01(\v2\".warden.v1.ContainerRestartRequestH\x00R\x10containerRestart\x12X\n" +
 	"\x14db_terminate_session\x18\x16 \x01(\v2$.warden.v1.DbTerminateSessionRequestH\x00R\x12dbTerminateSessionB\t\n" +
 	"\arequestJ\x04\b\x14\x10\x15R\n" +
-	"cert_renew\"/\n" +
-	"\x0eFsUsageRequest\x12\x1d\n" +
+	"cert_renew\":\n" +
+	"\x0eFsUsageRequest\x12(\n" +
 	"\n" +
-	"mount_path\x18\x01 \x01(\tR\tmountPath\"\xbd\x01\n" +
-	"\x17FsLargestEntriesRequest\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1b\n" +
-	"\tmax_depth\x18\x02 \x01(\rR\bmaxDepth\x12\x13\n" +
-	"\x05top_n\x18\x03 \x01(\rR\x04topN\x12$\n" +
-	"\x0emin_size_bytes\x18\x04 \x01(\x04R\fminSizeBytes\x126\n" +
-	"\x17modified_within_seconds\x18\x05 \x01(\rR\x15modifiedWithinSeconds\"*\n" +
-	"\x14ServiceStatusRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\"D\n" +
-	"\x14WebConfigTestRequest\x12,\n" +
-	"\x06server\x18\x01 \x01(\x0e2\x14.warden.v1.WebServerR\x06server\"(\n" +
-	"\x12CertInspectRequest\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"y\n" +
-	"\x11ProcessTopRequest\x122\n" +
-	"\border_by\x18\x01 \x01(\x0e2\x17.warden.v1.ProcessOrderR\aorderBy\x12\x13\n" +
-	"\x05top_n\x18\x02 \x01(\rR\x04topN\x12\x1b\n" +
-	"\tsample_ms\x18\x03 \x01(\rR\bsampleMs\"\x12\n" +
-	"\x10MemStatusRequest\"7\n" +
-	"\x17ContainerInspectRequest\x12\x1c\n" +
-	"\tcontainer\x18\x01 \x01(\tR\tcontainer\"\x9f\x01\n" +
-	"\x16DbQueryReadonlyRequest\x12)\n" +
-	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineR\x06engine\x12\x1a\n" +
-	"\binstance\x18\x02 \x01(\tR\binstance\x12(\n" +
-	"\x05query\x18\x03 \x01(\x0e2\x12.warden.v1.DbQueryR\x05query\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\rR\x05limit\"\xd6\x01\n" +
-	"\x15DbBackupVerifyRequest\x12)\n" +
-	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineR\x06engine\x12\x1a\n" +
-	"\binstance\x18\x02 \x01(\tR\binstance\x12,\n" +
-	"\x12backup_location_id\x18\x03 \x01(\rR\x10backupLocationId\x12\"\n" +
-	"\rmax_age_hours\x18\x04 \x01(\rR\vmaxAgeHours\x12$\n" +
-	"\x0emin_size_bytes\x18\x05 \x01(\x04R\fminSizeBytes\"+\n" +
-	"\x15ServiceRestartRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\"/\n" +
-	"\x19ServiceResetFailedRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\"*\n" +
-	"\x14ServiceReloadRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\")\n" +
-	"\x13ServiceStartRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\"\x97\x01\n" +
-	"\x19ServiceSetCpuQuotaRequest\x12\x12\n" +
-	"\x04unit\x18\x01 \x01(\tR\x04unit\x12*\n" +
-	"\x11cpu_quota_percent\x18\x02 \x01(\rR\x0fcpuQuotaPercent\x12\x10\n" +
-	"\x03pid\x18\x03 \x01(\rR\x03pid\x12(\n" +
-	"\x10start_time_ticks\x18\x04 \x01(\x04R\x0estartTimeTicks\"}\n" +
-	"\x14ProcessSignalRequest\x12\x10\n" +
-	"\x03pid\x18\x01 \x01(\rR\x03pid\x12(\n" +
-	"\x10start_time_ticks\x18\x02 \x01(\x04R\x0estartTimeTicks\x12)\n" +
-	"\x06signal\x18\x03 \x01(\x0e2\x11.warden.v1.SignalR\x06signal\"\xbc\x01\n" +
-	"\x16FileDeleteByAgeRequest\x12-\n" +
-	"\x04root\x18\x01 \x01(\x0e2\x19.warden.v1.FileDeleteRootR\x04root\x12 \n" +
-	"\fmin_age_days\x18\x02 \x01(\rR\n" +
-	"minAgeDays\x12\x1b\n" +
-	"\tmax_files\x18\x03 \x01(\rR\bmaxFiles\x12\x1b\n" +
-	"\tmax_bytes\x18\x04 \x01(\x04R\bmaxBytes\x12\x17\n" +
-	"\adry_run\x18\x05 \x01(\bR\x06dryRun\"3\n" +
-	"\x14JournalVacuumRequest\x12\x1b\n" +
-	"\tkeep_days\x18\x01 \x01(\rR\bkeepDays\"\x16\n" +
-	"\x14PkgCacheCleanRequest\"i\n" +
-	"\x17ContainerRestartRequest\x12\x1c\n" +
-	"\tcontainer\x18\x01 \x01(\tR\tcontainer\x120\n" +
-	"\x14stop_timeout_seconds\x18\x02 \x01(\rR\x12stopTimeoutSeconds\"\xbb\x02\n" +
-	"\x19DbTerminateSessionRequest\x12)\n" +
-	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineR\x06engine\x12\x1a\n" +
-	"\binstance\x18\x02 \x01(\tR\binstance\x12\x1f\n" +
-	"\vsession_ids\x18\x03 \x03(\x04R\n" +
-	"sessionIds\x12,\n" +
-	"\x12session_started_at\x18\x04 \x03(\x03R\x10sessionStartedAt\x12*\n" +
-	"\x11server_started_at\x18\x05 \x01(\x03R\x0fserverStartedAt\x122\n" +
-	"\x15session_owner_digests\x18\x06 \x03(\fR\x13sessionOwnerDigests\x12(\n" +
-	"\x10min_idle_seconds\x18\a \x01(\rR\x0eminIdleSeconds*]\n" +
+	"mount_path\x18\x01 \x01(\tB\t\x88\xb5\x18\x01\x90\xb5\x18\xff\x1fR\tmountPath\"\xf2\x01\n" +
+	"\x17FsLargestEntriesRequest\x12\x1d\n" +
+	"\x04path\x18\x01 \x01(\tB\t\x88\xb5\x18\x01\x90\xb5\x18\xff\x1fR\x04path\x12%\n" +
+	"\tmax_depth\x18\x02 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x04R\bmaxDepth\x12\x1d\n" +
+	"\x05top_n\x18\x03 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x182R\x04topN\x121\n" +
+	"\x0emin_size_bytes\x18\x04 \x01(\x04B\v\xb0\xb5\x18\x80\x80\x80\x80\x80\x80\x80\x02R\fminSizeBytes\x12?\n" +
+	"\x17modified_within_seconds\x18\x05 \x01(\rB\a\xb0\xb5\x18\x80\xe7\x84\x0fR\x15modifiedWithinSeconds\"b\n" +
+	"\x14ServiceStatusRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\"J\n" +
+	"\x14WebConfigTestRequest\x122\n" +
+	"\x06server\x18\x01 \x01(\x0e2\x14.warden.v1.WebServerB\x04\xe0\xb5\x18\x01R\x06server\"3\n" +
+	"\x12CertInspectRequest\x12\x1d\n" +
+	"\x04path\x18\x01 \x01(\tB\t\x88\xb5\x18\x01\x90\xb5\x18\xff\x1fR\x04path\"\x95\x01\n" +
+	"\x11ProcessTopRequest\x128\n" +
+	"\border_by\x18\x01 \x01(\x0e2\x17.warden.v1.ProcessOrderB\x04\xe0\xb5\x18\x01R\aorderBy\x12\x1d\n" +
+	"\x05top_n\x18\x02 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x182R\x04topN\x12'\n" +
+	"\tsample_ms\x18\x03 \x01(\rB\n" +
+	"\xa8\xb5\x18\xc8\x01\xb0\xb5\x18\x88'R\bsampleMs\"\x12\n" +
+	"\x10MemStatusRequest\"u\n" +
+	"\x17ContainerInspectRequest\x12Z\n" +
+	"\tcontainer\x18\x01 \x01(\tB<\x90\xb5\x18\x80\x01ʵ\x183^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$R\tcontainer\"\xe9\x01\n" +
+	"\x16DbQueryReadonlyRequest\x12/\n" +
+	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineB\x04\xe0\xb5\x18\x01R\x06engine\x12R\n" +
+	"\binstance\x18\x02 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\binstance\x12.\n" +
+	"\x05query\x18\x03 \x01(\x0e2\x12.warden.v1.DbQueryB\x04\xe0\xb5\x18\x01R\x05query\x12\x1a\n" +
+	"\x05limit\x18\x04 \x01(\rB\x04\xb0\xb5\x18dR\x05limit\"\xba\x02\n" +
+	"\x15DbBackupVerifyRequest\x12/\n" +
+	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineB\x04\xe0\xb5\x18\x01R\x06engine\x12R\n" +
+	"\binstance\x18\x02 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\binstance\x126\n" +
+	"\x12backup_location_id\x18\x03 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x10R\x10backupLocationId\x12-\n" +
+	"\rmax_age_hours\x18\x04 \x01(\rB\t\xa8\xb5\x18\x01\xb0\xb5\x18\xd0\x05R\vmaxAgeHours\x125\n" +
+	"\x0emin_size_bytes\x18\x05 \x01(\x04B\x0f\xa8\xb5\x18\x01\xb0\xb5\x18\x80\x80\x80\x80\x80\x80\x80\x02R\fminSizeBytes\"c\n" +
+	"\x15ServiceRestartRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\"g\n" +
+	"\x19ServiceResetFailedRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\"b\n" +
+	"\x14ServiceReloadRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\"a\n" +
+	"\x13ServiceStartRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\"\xe6\x01\n" +
+	"\x19ServiceSetCpuQuotaRequest\x12J\n" +
+	"\x04unit\x18\x01 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\x04unit\x12*\n" +
+	"\x11cpu_quota_percent\x18\x02 \x01(\rR\x0fcpuQuotaPercent\x12\x19\n" +
+	"\x03pid\x18\x03 \x01(\rB\a\xb0\xb5\x18\x80\x80\x80\x02R\x03pid\x126\n" +
+	"\x10start_time_ticks\x18\x04 \x01(\x04B\f\xb0\xb5\x18\x80\x80\x80\x80\x80\x80\x80\x80@R\x0estartTimeTicks\"\xa2\x01\n" +
+	"\x14ProcessSignalRequest\x12\x1d\n" +
+	"\x03pid\x18\x01 \x01(\rB\v\xa8\xb5\x18\x02\xb0\xb5\x18\x80\x80\x80\x02R\x03pid\x12:\n" +
+	"\x10start_time_ticks\x18\x02 \x01(\x04B\x10\xa8\xb5\x18\x01\xb0\xb5\x18\x80\x80\x80\x80\x80\x80\x80\x80@R\x0estartTimeTicks\x12/\n" +
+	"\x06signal\x18\x03 \x01(\x0e2\x11.warden.v1.SignalB\x04\xe0\xb5\x18\x01R\x06signal\"\xe8\x01\n" +
+	"\x16FileDeleteByAgeRequest\x123\n" +
+	"\x04root\x18\x01 \x01(\x0e2\x19.warden.v1.FileDeleteRootB\x04\xe0\xb5\x18\x01R\x04root\x12+\n" +
+	"\fmin_age_days\x18\x02 \x01(\rB\t\xa8\xb5\x18\a\xb0\xb5\x18\xed\x02R\n" +
+	"minAgeDays\x12&\n" +
+	"\tmax_files\x18\x03 \x01(\rB\t\xa8\xb5\x18\x01\xb0\xb5\x18\x90NR\bmaxFiles\x12+\n" +
+	"\tmax_bytes\x18\x04 \x01(\x04B\x0e\xa8\xb5\x18\x01\xb0\xb5\x18\x80\x80\x80\x80\x80\x80\x04R\bmaxBytes\x12\x17\n" +
+	"\adry_run\x18\x05 \x01(\bR\x06dryRun\">\n" +
+	"\x14JournalVacuumRequest\x12&\n" +
+	"\tkeep_days\x18\x01 \x01(\rB\t\xa8\xb5\x18\a\xb0\xb5\x18\xed\x02R\bkeepDays\"\x16\n" +
+	"\x14PkgCacheCleanRequest\"\xb1\x01\n" +
+	"\x17ContainerRestartRequest\x12Z\n" +
+	"\tcontainer\x18\x01 \x01(\tB<\x90\xb5\x18\x80\x01ʵ\x183^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$R\tcontainer\x12:\n" +
+	"\x14stop_timeout_seconds\x18\x02 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18xR\x12stopTimeoutSeconds\"\xb2\x03\n" +
+	"\x19DbTerminateSessionRequest\x12/\n" +
+	"\x06engine\x18\x01 \x01(\x0e2\x11.warden.v1.EngineB\x04\xe0\xb5\x18\x01R\x06engine\x12R\n" +
+	"\binstance\x18\x02 \x01(\tB6\x90\xb5\x18\x80\x02ʵ\x18-^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$R\binstance\x12)\n" +
+	"\vsession_ids\x18\x03 \x03(\x04B\b\x98\xb5\x18\x01\xa0\xb5\x18\x14R\n" +
+	"sessionIds\x122\n" +
+	"\x12session_started_at\x18\x04 \x03(\x03B\x04\xa0\xb5\x18\x14R\x10sessionStartedAt\x129\n" +
+	"\x11server_started_at\x18\x05 \x01(\x03B\r\xb8\xb5\x18\x00\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\x0fserverStartedAt\x12@\n" +
+	"\x15session_owner_digests\x18\x06 \x03(\fB\f\x88\xb5\x18 \x90\xb5\x18 \xa0\xb5\x18\x14R\x13sessionOwnerDigests\x124\n" +
+	"\x10min_idle_seconds\x18\a \x01(\rB\n" +
+	"\xa8\xb5\x18<\xb0\xb5\x18\x80\xa3\x05R\x0eminIdleSeconds*]\n" +
 	"\x06Engine\x12\x16\n" +
 	"\x12ENGINE_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fENGINE_MYSQL\x10\x01\x12\x15\n" +
@@ -2146,6 +2151,7 @@ func file_warden_v1_typed_request_proto_init() {
 	if File_warden_v1_typed_request_proto != nil {
 		return
 	}
+	file_warden_v1_options_proto_init()
 	file_warden_v1_typed_request_proto_msgTypes[0].OneofWrappers = []any{
 		(*TypedRequest_FsUsage)(nil),
 		(*TypedRequest_FsLargestEntries)(nil),

@@ -3,9 +3,10 @@
 // Source of truth: warden/specs/typed-action-catalog.md §4.8 and §4.8.1;
 // redaction classes from warden/specs/redaction.md §4.1 (R5).
 // A PrimitiveResult is unsigned and agent-trust level (executor-ipc R33).
-// Its bounds are executor output limits, enforced by hand-written code
-// until the M2 envelope change (agent-api R52c); only redact_class is set
-// here, on every string and bytes field.
+// Its bounds are executor output limits (typed-action-catalog R14),
+// written as the contract options since the M2 envelope change (agent-api
+// R52c); the executor still caps its output by hand, and redact_class is
+// set on every string and bytes field.
 // Field numbers and enum values are final wire numbers. Never renumber or
 // reuse one.
 
@@ -3963,9 +3964,9 @@ var File_warden_v1_primitive_result_proto protoreflect.FileDescriptor
 
 const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\n" +
-	" warden/v1/primitive_result.proto\x12\twarden.v1\x1a\x17warden/v1/options.proto\"\xd4\x02\n" +
-	"\x0fPrimitiveResult\x122\n" +
-	"\x06status\x18\x01 \x01(\x0e2\x1a.warden.v1.PrimitiveStatusR\x06status\x12<\n" +
+	" warden/v1/primitive_result.proto\x12\twarden.v1\x1a\x17warden/v1/options.proto\"\xe2\x02\n" +
+	"\x0fPrimitiveResult\x128\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x1a.warden.v1.PrimitiveStatusB\x04\xe0\xb5\x18\x01R\x06status\x12<\n" +
 	"\n" +
 	"error_code\x18\x02 \x01(\x0e2\x1d.warden.v1.PrimitiveErrorCodeR\terrorCode\x12$\n" +
 	"\vexit_status\x18\x03 \x01(\x05H\x00R\n" +
@@ -3975,7 +3976,7 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"started_at\x18\x05 \x01(\x03R\tstartedAt\x12\x1f\n" +
 	"\vfinished_at\x18\x06 \x01(\x03R\n" +
 	"finishedAt\x12.\n" +
-	"\x06result\x18\a \x01(\v2\x16.warden.v1.TypedResultR\x06resultB\x0e\n" +
+	"\x06result\x18\a \x01(\v2\x16.warden.v1.TypedResultR\x06result:\x06\xa8\xbb\x18\x80\x80\x02B\x0e\n" +
 	"\f_exit_status\"\xdb\f\n" +
 	"\vTypedResult\x125\n" +
 	"\bfs_usage\x18\x01 \x01(\v2\x18.warden.v1.FsUsageResultH\x00R\afsUsage\x12Q\n" +
@@ -4003,9 +4004,9 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\x11container_restart\x18\x15 \x01(\v2!.warden.v1.ContainerRestartResultH\x00R\x10containerRestart\x12W\n" +
 	"\x14db_terminate_session\x18\x16 \x01(\v2#.warden.v1.DbTerminateSessionResultH\x00R\x12dbTerminateSessionB\b\n" +
 	"\x06resultJ\x04\b\x14\x10\x15R\n" +
-	"cert_renew\"\xf8\x01\n" +
-	"\rFsUsageResult\x12\x1d\n" +
-	"\afs_type\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x05R\x06fsType\x12\x1f\n" +
+	"cert_renew\"\x80\x02\n" +
+	"\rFsUsageResult\x12%\n" +
+	"\afs_type\x18\x01 \x01(\tB\f\x88\xb5\x18\x01\x90\xb5\x18 \xe8\xb5\x18\x05R\x06fsType\x12\x1f\n" +
 	"\vtotal_bytes\x18\x02 \x01(\x04R\n" +
 	"totalBytes\x12\x1d\n" +
 	"\n" +
@@ -4014,24 +4015,24 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\finodes_total\x18\x05 \x01(\x04R\vinodesTotal\x12\x1f\n" +
 	"\vinodes_used\x18\x06 \x01(\x04R\n" +
 	"inodesUsed\x12\x1b\n" +
-	"\tread_only\x18\a \x01(\bR\breadOnly\"\x94\x01\n" +
-	"\x16FsLargestEntriesResult\x123\n" +
-	"\aentries\x18\x01 \x03(\v2\x19.warden.v1.FsLargestEntryR\aentries\x12'\n" +
+	"\tread_only\x18\a \x01(\bR\breadOnly\"\x9a\x01\n" +
+	"\x16FsLargestEntriesResult\x129\n" +
+	"\aentries\x18\x01 \x03(\v2\x19.warden.v1.FsLargestEntryB\x04\xa0\xb5\x182R\aentries\x12'\n" +
 	"\x0fentries_scanned\x18\x02 \x01(\x04R\x0eentriesScanned\x12\x1c\n" +
-	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"\x96\x01\n" +
-	"\x0eFsLargestEntry\x12\x18\n" +
-	"\x04path\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x06R\x04path\x12*\n" +
-	"\x04kind\x18\x02 \x01(\x0e2\x16.warden.v1.FsEntryKindR\x04kind\x12\x1d\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"\xb4\x01\n" +
+	"\x0eFsLargestEntry\x12!\n" +
+	"\x04path\x18\x01 \x01(\tB\r\x88\xb5\x18\x01\x90\xb5\x18\xff\x1f\xe8\xb5\x18\x06R\x04path\x120\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x16.warden.v1.FsEntryKindB\x04\xe0\xb5\x18\x01R\x04kind\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1f\n" +
-	"\vmodified_at\x18\x04 \x01(\x03R\n" +
-	"modifiedAt\"\x84\x04\n" +
-	"\x13ServiceStatusResult\x127\n" +
+	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12.\n" +
+	"\vmodified_at\x18\x04 \x01(\x03B\r\xb8\xb5\x18\x00\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\n" +
+	"modifiedAt\"\x9c\x04\n" +
+	"\x13ServiceStatusResult\x12=\n" +
 	"\n" +
-	"load_state\x18\x01 \x01(\x0e2\x18.warden.v1.UnitLoadStateR\tloadState\x12=\n" +
-	"\factive_state\x18\x02 \x01(\x0e2\x1a.warden.v1.UnitActiveStateR\vactiveState\x127\n" +
-	"\tsub_state\x18\x03 \x01(\x0e2\x1a.warden.v1.ServiceSubStateR\bsubState\x123\n" +
-	"\x06result\x18\x04 \x01(\x0e2\x1b.warden.v1.ServiceRunResultR\x06result\x12\x1d\n" +
+	"load_state\x18\x01 \x01(\x0e2\x18.warden.v1.UnitLoadStateB\x04\xe0\xb5\x18\x01R\tloadState\x12C\n" +
+	"\factive_state\x18\x02 \x01(\x0e2\x1a.warden.v1.UnitActiveStateB\x04\xe0\xb5\x18\x01R\vactiveState\x12=\n" +
+	"\tsub_state\x18\x03 \x01(\x0e2\x1a.warden.v1.ServiceSubStateB\x04\xe0\xb5\x18\x01R\bsubState\x129\n" +
+	"\x06result\x18\x04 \x01(\x0e2\x1b.warden.v1.ServiceRunResultB\x04\xe0\xb5\x18\x01R\x06result\x12\x1d\n" +
 	"\n" +
 	"n_restarts\x18\x05 \x01(\rR\tnRestarts\x12(\n" +
 	"\x10exec_main_status\x18\x06 \x01(\x05R\x0eexecMainStatus\x12\"\n" +
@@ -4040,62 +4041,63 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\n" +
 	"can_reload\x18\t \x01(\bR\tcanReload\x122\n" +
 	"\x16cpu_quota_per_sec_usec\x18\n" +
-	" \x01(\x04R\x12cpuQuotaPerSecUsec\"e\n" +
+	" \x01(\x04R\x12cpuQuotaPerSecUsec\"r\n" +
 	"\x13WebConfigTestResult\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\x12 \n" +
-	"\bmessages\x18\x02 \x03(\tB\x04\xe8\xb5\x18\aR\bmessages\x12\x1c\n" +
-	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"q\n" +
-	"\x11CertInspectResult\x12>\n" +
-	"\fcertificates\x18\x01 \x03(\v2\x1a.warden.v1.CertificateInfoR\fcertificates\x12\x1c\n" +
-	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"\x92\x02\n" +
-	"\x0fCertificateInfo\x12#\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12-\n" +
+	"\bmessages\x18\x02 \x03(\tB\x11\x88\xb5\x18\x01\x90\xb5\x18\x80\x04\xa0\xb5\x18\x14\xe8\xb5\x18\aR\bmessages\x12\x1c\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"w\n" +
+	"\x11CertInspectResult\x12D\n" +
+	"\fcertificates\x18\x01 \x03(\v2\x1a.warden.v1.CertificateInfoB\x04\xa0\xb5\x18\n" +
+	"R\fcertificates\x12\x1c\n" +
+	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"\xc8\x02\n" +
+	"\x0fCertificateInfo\x12(\n" +
 	"\n" +
-	"subject_cn\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x05R\tsubjectCn\x12!\n" +
-	"\tdns_names\x18\x02 \x03(\tB\x04\xe8\xb5\x18\x05R\bdnsNames\x12!\n" +
-	"\tissuer_cn\x18\x03 \x01(\tB\x04\xe8\xb5\x18\x05R\bissuerCn\x12\x1d\n" +
+	"subject_cn\x18\x01 \x01(\tB\t\x90\xb5\x18\xff\x01\xe8\xb5\x18\x05R\tsubjectCn\x12.\n" +
+	"\tdns_names\x18\x02 \x03(\tB\x11\x88\xb5\x18\x01\x90\xb5\x18\xff\x01\xa0\xb5\x182\xe8\xb5\x18\x05R\bdnsNames\x12&\n" +
+	"\tissuer_cn\x18\x03 \x01(\tB\t\x90\xb5\x18\xff\x01\xe8\xb5\x18\x05R\bissuerCn\x12\x1d\n" +
 	"\n" +
 	"not_before\x18\x04 \x01(\x03R\tnotBefore\x12\x1b\n" +
-	"\tnot_after\x18\x05 \x01(\x03R\bnotAfter\x12#\n" +
+	"\tnot_after\x18\x05 \x01(\x03R\bnotAfter\x12:\n" +
 	"\n" +
-	"serial_hex\x18\x06 \x01(\tB\x04\xe8\xb5\x18\x05R\tserialHex\x123\n" +
-	"\x12sha256_fingerprint\x18\a \x01(\fB\x04\xe8\xb5\x18\x02R\x11sha256Fingerprint\"H\n" +
-	"\x10ProcessTopResult\x124\n" +
-	"\tprocesses\x18\x01 \x03(\v2\x16.warden.v1.ProcessInfoR\tprocesses\"\xfc\x01\n" +
+	"serial_hex\x18\x06 \x01(\tB\x1b\x88\xb5\x18\x01\x90\xb5\x18@ʵ\x18\v^[0-9a-f]+$\xe8\xb5\x18\x05R\tserialHex\x12;\n" +
+	"\x12sha256_fingerprint\x18\a \x01(\fB\f\x88\xb5\x18 \x90\xb5\x18 \xe8\xb5\x18\x02R\x11sha256Fingerprint\"N\n" +
+	"\x10ProcessTopResult\x12:\n" +
+	"\tprocesses\x18\x01 \x03(\v2\x16.warden.v1.ProcessInfoB\x04\xa0\xb5\x182R\tprocesses\"\x8b\x02\n" +
 	"\vProcessInfo\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\rR\x03pid\x12(\n" +
-	"\x10start_time_ticks\x18\x02 \x01(\x04R\x0estartTimeTicks\x12\x18\n" +
-	"\x04comm\x18\x03 \x01(\tB\x04\xe8\xb5\x18\x05R\x04comm\x12\x10\n" +
-	"\x03uid\x18\x04 \x01(\rR\x03uid\x12\x18\n" +
-	"\x04unit\x18\x05 \x01(\tB\x04\xe8\xb5\x18\x05R\x04unit\x12\x1f\n" +
+	"\x10start_time_ticks\x18\x02 \x01(\x04R\x0estartTimeTicks\x12\x1c\n" +
+	"\x04comm\x18\x03 \x01(\tB\b\x90\xb5\x18\x0f\xe8\xb5\x18\x05R\x04comm\x12\x10\n" +
+	"\x03uid\x18\x04 \x01(\rR\x03uid\x12\x1d\n" +
+	"\x04unit\x18\x05 \x01(\tB\t\x90\xb5\x18\x80\x02\xe8\xb5\x18\x05R\x04unit\x12\x1f\n" +
 	"\vcpu_percent\x18\x06 \x01(\rR\n" +
 	"cpuPercent\x12\x1b\n" +
-	"\trss_bytes\x18\a \x01(\x04R\brssBytes\x12-\n" +
-	"\x05state\x18\b \x01(\x0e2\x17.warden.v1.ProcessStateR\x05state\"\xda\x02\n" +
+	"\trss_bytes\x18\a \x01(\x04R\brssBytes\x123\n" +
+	"\x05state\x18\b \x01(\x0e2\x17.warden.v1.ProcessStateB\x04\xe0\xb5\x18\x01R\x05state\"\xe8\x02\n" +
 	"\x0fMemStatusResult\x12\x1f\n" +
 	"\vtotal_bytes\x18\x01 \x01(\x04R\n" +
 	"totalBytes\x12'\n" +
 	"\x0favailable_bytes\x18\x02 \x01(\x04R\x0eavailableBytes\x12(\n" +
 	"\x10swap_total_bytes\x18\x03 \x01(\x04R\x0eswapTotalBytes\x12&\n" +
-	"\x0fswap_free_bytes\x18\x04 \x01(\x04R\rswapFreeBytes\x12)\n" +
-	"\x0epsi_some_avg10\x18\x05 \x01(\rH\x00R\fpsiSomeAvg10\x88\x01\x01\x12)\n" +
-	"\x0epsi_full_avg10\x18\x06 \x01(\rH\x01R\fpsiFullAvg10\x88\x01\x01\x12/\n" +
+	"\x0fswap_free_bytes\x18\x04 \x01(\x04R\rswapFreeBytes\x120\n" +
+	"\x0epsi_some_avg10\x18\x05 \x01(\rB\x05\xb0\xb5\x18\x90NH\x00R\fpsiSomeAvg10\x88\x01\x01\x120\n" +
+	"\x0epsi_full_avg10\x18\x06 \x01(\rB\x05\xb0\xb5\x18\x90NH\x01R\fpsiFullAvg10\x88\x01\x01\x12/\n" +
 	"\x14oom_kills_since_boot\x18\a \x01(\x04R\x11oomKillsSinceBootB\x11\n" +
 	"\x0f_psi_some_avg10B\x11\n" +
-	"\x0f_psi_full_avg10\"\xd6\x02\n" +
-	"\x16ContainerInspectResult\x12\x14\n" +
-	"\x02id\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x05R\x02id\x12\x18\n" +
-	"\x04name\x18\x02 \x01(\tB\x04\xe8\xb5\x18\x05R\x04name\x12/\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x19.warden.v1.ContainerStateR\x05state\x122\n" +
-	"\x06health\x18\x04 \x01(\x0e2\x1a.warden.v1.ContainerHealthR\x06health\x12#\n" +
+	"\x0f_psi_full_avg10\"\xa7\x03\n" +
+	"\x16ContainerInspectResult\x12.\n" +
+	"\x02id\x18\x01 \x01(\tB\x1e\x88\xb5\x18@\x90\xb5\x18@ʵ\x18\x0e^[0-9a-f]{64}$\xe8\xb5\x18\x05R\x02id\x12C\n" +
+	"\x04name\x18\x02 \x01(\tB/\x90\xb5\x18\x80\x01ʵ\x18\"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$\xe8\xb5\x18\x05R\x04name\x125\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x19.warden.v1.ContainerStateB\x04\xe0\xb5\x18\x01R\x05state\x128\n" +
+	"\x06health\x18\x04 \x01(\x0e2\x1a.warden.v1.ContainerHealthB\x04\xe0\xb5\x18\x01R\x06health\x12#\n" +
 	"\rrestart_count\x18\x05 \x01(\rR\frestartCount\x12\x1b\n" +
 	"\texit_code\x18\x06 \x01(\x05R\bexitCode\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\a \x01(\x03R\tstartedAt\x12\x1f\n" +
 	"\vfinished_at\x18\b \x01(\x03R\n" +
 	"finishedAt\x12%\n" +
-	"\x0efailing_streak\x18\t \x01(\rR\rfailingStreak\"a\n" +
-	"\x15DbQueryReadonlyResult\x12*\n" +
-	"\x04data\x18\x01 \x01(\v2\x16.warden.v1.DbQueryDataR\x04data\x12\x1c\n" +
+	"\x0efailing_streak\x18\t \x01(\rR\rfailingStreak\"g\n" +
+	"\x15DbQueryReadonlyResult\x120\n" +
+	"\x04data\x18\x01 \x01(\v2\x16.warden.v1.DbQueryDataB\x04\xe0\xb5\x18\x01R\x04data\x12\x1c\n" +
 	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"\x8e\x03\n" +
 	"\vDbQueryData\x12@\n" +
 	"\rserver_status\x18\x01 \x01(\v2\x19.warden.v1.DbServerStatusH\x00R\fserverStatus\x12R\n" +
@@ -4103,9 +4105,9 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\x11sessions_top_idle\x18\x03 \x01(\v2\x1c.warden.v1.DbSessionsTopIdleH\x00R\x0fsessionsTopIdle\x12O\n" +
 	"\x12replication_status\x18\x04 \x01(\v2\x1e.warden.v1.DbReplicationStatusH\x00R\x11replicationStatus\x12C\n" +
 	"\x0ereplset_status\x18\x05 \x01(\v2\x1a.warden.v1.DbReplsetStatusH\x00R\rreplsetStatusB\a\n" +
-	"\x05query\"t\n" +
-	"\x0eDbServerStatus\x12\x1e\n" +
-	"\aversion\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x05R\aversion\x12%\n" +
+	"\x05query\"|\n" +
+	"\x0eDbServerStatus\x12&\n" +
+	"\aversion\x18\x01 \x01(\tB\f\x88\xb5\x18\x01\x90\xb5\x18@\xe8\xb5\x18\x05R\aversion\x12%\n" +
 	"\x0euptime_seconds\x18\x02 \x01(\x04R\ruptimeSeconds\x12\x1b\n" +
 	"\tread_only\x18\x03 \x01(\bR\breadOnly\"\xe4\x01\n" +
 	"\x14DbConnectionsSummary\x12'\n" +
@@ -4114,47 +4116,47 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"\x06active\x18\x03 \x01(\rR\x06active\x12\x12\n" +
 	"\x04idle\x18\x04 \x01(\rR\x04idle\x12.\n" +
 	"\x13idle_in_transaction\x18\x05 \x01(\rR\x11idleInTransaction\x12-\n" +
-	"\x12reserved_superuser\x18\x06 \x01(\rR\x11reservedSuperuser\"q\n" +
-	"\x11DbSessionsTopIdle\x120\n" +
-	"\bsessions\x18\x01 \x03(\v2\x14.warden.v1.DbSessionR\bsessions\x12*\n" +
-	"\x11server_started_at\x18\x02 \x01(\x03R\x0fserverStartedAt\"\x83\x03\n" +
+	"\x12reserved_superuser\x18\x06 \x01(\rR\x11reservedSuperuser\"w\n" +
+	"\x11DbSessionsTopIdle\x126\n" +
+	"\bsessions\x18\x01 \x03(\v2\x14.warden.v1.DbSessionB\x04\xa0\xb5\x18dR\bsessions\x12*\n" +
+	"\x11server_started_at\x18\x02 \x01(\x03R\x0fserverStartedAt\"\x9b\x03\n" +
 	"\tDbSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12,\n" +
-	"\x12session_started_at\x18\x02 \x01(\x03R\x10sessionStartedAt\x12'\n" +
-	"\fowner_digest\x18\x03 \x01(\fB\x04\xe8\xb5\x18\x02R\vownerDigest\x12\x18\n" +
-	"\x04user\x18\x04 \x01(\tB\x04\xe8\xb5\x18\x05R\x04user\x12 \n" +
-	"\bdatabase\x18\x05 \x01(\tB\x04\xe8\xb5\x18\x05R\bdatabase\x128\n" +
-	"\vclient_kind\x18\x06 \x01(\x0e2\x17.warden.v1.DbClientKindR\n" +
-	"clientKind\x12/\n" +
-	"\x05state\x18\a \x01(\x0e2\x19.warden.v1.DbSessionStateR\x05state\x12!\n" +
+	"\x12session_started_at\x18\x02 \x01(\x03R\x10sessionStartedAt\x12+\n" +
+	"\fowner_digest\x18\x03 \x01(\fB\b\x90\xb5\x18 \xe8\xb5\x18\x02R\vownerDigest\x12\x1c\n" +
+	"\x04user\x18\x04 \x01(\tB\b\x90\xb5\x18@\xe8\xb5\x18\x05R\x04user\x12$\n" +
+	"\bdatabase\x18\x05 \x01(\tB\b\x90\xb5\x18@\xe8\xb5\x18\x05R\bdatabase\x12>\n" +
+	"\vclient_kind\x18\x06 \x01(\x0e2\x17.warden.v1.DbClientKindB\x04\xe0\xb5\x18\x01R\n" +
+	"clientKind\x125\n" +
+	"\x05state\x18\a \x01(\x0e2\x19.warden.v1.DbSessionStateB\x04\xe0\xb5\x18\x01R\x05state\x12!\n" +
 	"\fidle_seconds\x18\b \x01(\x04R\vidleSeconds\x126\n" +
-	"\x17transaction_age_seconds\x18\t \x01(\x04R\x15transactionAgeSeconds\"}\n" +
-	"\x13DbReplicationStatus\x120\n" +
-	"\x04role\x18\x01 \x01(\x0e2\x1c.warden.v1.DbReplicationRoleR\x04role\x12$\n" +
+	"\x17transaction_age_seconds\x18\t \x01(\x04R\x15transactionAgeSeconds\"\x83\x01\n" +
+	"\x13DbReplicationStatus\x126\n" +
+	"\x04role\x18\x01 \x01(\x0e2\x1c.warden.v1.DbReplicationRoleB\x04\xe0\xb5\x18\x01R\x04role\x12$\n" +
 	"\vlag_seconds\x18\x02 \x01(\x04H\x00R\n" +
 	"lagSeconds\x88\x01\x01B\x0e\n" +
-	"\f_lag_seconds\"G\n" +
-	"\x0fDbReplsetStatus\x124\n" +
-	"\amembers\x18\x01 \x03(\v2\x1a.warden.v1.DbReplsetMemberR\amembers\"\xd6\x01\n" +
-	"\x0fDbReplsetMember\x12\x18\n" +
-	"\x04name\x18\x01 \x01(\tB\x04\xe8\xb5\x18\x05R\x04name\x12.\n" +
-	"\x05state\x18\x02 \x01(\x0e2\x18.warden.v1.DbMemberStateR\x05state\x12\x16\n" +
+	"\f_lag_seconds\"M\n" +
+	"\x0fDbReplsetStatus\x12:\n" +
+	"\amembers\x18\x01 \x03(\v2\x1a.warden.v1.DbReplsetMemberB\x04\xa0\xb5\x182R\amembers\"\xe5\x01\n" +
+	"\x0fDbReplsetMember\x12!\n" +
+	"\x04name\x18\x01 \x01(\tB\r\x88\xb5\x18\x01\x90\xb5\x18\xff\x01\xe8\xb5\x18\x05R\x04name\x124\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x18.warden.v1.DbMemberStateB\x04\xe0\xb5\x18\x01R\x05state\x12\x16\n" +
 	"\x06health\x18\x03 \x01(\bR\x06health\x121\n" +
 	"\x12optime_lag_seconds\x18\x04 \x01(\x04H\x00R\x10optimeLagSeconds\x88\x01\x01\x12\x17\n" +
 	"\ais_self\x18\x05 \x01(\bR\x06isSelfB\x15\n" +
-	"\x13_optime_lag_seconds\"\x9e\x02\n" +
+	"\x13_optime_lag_seconds\"\xad\x02\n" +
 	"\x14DbBackupVerifyResult\x12\x14\n" +
-	"\x05found\x18\x01 \x01(\bR\x05found\x12%\n" +
-	"\vnewest_name\x18\x02 \x01(\tB\x04\xe8\xb5\x18\x05R\n" +
+	"\x05found\x18\x01 \x01(\bR\x05found\x12*\n" +
+	"\vnewest_name\x18\x02 \x01(\tB\t\x90\xb5\x18\xff\x01\xe8\xb5\x18\x05R\n" +
 	"newestName\x12\x1f\n" +
 	"\vage_seconds\x18\x03 \x01(\x04R\n" +
 	"ageSeconds\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12/\n" +
 	"\x06format\x18\x05 \x01(\x0e2\x17.warden.v1.BackupFormatR\x06format\x12\x1b\n" +
-	"\tformat_ok\x18\x06 \x01(\bR\bformatOk\x12;\n" +
-	"\rchecks_failed\x18\a \x03(\x0e2\x16.warden.v1.BackupCheckR\fchecksFailed\"\x84\x01\n" +
+	"\tformat_ok\x18\x06 \x01(\bR\bformatOk\x12E\n" +
+	"\rchecks_failed\x18\a \x03(\x0e2\x16.warden.v1.BackupCheckB\b\xa0\xb5\x18\x04е\x18\x01R\fchecksFailed\"\x84\x01\n" +
 	"\x14ServiceRestartResult\x126\n" +
 	"\x06before\x18\x01 \x01(\v2\x1e.warden.v1.ServiceStatusResultR\x06before\x124\n" +
 	"\x05after\x18\x02 \x01(\v2\x1e.warden.v1.ServiceStatusResultR\x05after\"\x88\x01\n" +
@@ -4190,13 +4192,13 @@ const file_warden_v1_primitive_result_proto_rawDesc = "" +
 	"afterBytes\"\x8c\x01\n" +
 	"\x16ContainerRestartResult\x129\n" +
 	"\x06before\x18\x01 \x01(\v2!.warden.v1.ContainerInspectResultR\x06before\x127\n" +
-	"\x05after\x18\x02 \x01(\v2!.warden.v1.ContainerInspectResultR\x05after\"S\n" +
-	"\x18DbTerminateSessionResult\x127\n" +
-	"\bsessions\x18\x01 \x03(\v2\x1b.warden.v1.DbSessionOutcomeR\bsessions\"j\n" +
+	"\x05after\x18\x02 \x01(\v2!.warden.v1.ContainerInspectResultR\x05after\"]\n" +
+	"\x18DbTerminateSessionResult\x12A\n" +
+	"\bsessions\x18\x01 \x03(\v2\x1b.warden.v1.DbSessionOutcomeB\b\x98\xb5\x18\x01\xa0\xb5\x18\x14R\bsessions\"p\n" +
 	"\x10DbSessionOutcome\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\x04R\tsessionId\x127\n" +
-	"\aoutcome\x18\x02 \x01(\x0e2\x1d.warden.v1.DbTerminateOutcomeR\aoutcome*\xb0\x01\n" +
+	"session_id\x18\x01 \x01(\x04R\tsessionId\x12=\n" +
+	"\aoutcome\x18\x02 \x01(\x0e2\x1d.warden.v1.DbTerminateOutcomeB\x04\xe0\xb5\x18\x01R\aoutcome*\xb0\x01\n" +
 	"\x0fPrimitiveStatus\x12 \n" +
 	"\x1cPRIMITIVE_STATUS_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aPRIMITIVE_STATUS_SUCCEEDED\x10\x01\x12\x1e\n" +

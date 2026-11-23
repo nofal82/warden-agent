@@ -19,62 +19,26 @@ import (
 // TestGoldenOptionsAgentapi is R52c rule 1: the complete option set of
 // every message and field of warden.agentapi.v1 equals the hand-written
 // golden table, both ways.
+// bothPackages is every file of warden.agentapi.v1 and warden.v1.
+func bothPackages(t *testing.T) []protoreflect.FileDescriptor {
+	t.Helper()
+	return append(packageFiles(t, agentapiPkg), packageFiles(t, wardenPkg)...)
+}
+
 func TestGoldenOptionsAgentapi(t *testing.T) {
 	for _, v := range optionViolations(agentapiPkg, allMessages(packageFiles(t, agentapiPkg)), agentapiTable) {
 		t.Error(v)
 	}
 }
 
-// TestGoldenOptionsNewV1: every warden.v1 message added by issue #12
-// carries exactly the redact_class options of the golden table and nothing
-// else (agent-api §4.10.1: in M1 only redact_class, on R5's scope).
-func TestGoldenOptionsNewV1(t *testing.T) {
-	for _, v := range optionViolations(wardenPkg, allMessages(newV1Files(t)), v1Table) {
+// TestGoldenOptionsV1: every warden.v1 message, in every file of the
+// package, carries exactly the options of the golden table, compared both
+// ways (agent-api R52c rule 1; with the M2 envelope change, decision 0008
+// as amended 2026-10-25, the warden.v1 limits are options too). This
+// replaces the M1 tests that allowed only redact_class on warden.v1.
+func TestGoldenOptionsV1(t *testing.T) {
+	for _, v := range optionViolations(wardenPkg, allMessages(packageFiles(t, wardenPkg)), v1Table) {
 		t.Error(v)
-	}
-}
-
-// TestWardenV1CarriesOnlyRedactClass: no warden.v1 message carries a
-// message option and no warden.v1 field carries an option other than
-// redact_class, in every file of the package, envelope.proto and
-// typed_request.proto included (agent-api §4.10.1, R52c: warden.v1 limits
-// stay hand-written until the M2 envelope change).
-func TestWardenV1CarriesOnlyRedactClass(t *testing.T) {
-	for _, md := range allMessages(packageFiles(t, wardenPkg)) {
-		if got, other := readOptions(md.Options(), messageOptionExts); len(got) > 0 || other != "" {
-			t.Errorf("%s: message options %v %s", md.FullName(), got, other)
-		}
-		for i := 0; i < md.Fields().Len(); i++ {
-			fd := md.Fields().Get(i)
-			got, other := readOptions(fd.Options(), fieldOptionExts)
-			delete(got, "redact_class")
-			if len(got) > 0 || other != "" {
-				t.Errorf("%s: options %v %s", fd.FullName(), got, other)
-			}
-		}
-	}
-}
-
-// TestPreM1FilesCarryNoOption: envelope.proto and typed_request.proto are
-// not touched by issue #12 and carry no option at all; their messages are
-// outside redaction R5's scope.
-func TestPreM1FilesCarryNoOption(t *testing.T) {
-	var files []protoreflect.FileDescriptor
-	for _, f := range packageFiles(t, wardenPkg) {
-		if preM1Files[f.Path()] {
-			files = append(files, f)
-		}
-	}
-	if len(files) != len(preM1Files) {
-		t.Fatalf("found %d of the %d pre-M1 files", len(files), len(preM1Files))
-	}
-	for _, md := range allMessages(files) {
-		for i := 0; i < md.Fields().Len(); i++ {
-			fd := md.Fields().Get(i)
-			if got, other := readOptions(fd.Options(), fieldOptionExts); len(got) > 0 || other != "" {
-				t.Errorf("%s: options %v %s", fd.FullName(), got, other)
-			}
-		}
 	}
 }
 
@@ -97,11 +61,11 @@ func TestEveryGoldenRowStatesItsSet(t *testing.T) {
 }
 
 // TestBoundOptions is R52c rule 2 for lengths and counts: every string,
-// bytes and repeated field of warden.agentapi.v1 has max_bytes or
-// max_count, except the two exemptions of §4.10.1, which carry no length
-// option at all.
+// bytes and repeated field of warden.agentapi.v1 and warden.v1 has
+// max_bytes or max_count, except the two exemptions of §4.10.1, which
+// carry no length option at all.
 func TestBoundOptions(t *testing.T) {
-	mds := allMessages(packageFiles(t, agentapiPkg))
+	mds := allMessages(bothPackages(t))
 	for _, v := range boundViolations(mds, boundExempt) {
 		t.Error(v)
 	}
@@ -111,9 +75,10 @@ func TestBoundOptions(t *testing.T) {
 }
 
 // TestMessageSizeOptions is R52c rule 2 for §4.2: each message with a
-// per-type limit has max_message_bytes, and no other message has it.
+// per-type limit has max_message_bytes, and no other message has it. In
+// warden.v1 these are the messages a spec gives a whole-message limit.
 func TestMessageSizeOptions(t *testing.T) {
-	mds := allMessages(packageFiles(t, agentapiPkg))
+	mds := allMessages(bothPackages(t))
 	for _, v := range messageLimitViolations(mds, sizeLimitedMessages) {
 		t.Error(v)
 	}
@@ -128,7 +93,7 @@ func TestMessageSizeOptions(t *testing.T) {
 // option of the contract states a maximum of 0.
 func TestNoZeroBound(t *testing.T) {
 	maxima := []namedExt{fieldOptionExts[1], fieldOptionExts[3], fieldOptionExts[5]}
-	for _, md := range allMessages(packageFiles(t, agentapiPkg)) {
+	for _, md := range allMessages(bothPackages(t)) {
 		if proto.HasExtension(md.Options(), wardenv1.E_MaxMessageBytes) &&
 			proto.GetExtension(md.Options(), wardenv1.E_MaxMessageBytes).(uint32) == 0 {
 			t.Errorf("%s: max_message_bytes 0", md.FullName())
@@ -155,10 +120,11 @@ func TestNoZeroBound(t *testing.T) {
 }
 
 // TestRequiredOptionExactlyTen: option 50012 is set on exactly the ten
-// fields of §4.10.1, and on no other field of either package.
+// fields of §4.10.1 in warden.agentapi.v1. The warden.v1 required set is
+// pinned field by field by TestGoldenOptionsV1.
 func TestRequiredOptionExactlyTen(t *testing.T) {
 	var got []protoreflect.FullName
-	files := append(packageFiles(t, agentapiPkg), packageFiles(t, wardenPkg)...)
+	files := packageFiles(t, agentapiPkg)
 	for _, md := range allMessages(files) {
 		for i := 0; i < md.Fields().Len(); i++ {
 			fd := md.Fields().Get(i)
@@ -196,6 +162,11 @@ func TestRedactClassInR5Scope(t *testing.T) {
 	seen := reachable(roots)
 	for name := range v1Table {
 		if name == "IpcRefusal" { // an unsigned transport answer, not forwarded
+			continue
+		}
+		// The envelope and the requests travel to the server, never back,
+		// so they are outside R5's walk.
+		if md := messageByName(t, protoreflect.FullName("warden.v1."+name)); preM1Files[md.ParentFile().Path()] {
 			continue
 		}
 		if !seen[protoreflect.FullName("warden.v1."+name)] {

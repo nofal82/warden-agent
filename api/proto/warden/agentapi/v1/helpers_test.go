@@ -28,8 +28,10 @@ var (
 	_ = wardenv1.File_warden_v1_options_proto
 )
 
-// preM1Files are the warden.v1 files that existed before issue #12. They
-// are not touched by it and carry no option (agent-api §4.10.1).
+// preM1Files are the warden.v1 files that existed before issue #12: the
+// envelope and the typed requests. They are outside redaction.md R5's
+// scope, so they carry no redact_class; since the M2 envelope change
+// (issue #57) they carry limit options like the rest of warden.v1.
 var preM1Files = map[string]bool{
 	"warden/v1/envelope.proto":      true,
 	"warden/v1/typed_request.proto": true,
@@ -129,10 +131,12 @@ var none = optSet{}
 func minB(n uint32) optSet     { return optSet{"min_bytes": n} }
 func maxB(n uint32) optSet     { return optSet{"max_bytes": n} }
 func exactB(n uint32) optSet   { return optSet{"min_bytes": n, "max_bytes": n} }
+func minC(n uint32) optSet     { return optSet{"min_count": n} }
 func maxC(n uint32) optSet     { return optSet{"max_count": n} }
 func minU(n uint64) optSet     { return optSet{"min_uint": n} }
 func maxU(n uint64) optSet     { return optSet{"max_uint": n} }
 func minI(n int64) optSet      { return optSet{"min_int": n} }
+func maxI(n int64) optSet      { return optSet{"max_int": n} }
 func pat(re string) optSet     { return optSet{"pattern": re} }
 func sortedBy(f string) optSet { return optSet{"sorted_by": f} }
 func maxMsg(n uint32) optSet   { return optSet{"max_message_bytes": n} }

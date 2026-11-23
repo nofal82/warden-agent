@@ -339,6 +339,14 @@ func TestClassTableRoots(t *testing.T) {
 			}
 			continue
 		}
+		// The envelope and the requests are carried only as opaque signed
+		// bytes (agent-api R22), so no walk may reach them.
+		if preM1Files[messageByName(t, full).ParentFile().Path()] {
+			if seenOut[full] || seenIn[full] {
+				t.Errorf("%s: an envelope or request message is reached by a walk", full)
+			}
+			continue
+		}
 		if !seenOut[full] {
 			t.Errorf("%s is not reached from the outbound roots", full)
 		}

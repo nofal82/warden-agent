@@ -34,7 +34,7 @@ func TestCheck5NonCanonicalEveryField(t *testing.T) {
 	expectAccept(t, v, sealBytes(keyA, base), b, keyA)
 
 	paths := [][]protowire.Number{
-		{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, {12},
+		{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, {12}, {13},
 		{9, 1}, {9, 2}, {9, 3}, {9, 4},
 		{8, 11}, {8, 11, 1},
 	}

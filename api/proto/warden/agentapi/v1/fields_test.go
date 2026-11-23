@@ -25,10 +25,11 @@ func TestAgentapiFieldNumbers(t *testing.T) {
 	}
 }
 
-// TestNewV1FieldNumbers: the same for the warden.v1 messages of
-// typed-action-catalog §4.8, §4.8.1 and executor-ipc §4.3, §4.6, §4.7.
-func TestNewV1FieldNumbers(t *testing.T) {
-	for _, v := range shapeViolations(wardenPkg, allMessages(newV1Files(t)), v1Table) {
+// TestV1FieldNumbers: the same for every warden.v1 message: the envelope
+// (action-envelope §4.1, §4.2), the typed requests (typed-action-catalog
+// §4.4), the results (§4.8, §4.8.1) and executor-ipc §4.3, §4.6, §4.7.
+func TestV1FieldNumbers(t *testing.T) {
+	for _, v := range shapeViolations(wardenPkg, allMessages(packageFiles(t, wardenPkg)), v1Table) {
 		t.Error(v)
 	}
 }
@@ -49,26 +50,30 @@ func TestNewV1MessagesTopLevel(t *testing.T) {
 	}
 }
 
-// TestStatusBodyHasNoCounterFields: ExecutorStatusBody fields 31 boot_id
-// and 32 highest_envelope_counter arrive with the M2 envelope change
-// (agent-api R52a); in M1 they are neither declared nor reserved.
-func TestStatusBodyHasNoCounterFields(t *testing.T) {
-	md := (&wardenv1.ExecutorStatusBody{}).ProtoReflect().Descriptor()
-	for _, n := range []protoreflect.FieldNumber{31, 32} {
-		if fd := md.Fields().ByNumber(n); fd != nil {
-			t.Errorf("ExecutorStatusBody declares field %d (%s)", n, fd.Name())
+// TestCounterFields: the M2 envelope change (agent-api R52a) declares
+// EnvelopeBody field 13 envelope_counter (action-envelope §4.2, R23a) and
+// ExecutorStatusBody fields 31 boot_id and 32 highest_envelope_counter
+// (executor-ipc §4.7), implicit presence, at those numbers.
+func TestCounterFields(t *testing.T) {
+	for _, c := range []struct {
+		md   protoreflect.MessageDescriptor
+		num  protoreflect.FieldNumber
+		name protoreflect.Name
+		kind protoreflect.Kind
+	}{
+		{(&wardenv1.EnvelopeBody{}).ProtoReflect().Descriptor(), 13, "envelope_counter", protoreflect.Uint64Kind},
+		{(&wardenv1.ExecutorStatusBody{}).ProtoReflect().Descriptor(), 31, "boot_id", protoreflect.BytesKind},
+		{(&wardenv1.ExecutorStatusBody{}).ProtoReflect().Descriptor(), 32, "highest_envelope_counter", protoreflect.Uint64Kind},
+	} {
+		fd := c.md.Fields().ByNumber(c.num)
+		if fd == nil {
+			t.Errorf("%s: no field %d", c.md.FullName(), c.num)
+			continue
 		}
-		if md.ReservedRanges().Has(n) {
-			t.Errorf("ExecutorStatusBody reserves field %d", n)
+		if fd.Name() != c.name || fd.Kind() != c.kind || fd.Cardinality() != protoreflect.Optional || fd.HasPresence() {
+			t.Errorf("%s: got %s %s (presence %v), want implicit-presence %s %s",
+				fd.FullName(), fd.Kind(), fd.Name(), fd.HasPresence(), c.kind, c.name)
 		}
-	}
-	for _, name := range []protoreflect.Name{"boot_id", "highest_envelope_counter"} {
-		if md.Fields().ByName(name) != nil || md.ReservedNames().Has(name) {
-			t.Errorf("ExecutorStatusBody declares or reserves %s", name)
-		}
-	}
-	if got := md.Fields().Len(); got != 30 {
-		t.Errorf("ExecutorStatusBody has %d fields, want 30", got)
 	}
 }
 
