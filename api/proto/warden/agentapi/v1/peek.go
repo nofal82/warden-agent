@@ -29,7 +29,7 @@ var ErrUndeclared = errors.New("agentapiv1: undeclared enum value or missing req
 // numbers and the group wire types.
 func consumeKey(b []byte) (protowire.Number, protowire.Type, int, bool) {
 	num, typ, n := protowire.ConsumeTag(b)
-	if n < 0 || protowire.SizeTag(num) != n || typ == protowire.StartGroupType || typ == protowire.EndGroupType {
+	if n < 0 || !num.IsValid() || protowire.SizeTag(num) != n || typ == protowire.StartGroupType || typ == protowire.EndGroupType {
 		return 0, 0, 0, false
 	}
 	return num, typ, n, true

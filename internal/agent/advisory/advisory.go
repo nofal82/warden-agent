@@ -3,6 +3,9 @@ package advisory
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"math"
+	"regexp"
 	"sync"
 	"time"
 
@@ -25,8 +28,11 @@ const bootIDBytes = 16
 // sizes are the limits the decoders check before decoding, read from the
 // contract options so no second copy exists (agent-api R52c).
 type sizes struct {
-	envelope int // SignedEnvelope max_message_bytes (action-envelope R11)
-	status   int // SignedReplyReport.unsigned_body max_bytes: a status body never exceeds it
+	envelope   int            // SignedEnvelope max_message_bytes (action-envelope R11)
+	status     int            // SignedReplyReport.unsigned_body max_bytes: a status body never exceeds it
+	minExpires int64          // EnvelopeBody.expires_at min_int (action-envelope R16)
+	maxExpires int64          // EnvelopeBody.expires_at max_int
+	serverID   *regexp.Regexp // EnvelopeBody.target_server_id pattern (UUID v4)
 }
 
 var limits = sync.OnceValues(func() (s sizes, err error) {
@@ -38,10 +44,19 @@ var limits = sync.OnceValues(func() (s sizes, err error) {
 	env, _ := proto.GetExtension((&wardenv1.SignedEnvelope{}).ProtoReflect().Descriptor().Options(), wardenv1.E_MaxMessageBytes).(uint32)
 	fd := (&agentapiv1.SignedReplyReport{}).ProtoReflect().Descriptor().Fields().ByName("unsigned_body")
 	st, _ := proto.GetExtension(fd.Options(), wardenv1.E_MaxBytes).(uint32)
-	if env == 0 || st == 0 {
+	bfs := (&wardenv1.EnvelopeBody{}).ProtoReflect().Descriptor().Fields()
+	exp := bfs.ByName("expires_at").Options()
+	lo, _ := proto.GetExtension(exp, wardenv1.E_MinInt).(int64)
+	hi, _ := proto.GetExtension(exp, wardenv1.E_MaxInt).(int64)
+	pat, _ := proto.GetExtension(bfs.ByName("target_server_id").Options(), wardenv1.E_Pattern).(string)
+	if env == 0 || st == 0 || lo < 1 || hi <= lo || hi > math.MaxInt64-maxSkew || pat == "" {
 		return sizes{}, errors.New("advisory: a limit option is missing")
 	}
-	return sizes{envelope: int(env), status: int(st)}, nil
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return sizes{}, fmt.Errorf("advisory: target_server_id pattern: %w", err)
+	}
+	return sizes{envelope: int(env), status: int(st), minExpires: lo, maxExpires: hi, serverID: re}, nil
 })
 
 // Verdict is the outcome of CheckEnvelope: forward the bytes unchanged,
@@ -77,9 +92,17 @@ func CheckEnvelope(signed []byte, serverID string, now time.Time) Verdict {
 	if agentapiv1.StrictUnmarshal(se.GetBody(), &b) != nil || agentapiv1.CheckDeclared(&b) != nil {
 		return forward
 	}
+	// An expires_at outside the contract's range, or an own server ID that
+	// is not a UUID v4 (identity not loaded), is not the agent's to judge:
+	// forward, and the executor answers BODY_INVALID or WRONG_HOST itself.
+	exp := b.GetExpiresAt()
+	if exp < l.minExpires || exp > l.maxExpires || !l.serverID.MatchString(serverID) {
+		return forward
+	}
 	// Only "expired" has an advisory reason (R34); an envelope not yet
-	// valid is left to the executor (action-envelope R16).
-	if now.Unix() > b.GetExpiresAt()+maxSkew {
+	// valid is left to the executor (action-envelope R16). exp+maxSkew
+	// cannot overflow: limits() checked maxExpires <= MaxInt64-maxSkew.
+	if now.Unix() > exp+maxSkew {
 		return Verdict{Reason: agentapiv1.AdvisoryReason_ADVISORY_REASON_NOT_FORWARDED_EXPIRED}
 	}
 	if b.GetTargetServerId() != serverID {

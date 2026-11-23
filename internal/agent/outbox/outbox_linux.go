@@ -508,7 +508,11 @@ func writeAt(dfd int, name string, data []byte) error {
 // Enqueue assigns the next message_seq, writes the message durably and
 // returns its sequence. The watermark is advanced and fsync'ed before the
 // message file, so a crash in between skips a sequence but never reuses
-// one. A refused message changes nothing on disk.
+// one. A refused message changes nothing on disk. p must pass the
+// declared-values check (CheckDeclared): the reply path must not let an
+// undeclared value in the unsigned primitive_result cost the signed reply
+// (R28), so it omits primitive_result (primitive_result_omitted) rather
+// than enqueue it as decoded.
 func (o *Outbox) Enqueue(p *agentapiv1.OutboxPayload) (uint64, error) {
 	if p.GetPayload() == nil {
 		return 0, ErrInvalidMessage
