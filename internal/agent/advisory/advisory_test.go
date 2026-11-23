@@ -6,6 +6,7 @@ package advisory_test
 
 import (
 	"bytes"
+	"math"
 	"testing"
 	"time"
 
@@ -90,6 +91,10 @@ func TestCheckEnvelope(t *testing.T) {
 	noAutonomy := signed(t, marshal(t, body(func(b *wardenv1.EnvelopeBody) {
 		b.PolicyDecision.AutonomyLevel = wardenv1.AutonomyLevel_AUTONOMY_LEVEL_UNSPECIFIED
 	})))
+	withExpiry := func(e int64) []byte {
+		return signed(t, marshal(t, body(func(b *wardenv1.EnvelopeBody) { b.ExpiresAt = e })))
+	}
+	expiresMax, expires2p40, expires0, expiresNeg := withExpiry(math.MaxInt64), withExpiry(1<<40), withExpiry(0), withExpiry(-1)
 	// Over the limit and not decodable: proves size is checked first.
 	oversized := bytes.Repeat([]byte{0xff}, maxEnv+1)
 	const (
@@ -116,6 +121,17 @@ func TestCheckEnvelope(t *testing.T) {
 		{"outer garbage forwards", []byte{0x0a, 0x05, 0x01}, serverA, expiresAt, true, fwd},
 		{"body with unknown field forwards (R13)", unknownField, serverA, expiresAt, true, fwd},
 		{"body autonomy UNSPECIFIED forwards (V4)", noAutonomy, serverA, expiresAt, true, fwd},
+		// action-envelope R16: time arithmetic cannot overflow; an
+		// expires_at outside 1 … 2^40-1 is the executor's BODY_INVALID,
+		// not an advisory EXPIRED (security review of #59).
+		{"expires_at MaxInt64 forwards", expiresMax, serverA, expiresAt, true, fwd},
+		{"expires_at 2^40 forwards", expires2p40, serverA, expiresAt, true, fwd},
+		{"expires_at 0 forwards", expires0, serverA, expiresAt, true, fwd},
+		{"expires_at -1 forwards", expiresNeg, serverA, expiresAt, true, fwd},
+		// An own server ID that is not a UUID v4 (identity not loaded)
+		// must not suppress every envelope as WRONG_HOST.
+		{"empty own server ID forwards", valid, "", expiresAt, true, fwd},
+		{"uppercase own server ID forwards", valid, "6F1C2A3B-4D5E-4F60-8A7B-9C0D1E2F3A4B", expiresAt, true, fwd},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

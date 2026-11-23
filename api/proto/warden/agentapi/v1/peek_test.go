@@ -63,6 +63,9 @@ func TestReadMessageSeq(t *testing.T) {
 		{"truncated value", []byte{0x08, 0x87}, 0},
 		{"malformed field after seq", cat(seqField(7), p[:len(p)-1]), 0},
 		{"group wire type", group, 0},
+		// Security review of #59: the scanner refuses field numbers
+		// above 2^29-1, so the peek must too.
+		{"field number 2^29 after seq", cat(seqField(7), protowire.AppendVarint(protowire.AppendTag(nil, 1<<29, protowire.VarintType), 1)), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
