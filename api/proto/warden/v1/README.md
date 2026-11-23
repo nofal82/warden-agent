@@ -27,9 +27,12 @@ Redaction classes (`redact_class`) follow `redaction.md` §4.1. The field-class
 table `agentapi/v1/classtable_gen.go` is generated from them; after changing a
 `redact_class` or adding a field the agent sends, regenerate it with
 `go test ./api/proto/warden/agentapi/v1/ -run TestClassTableGenerated -update-class-table`
-(the contract test fails until you do). In M1,
-`warden.v1` messages carry only `redact_class`; their limits stay in
-hand-written validators until the M2 envelope change (agent-api R52c).
+(the contract test fails until you do). Since the M2 envelope change
+(issue #57, agent-api R52c, decision 0008), `warden.v1` limits are options
+too, pinned by the golden table in `agentapi/v1/v1_table_test.go`; the
+readings V1–V6 at the top of that table say how a spec limit that needs a
+reading was written. The executor's validators stay hand-written and never
+depend on the options; the strict scanner never reads them.
 
 Write no `.proto` file until its spec is Approved. Generated Go code is
 committed alongside the `.proto` files so both repositories build without

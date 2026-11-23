@@ -349,7 +349,7 @@ func strictRefuseCases() []strictRefuse {
 		// R13 (a): unknown fields, at the top level and nested.
 		{"unknown/top", newOutbox, cat(outbox(1, wBytes(nil, payloadSignedReply, reply)), wVarint(nil, 99, 1)), wirescan.ErrUnknownField},
 		{"unknown/nested-reply", newOutbox, outbox(1, wBytes(nil, payloadSignedReply, cat(reply, wVarint(nil, 50, 1)))), wirescan.ErrUnknownField},
-		{"unknown/status-body", newStatus, cat(wVarint(nil, statusFormatVersion, 1), wVarint(nil, 31, 1)), wirescan.ErrUnknownField},
+		{"unknown/status-body", newStatus, cat(wVarint(nil, statusFormatVersion, 1), wVarint(nil, 33, 1)), wirescan.ErrUnknownField},
 		{"unknown/trust-body", newTrust, cat(wVarint(nil, trustFormatVersion, 1), wVarint(nil, 15, 1)), wirescan.ErrUnknownField},
 		{"unknown/agent-message", newAgent, wVarint(nil, 9, 1), wirescan.ErrUnknownField},
 

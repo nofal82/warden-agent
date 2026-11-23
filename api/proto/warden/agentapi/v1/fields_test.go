@@ -77,28 +77,6 @@ func TestCounterFields(t *testing.T) {
 	}
 }
 
-// and 32 highest_envelope_counter arrive with the M2 envelope change
-// (agent-api R52a); in M1 they are neither declared nor reserved.
-func TestStatusBodyHasNoCounterFields(t *testing.T) {
-	md := (&wardenv1.ExecutorStatusBody{}).ProtoReflect().Descriptor()
-	for _, n := range []protoreflect.FieldNumber{31, 32} {
-		if fd := md.Fields().ByNumber(n); fd != nil {
-			t.Errorf("ExecutorStatusBody declares field %d (%s)", n, fd.Name())
-		}
-		if md.ReservedRanges().Has(n) {
-			t.Errorf("ExecutorStatusBody reserves field %d", n)
-		}
-	}
-	for _, name := range []protoreflect.Name{"boot_id", "highest_envelope_counter"} {
-		if md.Fields().ByName(name) != nil || md.ReservedNames().Has(name) {
-			t.Errorf("ExecutorStatusBody declares or reserves %s", name)
-		}
-	}
-	if got := md.Fields().Len(); got != 30 {
-		t.Errorf("ExecutorStatusBody has %d fields, want 30", got)
-	}
-}
-
 // TestTypedResultReservesP20: TypedResult mirrors TypedRequest: P20
 // (cert.renew) was removed, its number and name stay reserved
 // (typed-action-catalog §4.8).

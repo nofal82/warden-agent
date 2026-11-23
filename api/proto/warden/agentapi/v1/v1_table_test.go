@@ -512,8 +512,8 @@ func beforeAfter(typ string) msgSpec {
 
 func beforeAfterBytes() msgSpec {
 	return msgSpec{opts: none, fields: []fieldSpec{
-		{1, "before_bytes", "uint64", o(maxB(256), pat(unitPattern), rc(clsNPatterned))},
-		{2, "after_bytes", "uint64", req},
+		{1, "before_bytes", "uint64", none},
+		{2, "after_bytes", "uint64", none},
 	}}
 }
 
