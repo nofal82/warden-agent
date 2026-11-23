@@ -50,6 +50,10 @@ func attackBodies(tb testing.TB) [][]byte {
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = fakeNow + 61; b.ExpiresAt = fakeNow + 100 })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.CreatedAt = fakeNow - 400; b.ExpiresAt = fakeNow - 61 })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = serverB })),
+		// target_server_id must be UUID v4 (agent-identity.md §4.1): a v7
+		// and a v4 with a non-RFC variant nibble.
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "6f1c2d3e-4a5b-7c6d-8e7f-90a1b2c3d4e5" })),
+		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "6f1c2d3e-4a5b-4c6d-ce7f-90a1b2c3d4e5" })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.IdempotencyKey = "a..b" })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PlaybookVersion = "1.2.3+build" })),
 		marshalDet(tb, bodyWith(func(b *wardenv1.EnvelopeBody) { b.PolicyDecision.AutonomyLevel = 99 })),
