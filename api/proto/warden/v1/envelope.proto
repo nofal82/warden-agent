@@ -28,8 +28,8 @@ message SignedEnvelope {
     (max_bytes) = 32
   ];
   // Deterministic encoding of EnvelopeBody, signed as received and never
-  // re-marshalled (R3, R4). At least 1 byte. V6 bound (agent-api
-  // §4.10.1): max_bytes is MAX_ENVELOPE_BYTES (R11, OQ3), the whole
+  // re-marshalled (R3, R4). At least 1 byte. V6 derived
+  // bound: max_bytes is MAX_ENVELOPE_BYTES (R11, OQ3), the whole
   // message's limit, which bounds the body too.
   bytes body = 2 [
     (min_bytes) = 1,

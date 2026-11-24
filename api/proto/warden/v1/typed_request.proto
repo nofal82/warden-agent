@@ -108,7 +108,7 @@ message FsLargestEntriesRequest {
 // P3 service.status (read).
 message ServiceStatusRequest {
   // systemd service unit.
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -159,7 +159,7 @@ message MemStatusRequest {}
 // P8 container.inspect (read).
 message ContainerInspectRequest {
   // Exact full container name or full 64-character id.
-  // V6 bound (agent-api §4.10.1): 128 bytes is the longest name the
+  // V6 derived bound: 128 bytes is the longest name the
   // container pattern allows (1 + 127); a full container id is 64.
   string container = 1 [
     (max_bytes) = 128,
@@ -182,7 +182,7 @@ enum DbQuery {
 message DbQueryReadonlyRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string instance = 2 [
@@ -198,7 +198,7 @@ message DbQueryReadonlyRequest {
 message DbBackupVerifyRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string instance = 2 [
@@ -224,7 +224,7 @@ message DbBackupVerifyRequest {
 
 // P11 service.restart (act).
 message ServiceRestartRequest {
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -235,7 +235,7 @@ message ServiceRestartRequest {
 
 // P12 service.reset_failed (act).
 message ServiceResetFailedRequest {
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -246,7 +246,7 @@ message ServiceResetFailedRequest {
 
 // P13 service.reload (act).
 message ServiceReloadRequest {
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -257,7 +257,7 @@ message ServiceReloadRequest {
 
 // P14 service.start (act).
 message ServiceStartRequest {
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -268,7 +268,7 @@ message ServiceStartRequest {
 
 // P15 service.set_cpu_quota (act).
 message ServiceSetCpuQuotaRequest {
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string unit = 1 [
@@ -342,7 +342,7 @@ message PkgCacheCleanRequest {}
 // P21 container.restart (act).
 message ContainerRestartRequest {
   // Exact full container name or full 64-character id.
-  // V6 bound (agent-api §4.10.1): 128 bytes is the longest name the
+  // V6 derived bound: 128 bytes is the longest name the
   // container pattern allows (1 + 127); a full container id is 64.
   string container = 1 [
     (max_bytes) = 128,
@@ -359,7 +359,7 @@ message ContainerRestartRequest {
 message DbTerminateSessionRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
-  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
   // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
   // at 249.
   string instance = 2 [
