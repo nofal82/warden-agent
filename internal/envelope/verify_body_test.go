@@ -78,6 +78,8 @@ func TestCheck5FieldValues(t *testing.T) {
 		"target_with_nul":    func(b *wardenv1.EnvelopeBody) { b.TargetServerId = serverA + "\x00" },
 		"target_wildcard":    func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "*" },
 		"target_trailing_nl": func(b *wardenv1.EnvelopeBody) { b.TargetServerId = serverA + "\n" },
+		"target_v1":          func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "6f1c2d3e-4a5b-1c6d-8e7f-90a1b2c3d4e5" },
+		"target_v7":          func(b *wardenv1.EnvelopeBody) { b.TargetServerId = "6f1c2d3e-4a5b-7c6d-8e7f-90a1b2c3d4e5" },
 
 		// playbook_id ^[a-z][a-z0-9-]{1,62}$
 		"playbook_id_1_char":       func(b *wardenv1.EnvelopeBody) { b.PlaybookId = "a" },
