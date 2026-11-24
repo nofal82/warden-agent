@@ -28,8 +28,11 @@ const bootIDBytes = 16
 // sizes are the limits the decoders check before decoding, read from the
 // contract options so no second copy exists (agent-api R52c).
 type sizes struct {
-	envelope   int            // SignedEnvelope max_message_bytes (action-envelope R11)
-	status     int            // SignedReplyReport.unsigned_body max_bytes: a status body never exceeds it
+	envelope int // SignedEnvelope max_message_bytes (action-envelope R11)
+	// status is SignedReplyReport.unsigned_body max_bytes, 28,672: the
+	// STATUS reply carrier cap of agent-api §4 (the largest per-kind size,
+	// R52c). A status body never exceeds it.
+	status     int
 	minExpires int64          // EnvelopeBody.expires_at min_int (action-envelope R16)
 	maxExpires int64          // EnvelopeBody.expires_at max_int
 	serverID   *regexp.Regexp // EnvelopeBody.target_server_id pattern (UUID v4)

@@ -143,6 +143,11 @@ func check(b []byte, md protoreflect.MessageDescriptor, depth int) error {
 // byte for byte. Two records
 // of any other field never reach here (markSeen and checkValue reject
 // them).
+//
+// Known limit: a map field would be treated as singular here, so a second
+// map entry would be refused. No map can reach the scanner today because
+// TestContractHasNoMaps forbids maps in the contract. If maps are ever
+// allowed, add fd.IsMap() to the repeated case and a two-entry AC8a case.
 func inOrder(prev, fd protoreflect.FieldDescriptor) bool {
 	switch {
 	case prev == nil || fd.Number() > prev.Number():

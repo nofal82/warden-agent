@@ -63,6 +63,8 @@ message ExecutorResultBody {
     (max_uint) = 1
   ];
   // The executor's server-ID file value; absent when that file is invalid.
+  // V6 bound (agent-api §4.10.1): 36 bytes, the canonical UUID form of
+  // the server-ID file (agent-identity §4.1).
   string server_id = 2 [
     (max_bytes) = 36,
     (pattern) = "^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?$",
@@ -310,7 +312,9 @@ message ExecutorStatusBody {
     (pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$",
     (redact_class) = REDACT_FIELD_CLASS_X
   ];
-  // From the R60 record; absent when there is none.
+  // From the R60 record; absent when there is none. V6 bound (agent-api
+  // §4.10.1): 32 bytes and the optional SemVer pattern, as binary_version
+  // (field 5) and AdminToolRecord.release_version, the same format.
   string installed_release_version = 6 [
     (max_bytes) = 32,
     (pattern) = "^(?:(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)?$",
@@ -398,6 +402,9 @@ message ExecutorStatusBody {
   // The highest envelope_counter recorded in the store (action-envelope
   // R23a); 0 when none is recorded since install or the last store
   // recovery. Read from the store, never from the request.
+  // max_uint is not enforced on this field, by design: the executor only
+  // records counters that passed EnvelopeBody field 13's range check, so
+  // the watermark can never exceed that bound.
   uint64 highest_envelope_counter = 32 [(max_uint) = 9223372036854775807];
 }
 

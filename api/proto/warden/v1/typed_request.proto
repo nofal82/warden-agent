@@ -108,6 +108,9 @@ message FsLargestEntriesRequest {
 // P3 service.status (read).
 message ServiceStatusRequest {
   // systemd service unit.
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -156,6 +159,8 @@ message MemStatusRequest {}
 // P8 container.inspect (read).
 message ContainerInspectRequest {
   // Exact full container name or full 64-character id.
+  // V6 bound (agent-api §4.10.1): 128 bytes is the longest name the
+  // container pattern allows (1 + 127); a full container id is 64.
   string container = 1 [
     (max_bytes) = 128,
     (pattern) = "^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$"
@@ -177,6 +182,9 @@ enum DbQuery {
 message DbQueryReadonlyRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string instance = 2 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -190,6 +198,9 @@ message DbQueryReadonlyRequest {
 message DbBackupVerifyRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string instance = 2 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -213,6 +224,9 @@ message DbBackupVerifyRequest {
 
 // P11 service.restart (act).
 message ServiceRestartRequest {
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -221,6 +235,9 @@ message ServiceRestartRequest {
 
 // P12 service.reset_failed (act).
 message ServiceResetFailedRequest {
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -229,6 +246,9 @@ message ServiceResetFailedRequest {
 
 // P13 service.reload (act).
 message ServiceReloadRequest {
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -237,6 +257,9 @@ message ServiceReloadRequest {
 
 // P14 service.start (act).
 message ServiceStartRequest {
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -245,6 +268,9 @@ message ServiceStartRequest {
 
 // P15 service.set_cpu_quota (act).
 message ServiceSetCpuQuotaRequest {
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string unit = 1 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
@@ -316,6 +342,8 @@ message PkgCacheCleanRequest {}
 // P21 container.restart (act).
 message ContainerRestartRequest {
   // Exact full container name or full 64-character id.
+  // V6 bound (agent-api §4.10.1): 128 bytes is the longest name the
+  // container pattern allows (1 + 127); a full container id is 64.
   string container = 1 [
     (max_bytes) = 128,
     (pattern) = "^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|[0-9a-f]{64})$"
@@ -331,6 +359,9 @@ message ContainerRestartRequest {
 message DbTerminateSessionRequest {
   Engine engine = 1 [(required) = true];
   // Database instance: the systemd service unit of the database server.
+  // V6 bound (agent-api §4.10.1): 256 bytes is systemd's UNIT_NAME_MAX,
+  // as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+  // at 249.
   string instance = 2 [
     (max_bytes) = 256,
     (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$"
