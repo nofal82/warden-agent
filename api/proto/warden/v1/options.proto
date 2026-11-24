@@ -60,6 +60,12 @@ extend google.protobuf.MessageOptions {
   // its spec states (MAX_ENVELOPE_BYTES, MAX_RESULT_BYTES, the IPC refusal
   // and the signed result body).
   uint32 max_message_bytes = 50101;
+  // action-envelope R16's MAX_SKEW in seconds, set only on EnvelopeBody, to
+  // 60 (agent-api §4.10, AC52). A record, not a mechanism: enforcement
+  // stays in code (envelope.MaxSkew, identity.MaxSkew, the agent's advisory
+  // copy), drift tests tie those constants to it, and the executor never
+  // reads it.
+  uint32 max_skew_seconds = 50102;
 }
 
 // RedactFieldClass names the classes of redaction.md §4.1. It lives only in

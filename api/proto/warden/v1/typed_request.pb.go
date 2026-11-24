@@ -865,6 +865,9 @@ func (x *FsLargestEntriesRequest) GetModifiedWithinSeconds() uint32 {
 type ServiceStatusRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// systemd service unit.
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
 	Unit          string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1102,6 +1105,8 @@ func (*MemStatusRequest) Descriptor() ([]byte, []int) {
 type ContainerInspectRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact full container name or full 64-character id.
+	// V6 derived bound: 128 bytes is the longest name the
+	// container pattern allows (1 + 127); a full container id is 64.
 	Container     string `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1149,6 +1154,9 @@ type DbQueryReadonlyRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Engine Engine                 `protobuf:"varint,1,opt,name=engine,proto3,enum=warden.v1.Engine" json:"engine,omitempty"`
 	// Database instance: the systemd service unit of the database server.
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
 	Instance string  `protobuf:"bytes,2,opt,name=instance,proto3" json:"instance,omitempty"`
 	Query    DbQuery `protobuf:"varint,3,opt,name=query,proto3,enum=warden.v1.DbQuery" json:"query,omitempty"`
 	// 1 … 100; only for list queries.
@@ -1220,6 +1228,9 @@ type DbBackupVerifyRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Engine Engine                 `protobuf:"varint,1,opt,name=engine,proto3,enum=warden.v1.Engine" json:"engine,omitempty"`
 	// Database instance: the systemd service unit of the database server.
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
 	Instance string `protobuf:"bytes,2,opt,name=instance,proto3" json:"instance,omitempty"`
 	// 1 … 16: index into the backup locations declared for this server.
 	BackupLocationId uint32 `protobuf:"varint,3,opt,name=backup_location_id,json=backupLocationId,proto3" json:"backup_location_id,omitempty"`
@@ -1298,8 +1309,11 @@ func (x *DbBackupVerifyRequest) GetMinSizeBytes() uint64 {
 
 // P11 service.restart (act).
 type ServiceRestartRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
+	Unit          string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1343,8 +1357,11 @@ func (x *ServiceRestartRequest) GetUnit() string {
 
 // P12 service.reset_failed (act).
 type ServiceResetFailedRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
+	Unit          string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1388,8 +1405,11 @@ func (x *ServiceResetFailedRequest) GetUnit() string {
 
 // P13 service.reload (act).
 type ServiceReloadRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
+	Unit          string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1433,8 +1453,11 @@ func (x *ServiceReloadRequest) GetUnit() string {
 
 // P14 service.start (act).
 type ServiceStartRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
+	Unit          string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1479,7 +1502,10 @@ func (x *ServiceStartRequest) GetUnit() string {
 // P15 service.set_cpu_quota (act).
 type ServiceSetCpuQuotaRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Unit  string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
+	Unit string `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`
 	// 10 … 100 × online CPUs, or 0 to remove the limit.
 	CpuQuotaPercent uint32 `protobuf:"varint,2,opt,name=cpu_quota_percent,json=cpuQuotaPercent,proto3" json:"cpu_quota_percent,omitempty"`
 	// 0 or 2 … 4,194,304.
@@ -1778,6 +1804,8 @@ func (*PkgCacheCleanRequest) Descriptor() ([]byte, []int) {
 type ContainerRestartRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact full container name or full 64-character id.
+	// V6 derived bound: 128 bytes is the longest name the
+	// container pattern allows (1 + 127); a full container id is 64.
 	Container string `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
 	// 1 … 120.
 	StopTimeoutSeconds uint32 `protobuf:"varint,2,opt,name=stop_timeout_seconds,json=stopTimeoutSeconds,proto3" json:"stop_timeout_seconds,omitempty"`
@@ -1834,6 +1862,9 @@ type DbTerminateSessionRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Engine Engine                 `protobuf:"varint,1,opt,name=engine,proto3,enum=warden.v1.Engine" json:"engine,omitempty"`
 	// Database instance: the systemd service unit of the database server.
+	// V6 derived bound: 256 bytes is systemd's UNIT_NAME_MAX,
+	// as LogEvent.unit_id and DbInstanceHealth.unit_id; the pattern caps it
+	// at 249.
 	Instance string `protobuf:"bytes,2,opt,name=instance,proto3" json:"instance,omitempty"`
 	// 1 … 20 entries, no duplicates.
 	SessionIds []uint64 `protobuf:"varint,3,rep,packed,name=session_ids,json=sessionIds,proto3" json:"session_ids,omitempty"`

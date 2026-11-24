@@ -50,6 +50,8 @@ message SignedEnvelope {
 // are the real enforcement: they must stay even where an option states
 // the same rule. A (required) option here only documents the rule.
 message EnvelopeBody {
+  // MAX_SKEW of R16 (agent-api §4.10, 50102; AC52).
+  option (max_skew_seconds) = 60;
   // Must be 1 (R14).
   uint32 format_version = 1 [
     (min_uint) = 1,
