@@ -403,8 +403,9 @@ message ExecutorStatusBody {
   // R23a); 0 when none is recorded since install or the last store
   // recovery. Read from the store, never from the request.
   // The executor has no hand-written check of this max_uint, by design: it
-  // only records counters that passed EnvelopeBody field 13's range check,
-  // so the watermark can never exceed that bound.
+  // must only record counters that passed EnvelopeBody field 13's range
+  // check, so the watermark cannot exceed that bound (a test is due when
+  // the watermark store lands).
   uint64 highest_envelope_counter = 32 [(max_uint) = 9223372036854775807];
 }
 
