@@ -56,7 +56,8 @@ var v1Table = msgTable{
 		{3, "signature", "bytes", exactB(64)},
 	}},
 	// action-envelope §4.2; created_at and expires_at from R16
-	"EnvelopeBody": {opts: none, fields: []fieldSpec{
+	// §4.10 option 50102 (AC52): MAX_SKEW of action-envelope R16.
+	"EnvelopeBody": {opts: maxSkewS(60), fields: []fieldSpec{
 		{1, "format_version", "uint32", formatV1},
 		{2, "action_id", "string", o(exactB(36), pat(uuidV7))},
 		{3, "target_server_id", "string", o(exactB(36), pat(uuidV4Pattern))},

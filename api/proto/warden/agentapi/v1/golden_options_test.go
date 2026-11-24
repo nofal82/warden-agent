@@ -89,6 +89,29 @@ func TestMessageSizeOptions(t *testing.T) {
 	}
 }
 
+// TestMaxSkewOptionOnlyOnEnvelopeBody (AC52): max_skew_seconds is set on
+// warden.v1.EnvelopeBody, to 60, and on no other message of either
+// package. Presence is read with proto.HasExtension, never a zero check.
+func TestMaxSkewOptionOnlyOnEnvelopeBody(t *testing.T) {
+	const want = protoreflect.FullName("warden.v1.EnvelopeBody")
+	found := false
+	for _, md := range allMessages(bothPackages(t)) {
+		has := proto.HasExtension(md.Options(), wardenv1.E_MaxSkewSeconds)
+		switch {
+		case md.FullName() == want && has:
+			found = true
+			if v := proto.GetExtension(md.Options(), wardenv1.E_MaxSkewSeconds).(uint32); v != 60 {
+				t.Errorf("%s: max_skew_seconds = %d, want 60", want, v)
+			}
+		case has:
+			t.Errorf("%s: max_skew_seconds set on a message other than %s", md.FullName(), want)
+		}
+	}
+	if !found {
+		t.Errorf("%s: max_skew_seconds is not set", want)
+	}
+}
+
 // TestNoZeroBound: a bound of 0 never means "unlimited" (R52c rule 3); no
 // option of the contract states a maximum of 0.
 func TestNoZeroBound(t *testing.T) {
