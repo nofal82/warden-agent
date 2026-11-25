@@ -152,6 +152,8 @@ func statusBody(mut func(*wardenv1.ExecutorStatusBody)) *wardenv1.ExecutorStatus
 	s := &wardenv1.ExecutorStatusBody{
 		FormatVersion: 1,
 		TrustState:    wardenv1.TrustState_TRUST_STATE_AVAILABLE,
+		// executor-ipc §4.7, required since #66.
+		RootKeyFingerprint: bytes.Repeat([]byte{0x19}, 32),
 		FeatureLevel: &wardenv1.FeatureLevel{
 			CgroupVersion:   wardenv1.CgroupVersion_CGROUP_VERSION_V2,
 			HelperLaunch:    wardenv1.HelperLaunchMethod_HELPER_LAUNCH_METHOD_CLONE_INTO_CGROUP,
@@ -212,6 +214,7 @@ func TestDecodeStatusRefuses(t *testing.T) {
 		{"unknown field", protowire.AppendVarint(protowire.AppendTag(append([]byte(nil), valid...), 99, protowire.VarintType), 1)},
 		{"boot_id 15 bytes", marshal(t, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.BootId = s.BootId[:15] }))},
 		{"boot_id absent", marshal(t, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.BootId = nil }))},
+		{"root_key_fingerprint absent", marshal(t, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.RootKeyFingerprint = nil }))},
 		{"trust_state 99", marshal(t, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.TrustState = 99 }))},
 	}
 	if len(oversized) <= maxStatus {
@@ -263,6 +266,7 @@ func FuzzDecodeStatus(f *testing.F) {
 	f.Add(valid[:len(valid)-1])
 	f.Add(append(append([]byte(nil), valid...), valid...))
 	f.Add(marshal(f, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.BootId = nil })))
+	f.Add(marshal(f, statusBody(func(s *wardenv1.ExecutorStatusBody) { s.RootKeyFingerprint = nil })))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, b []byte) {
 		h, ok := advisory.DecodeStatus(b)
