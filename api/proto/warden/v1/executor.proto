@@ -362,10 +362,12 @@ message ExecutorStatusBody {
     (sorted) = true,
     (redact_class) = REDACT_FIELD_CLASS_X
   ];
-  // 32 bytes.
+  // Required; exactly 32 bytes: SHA-256 of the pinned root public key DER
+  // (executor-ipc §4.7). The control plane refuses it empty.
   bytes root_key_fingerprint = 19 [
     (min_bytes) = 32,
     (max_bytes) = 32,
+    (required) = true,
     (redact_class) = REDACT_FIELD_CLASS_X
   ];
   // 32 bytes; absent when the result key is unavailable.
