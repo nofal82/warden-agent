@@ -1599,7 +1599,8 @@ type ExecutorStatusBody struct {
 	Frozen []*FrozenPlaybook `protobuf:"bytes,17,rep,name=frozen,proto3" json:"frozen,omitempty"`
 	// 0–2, each 32 bytes, sorted.
 	ControlplaneCaSha256 [][]byte `protobuf:"bytes,18,rep,name=controlplane_ca_sha256,json=controlplaneCaSha256,proto3" json:"controlplane_ca_sha256,omitempty"`
-	// 32 bytes.
+	// Required; exactly 32 bytes: SHA-256 of the pinned root public key DER
+	// (executor-ipc §4.7). The control plane refuses it empty.
 	RootKeyFingerprint []byte `protobuf:"bytes,19,opt,name=root_key_fingerprint,json=rootKeyFingerprint,proto3" json:"root_key_fingerprint,omitempty"`
 	// 32 bytes; absent when the result key is unavailable.
 	ResultPublicKey []byte `protobuf:"bytes,20,opt,name=result_public_key,json=resultPublicKey,proto3" json:"result_public_key,omitempty"`
@@ -2157,7 +2158,7 @@ const file_warden_v1_executor_proto_rawDesc = "" +
 	"\n" +
 	"hash_state\x18\x04 \x01(\x0e2\x14.warden.v1.HashStateB\x04\xe0\xb5\x18\x01R\thashState\x12\x1c\n" +
 	"\x04hash\x18\x05 \x01(\fB\b\x90\xb5\x18 \xe8\xb5\x18\x02R\x04hash\x12+\n" +
-	"\x11installed_matches\x18\x06 \x01(\bR\x10installedMatches\"\x94\x11\n" +
+	"\x11installed_matches\x18\x06 \x01(\bR\x10installedMatches\"\x98\x11\n" +
 	"\x12ExecutorStatusBody\x12/\n" +
 	"\x0eformat_version\x18\x01 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x01R\rformatVersion\x12s\n" +
 	"\tserver_id\x18\x02 \x01(\tBV\x90\xb5\x18$ʵ\x18J^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?$\xe8\xb5\x18\x02R\bserverId\x12&\n" +
@@ -2182,8 +2183,8 @@ const file_warden_v1_executor_proto_rawDesc = "" +
 	"\rrecovery_time\x18\x0f \x01(\x03R\frecoveryTime\x12*\n" +
 	"\x0erecovery_floor\x18\x10 \x01(\x03H\x00R\rrecoveryFloor\x88\x01\x01\x12F\n" +
 	"\x06frozen\x18\x11 \x03(\v2\x19.warden.v1.FrozenPlaybookB\x13\xa0\xb5\x18@ڵ\x18\vplaybook_idR\x06frozen\x12J\n" +
-	"\x16controlplane_ca_sha256\x18\x12 \x03(\fB\x14\x88\xb5\x18 \x90\xb5\x18 \xa0\xb5\x18\x02е\x18\x01\xe8\xb5\x18\x02R\x14controlplaneCaSha256\x12>\n" +
-	"\x14root_key_fingerprint\x18\x13 \x01(\fB\f\x88\xb5\x18 \x90\xb5\x18 \xe8\xb5\x18\x02R\x12rootKeyFingerprint\x124\n" +
+	"\x16controlplane_ca_sha256\x18\x12 \x03(\fB\x14\x88\xb5\x18 \x90\xb5\x18 \xa0\xb5\x18\x02е\x18\x01\xe8\xb5\x18\x02R\x14controlplaneCaSha256\x12B\n" +
+	"\x14root_key_fingerprint\x18\x13 \x01(\fB\x10\x88\xb5\x18 \x90\xb5\x18 \xe0\xb5\x18\x01\xe8\xb5\x18\x02R\x12rootKeyFingerprint\x124\n" +
 	"\x11result_public_key\x18\x14 \x01(\fB\b\x90\xb5\x18 \xe8\xb5\x18\x02R\x0fresultPublicKey\x12B\n" +
 	"\rfeature_level\x18\x15 \x01(\v2\x17.warden.v1.FeatureLevelB\x04\xe0\xb5\x18\x01R\ffeatureLevel\x12d\n" +
 	"\x1bdatabase_unavailable_reason\x18\x16 \x01(\x0e2$.warden.v1.DatabaseUnavailableReasonR\x19databaseUnavailableReason\x12O\n" +

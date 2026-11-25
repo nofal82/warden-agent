@@ -64,7 +64,7 @@ Pinned tools (exact versions; the generated headers record them):
 
 | Tool | Version | Source |
 | --- | --- | --- |
-| `protoc` | 36.2 | `https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip`, SHA-256 `121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278` |
+| `protoc` | 36.2 | Download `https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip`. Zip SHA-256 `121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278`; extracted `bin/protoc` SHA-256 `f6ee22d65361338459208da8bff801c9ca689741cba9187b34990dd45198f864` (check both with `sha256sum`) |
 | `protoc-gen-go` | v1.36.12 | `go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12` (same version as the `google.golang.org/protobuf` runtime in `go.mod`) |
 | `protoc-gen-go-grpc` | v1.6.2 | `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2` (for `agentapi/v1/service.proto`; runtime `google.golang.org/grpc` v1.84.0 in `go.mod`) |
 

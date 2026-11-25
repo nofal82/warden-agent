@@ -318,8 +318,9 @@ var (
 	// action-envelope R16's MAX_SKEW in seconds, set only on EnvelopeBody, to
 	// 60 (agent-api §4.10, AC52). A record, not a mechanism: enforcement
 	// stays in code (envelope.MaxSkew, identity.MaxSkew, the agent's advisory
-	// copy), drift tests tie those constants to it, and the executor never
-	// reads it.
+	// copy, and the control plane's agentendpoint.MaxSkew in the warden
+	// repository, tied by its AC52 test), drift tests tie those constants to
+	// it, and the executor never reads it.
 	//
 	// optional uint32 max_skew_seconds = 50102;
 	E_MaxSkewSeconds = &file_warden_v1_options_proto_extTypes[14]
