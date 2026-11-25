@@ -234,6 +234,14 @@ var file_warden_v1_options_proto_extTypes = []protoimpl.ExtensionInfo{
 		Tag:           "varint,50101,opt,name=max_message_bytes",
 		Filename:      "warden/v1/options.proto",
 	},
+	{
+		ExtendedType:  (*descriptorpb.MessageOptions)(nil),
+		ExtensionType: (*uint32)(nil),
+		Field:         50102,
+		Name:          "warden.v1.max_skew_seconds",
+		Tag:           "varint,50102,opt,name=max_skew_seconds",
+		Filename:      "warden/v1/options.proto",
+	},
 }
 
 // Extension fields to descriptorpb.FieldOptions.
@@ -307,6 +315,14 @@ var (
 	//
 	// optional uint32 max_message_bytes = 50101;
 	E_MaxMessageBytes = &file_warden_v1_options_proto_extTypes[13]
+	// action-envelope R16's MAX_SKEW in seconds, set only on EnvelopeBody, to
+	// 60 (agent-api §4.10, AC52). A record, not a mechanism: enforcement
+	// stays in code (envelope.MaxSkew, identity.MaxSkew, the agent's advisory
+	// copy), drift tests tie those constants to it, and the executor never
+	// reads it.
+	//
+	// optional uint32 max_skew_seconds = 50102;
+	E_MaxSkewSeconds = &file_warden_v1_options_proto_extTypes[14]
 )
 
 var File_warden_v1_options_proto protoreflect.FileDescriptor
@@ -340,7 +356,8 @@ const file_warden_v1_options_proto_rawDesc = "" +
 	"\tsorted_by\x12\x1d.google.protobuf.FieldOptions\x18ۆ\x03 \x01(\tR\bsortedBy:;\n" +
 	"\brequired\x12\x1d.google.protobuf.FieldOptions\x18܆\x03 \x01(\bR\brequired:_\n" +
 	"\fredact_class\x12\x1d.google.protobuf.FieldOptions\x18݆\x03 \x01(\x0e2\x1b.warden.v1.RedactFieldClassR\vredactClass:M\n" +
-	"\x11max_message_bytes\x12\x1f.google.protobuf.MessageOptions\x18\xb5\x87\x03 \x01(\rR\x0fmaxMessageBytesB>Z<github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1b\x06proto3"
+	"\x11max_message_bytes\x12\x1f.google.protobuf.MessageOptions\x18\xb5\x87\x03 \x01(\rR\x0fmaxMessageBytes:K\n" +
+	"\x10max_skew_seconds\x12\x1f.google.protobuf.MessageOptions\x18\xb6\x87\x03 \x01(\rR\x0emaxSkewSecondsB>Z<github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1b\x06proto3"
 
 var (
 	file_warden_v1_options_proto_rawDescOnce sync.Once
@@ -375,11 +392,12 @@ var file_warden_v1_options_proto_depIdxs = []int32{
 	1,  // 11: warden.v1.required:extendee -> google.protobuf.FieldOptions
 	1,  // 12: warden.v1.redact_class:extendee -> google.protobuf.FieldOptions
 	2,  // 13: warden.v1.max_message_bytes:extendee -> google.protobuf.MessageOptions
-	0,  // 14: warden.v1.redact_class:type_name -> warden.v1.RedactFieldClass
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	14, // [14:15] is the sub-list for extension type_name
-	0,  // [0:14] is the sub-list for extension extendee
+	2,  // 14: warden.v1.max_skew_seconds:extendee -> google.protobuf.MessageOptions
+	0,  // 15: warden.v1.redact_class:type_name -> warden.v1.RedactFieldClass
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	15, // [15:16] is the sub-list for extension type_name
+	0,  // [0:15] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name
 }
 
@@ -395,7 +413,7 @@ func file_warden_v1_options_proto_init() {
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_warden_v1_options_proto_rawDesc), len(file_warden_v1_options_proto_rawDesc)),
 			NumEnums:      1,
 			NumMessages:   0,
-			NumExtensions: 14,
+			NumExtensions: 15,
 			NumServices:   0,
 		},
 		GoTypes:           file_warden_v1_options_proto_goTypes,

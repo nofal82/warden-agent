@@ -95,7 +95,9 @@ type SignedEnvelope struct {
 	// 32 bytes.
 	KeyId []byte `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	// Deterministic encoding of EnvelopeBody, signed as received and never
-	// re-marshalled (R3, R4). At least 1 byte.
+	// re-marshalled (R3, R4). At least 1 byte. V6 derived
+	// bound: max_bytes is MAX_ENVELOPE_BYTES (R11, OQ3), the whole
+	// message's limit, which bounds the body too.
 	Body []byte `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
 	// Ed25519 over "warden/v1/action-envelope" || 0x00 || body. Exactly 64
 	// bytes.
@@ -156,6 +158,11 @@ func (x *SignedEnvelope) GetSignature() []byte {
 }
 
 // EnvelopeBody is decoded only after the signature over its bytes verified.
+//
+// The executor never reads these options (R52c). Its hand-written checks
+// (bodyWithinLimits and validPolicyDecision in internal/envelope/body.go)
+// are the real enforcement: they must stay even where an option states
+// the same rule. A (required) option here only documents the rule.
 type EnvelopeBody struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Must be 1 (R14).
@@ -395,7 +402,7 @@ const file_warden_v1_envelope_proto_rawDesc = "" +
 	"\x06key_id\x18\x01 \x01(\fB\b\x88\xb5\x18 \x90\xb5\x18 R\x05keyId\x12\x1e\n" +
 	"\x04body\x18\x02 \x01(\fB\n" +
 	"\x88\xb5\x18\x01\x90\xb5\x18\x80\x80\x01R\x04body\x12&\n" +
-	"\tsignature\x18\x03 \x01(\fB\b\x88\xb5\x18@\x90\xb5\x18@R\tsignature:\x06\xa8\xbb\x18\x80\x80\x01\"\x97\b\n" +
+	"\tsignature\x18\x03 \x01(\fB\b\x88\xb5\x18@\x90\xb5\x18@R\tsignature:\x06\xa8\xbb\x18\x80\x80\x01\"\x9d\b\n" +
 	"\fEnvelopeBody\x12/\n" +
 	"\x0eformat_version\x18\x01 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x01R\rformatVersion\x12n\n" +
 	"\taction_id\x18\x02 \x01(\tBQ\x88\xb5\x18$\x90\xb5\x18$ʵ\x18E^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$R\bactionId\x12{\n" +
@@ -413,7 +420,7 @@ const file_warden_v1_envelope_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\v \x01(\x03B\r\xb8\xb5\x18\x01\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\texpiresAt\x12H\n" +
 	"\x0fidempotency_key\x18\f \x01(\tB\x1f\x88\xb5\x18\x01\x90\xb5\x18\x80\x01ʵ\x18\x12^[A-Za-z0-9._:-]+$R\x0eidempotencyKey\x12;\n" +
-	"\x10envelope_counter\x18\r \x01(\x04B\x10\xa8\xb5\x18\x01\xb0\xb5\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\x0fenvelopeCounter\"\xfc\x02\n" +
+	"\x10envelope_counter\x18\r \x01(\x04B\x10\xa8\xb5\x18\x01\xb0\xb5\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\x0fenvelopeCounter:\x04\xb0\xbb\x18<\"\xfc\x02\n" +
 	"\x0ePolicyDecision\x12r\n" +
 	"\vdecision_id\x18\x01 \x01(\tBQ\x88\xb5\x18$\x90\xb5\x18$ʵ\x18E^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$R\n" +
 	"decisionId\x12E\n" +

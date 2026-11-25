@@ -28,7 +28,9 @@ message SignedEnvelope {
     (max_bytes) = 32
   ];
   // Deterministic encoding of EnvelopeBody, signed as received and never
-  // re-marshalled (R3, R4). At least 1 byte.
+  // re-marshalled (R3, R4). At least 1 byte. V6 derived
+  // bound: max_bytes is MAX_ENVELOPE_BYTES (R11, OQ3), the whole
+  // message's limit, which bounds the body too.
   bytes body = 2 [
     (min_bytes) = 1,
     (max_bytes) = 16384
@@ -42,7 +44,14 @@ message SignedEnvelope {
 }
 
 // EnvelopeBody is decoded only after the signature over its bytes verified.
+//
+// The executor never reads these options (R52c). Its hand-written checks
+// (bodyWithinLimits and validPolicyDecision in internal/envelope/body.go)
+// are the real enforcement: they must stay even where an option states
+// the same rule. A (required) option here only documents the rule.
 message EnvelopeBody {
+  // MAX_SKEW of R16 (agent-api §4.10, 50102; AC52).
+  option (max_skew_seconds) = 60;
   // Must be 1 (R14).
   uint32 format_version = 1 [
     (min_uint) = 1,

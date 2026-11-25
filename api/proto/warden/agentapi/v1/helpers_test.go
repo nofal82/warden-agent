@@ -140,6 +140,7 @@ func maxI(n int64) optSet      { return optSet{"max_int": n} }
 func pat(re string) optSet     { return optSet{"pattern": re} }
 func sortedBy(f string) optSet { return optSet{"sorted_by": f} }
 func maxMsg(n uint32) optSet   { return optSet{"max_message_bytes": n} }
+func maxSkewS(n uint32) optSet { return optSet{"max_skew_seconds": n} }
 func rc(c wardenv1.RedactFieldClass) optSet {
 	return optSet{"redact_class": c}
 }
@@ -200,9 +201,11 @@ var fieldOptionExts = []namedExt{
 	{"redact_class", wardenv1.E_RedactClass},
 }
 
-// messageOptionExts is every MessageOptions extension of §4.10 (50101).
+// messageOptionExts is every MessageOptions extension of §4.10 (50101,
+// 50102).
 var messageOptionExts = []namedExt{
 	{"max_message_bytes", wardenv1.E_MaxMessageBytes},
+	{"max_skew_seconds", wardenv1.E_MaxSkewSeconds},
 }
 
 // readOptions returns the warden options set on opts, read with

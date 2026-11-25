@@ -1078,6 +1078,8 @@ type ExecutorResultBody struct {
 	// 1.
 	FormatVersion uint32 `protobuf:"varint,1,opt,name=format_version,json=formatVersion,proto3" json:"format_version,omitempty"`
 	// The executor's server-ID file value; absent when that file is invalid.
+	// V6 derived bound: 36 bytes, the canonical UUID form of
+	// the server-ID file (agent-identity §4.1).
 	ServerId string `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
 	// 32 bytes; absent only for OVERSIZED.
 	EnvelopeSha256 []byte `protobuf:"bytes,3,opt,name=envelope_sha256,json=envelopeSha256,proto3" json:"envelope_sha256,omitempty"`
@@ -1572,7 +1574,9 @@ type ExecutorStatusBody struct {
 	ExecutorTime int64 `protobuf:"varint,4,opt,name=executor_time,json=executorTime,proto3" json:"executor_time,omitempty"`
 	// SemVer 2.0.0 without build metadata, ≤ 32 bytes.
 	BinaryVersion string `protobuf:"bytes,5,opt,name=binary_version,json=binaryVersion,proto3" json:"binary_version,omitempty"`
-	// From the R60 record; absent when there is none.
+	// From the R60 record; absent when there is none. V6 derived
+	// bound: 32 bytes and the optional SemVer pattern, as binary_version
+	// (field 5) and AdminToolRecord.release_version, the same format.
 	InstalledReleaseVersion  string `protobuf:"bytes,6,opt,name=installed_release_version,json=installedReleaseVersion,proto3" json:"installed_release_version,omitempty"`
 	InstalledReleaseSequence uint64 `protobuf:"varint,7,opt,name=installed_release_sequence,json=installedReleaseSequence,proto3" json:"installed_release_sequence,omitempty"`
 	// 0–32, packed, sorted ascending, distinct.
@@ -1620,6 +1624,10 @@ type ExecutorStatusBody struct {
 	// The highest envelope_counter recorded in the store (action-envelope
 	// R23a); 0 when none is recorded since install or the last store
 	// recovery. Read from the store, never from the request.
+	// The executor has no hand-written check of this max_uint, by design: it
+	// must only record counters that passed EnvelopeBody field 13's range
+	// check, so the watermark cannot exceed that bound (a test is due when
+	// the watermark store lands).
 	HighestEnvelopeCounter uint64 `protobuf:"varint,32,opt,name=highest_envelope_counter,json=highestEnvelopeCounter,proto3" json:"highest_envelope_counter,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
