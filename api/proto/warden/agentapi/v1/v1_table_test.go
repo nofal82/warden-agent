@@ -489,7 +489,7 @@ var v1Table = msgTable{
 		{16, "recovery_floor", "optional int64", none},
 		{17, "frozen", "repeated M:FrozenPlaybook", o(maxC(64), sortedBy("playbook_id"))},
 		{18, "controlplane_ca_sha256", "repeated bytes", o(maxC(2), exactB(32), sorted, rc(clsX))},
-		{19, "root_key_fingerprint", "bytes", o(exactB(32), rc(clsX))},
+		{19, "root_key_fingerprint", "bytes", o(exactB(32), req, rc(clsX))},
 		{20, "result_public_key", "bytes", o(maxB(32), rc(clsX))},
 		{21, "feature_level", "M:FeatureLevel", req},
 		{22, "database_unavailable_reason", "E:DatabaseUnavailableReason", none},
