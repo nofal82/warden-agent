@@ -249,6 +249,13 @@ var sizeLimitedMessages = map[protoreflect.FullName]bool{
 	"warden.v1.IpcRefusal":         true,
 	"warden.v1.PrimitiveResult":    true,
 	"warden.v1.ExecutorResultBody": true,
+	// warden.v1 trust-document bodies (V7, signing-and-updates §4.2):
+	// MAX_STATEMENT_BYTES, MAX_KEYSET_BYTES 4,096, MAX_CATALOG_BYTES
+	// 262,144 and MAX_MANIFEST_BYTES 32,768.
+	"warden.v1.ReleaseKeyStatementBody": true,
+	"warden.v1.KeysetBody":              true,
+	"warden.v1.CatalogBody":             true,
+	"warden.v1.ManifestBody":            true,
 }
 
 // requiredFields is the exact list of §4.10.1 for option 50012.
