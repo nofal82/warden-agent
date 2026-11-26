@@ -60,7 +60,9 @@ type ManifestConfig struct {
 	Now func() time.Time
 }
 
-// Manifest is a server manifest that passed VerifyManifest.
+// Manifest is a server manifest that passed VerifyManifest. Body is the
+// verifier's own decoded copy; callers treat it as read-only, as with
+// envelope.Verified.
 type Manifest struct {
 	Body *wardenv1.ManifestBody
 	// KeyID is the SHA-256 of the raw manifest-role key that signed it.

@@ -254,7 +254,11 @@ func takenFingerprints(b *wardenv1.KeysetBody, root ed25519.PublicKey) map[[sha2
 		taken[sha256.Sum256(e.GetPublicKey())] = struct{}{}
 	}
 	for _, c := range b.GetControlplaneCas() {
-		taken[[sha256.Size]byte(c.GetFingerprint())] = struct{}{}
+		// checkCAs already refused a wrong length; checking again here keeps
+		// a reordering of the checks from turning into a panic in root.
+		if fp := c.GetFingerprint(); len(fp) == sha256.Size {
+			taken[[sha256.Size]byte(fp)] = struct{}{}
+		}
 	}
 	for _, der := range b.GetReleaseKeys() {
 		taken[sha256.Sum256(der)] = struct{}{}

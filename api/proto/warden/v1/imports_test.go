@@ -144,6 +144,7 @@ var executorRoots = []struct {
 	{"cmd/warden-executor", false},
 	{"internal/executor", false},
 	{"internal/envelope", true},
+	{"internal/trustdoc", true}, // keyset and manifest verifier (signing-and-updates §5.4)
 }
 
 // executorPackages lists every Go package that exists today under the
