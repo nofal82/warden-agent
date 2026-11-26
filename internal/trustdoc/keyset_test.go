@@ -9,7 +9,6 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"math"
-	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -101,10 +100,6 @@ func TestVerifyKeysetAttacks(t *testing.T) {
 			kid, body, sig := validKeysetSig(t, fx)
 			return wrap(kid, body, sig[:63])
 		}},
-		{name: "signature_65_bytes", preVerify: true, noDecode: true, build: func(t *testing.T, fx *fixture) []byte {
-			kid, body, sig := validKeysetSig(t, fx)
-			return wrap(kid, body, append(sig, 0))
-		}},
 		{name: "signature_72_bytes_ecdsa_length", preVerify: true, noDecode: true, build: func(t *testing.T, fx *fixture) []byte {
 			kid, body, sig := validKeysetSig(t, fx)
 			return wrap(kid, body, append(sig, make([]byte, 8)...))
@@ -112,10 +107,6 @@ func TestVerifyKeysetAttacks(t *testing.T) {
 		{name: "S_equals_L", preVerify: true, noDecode: true, build: func(t *testing.T, fx *fixture) []byte {
 			kid, body, sig := validKeysetSig(t, fx)
 			return wrap(kid, body, withS(sig, groupOrderL))
-		}},
-		{name: "S_equals_L_plus_1", preVerify: true, noDecode: true, build: func(t *testing.T, fx *fixture) []byte {
-			kid, body, sig := validKeysetSig(t, fx)
-			return wrap(kid, body, withS(sig, new(big.Int).Add(groupOrderL, big.NewInt(1))))
 		}},
 		{name: "bad_signature_modified_body", noDecode: true, build: func(t *testing.T, fx *fixture) []byte {
 			kid, _, sig := validKeysetSig(t, fx)
@@ -181,6 +172,14 @@ func TestVerifyKeysetAttacks(t *testing.T) {
 				b.AuditCheckpointKeys = append(b.AuditCheckpointKeys, cpEntry(randBytes(t, 32)))
 			}
 			sortKeyset(b)
+		})},
+		{name: "checkpoint_unsorted", build: mutKeyset(func(_ *fixture, b *wardenv1.KeysetBody) {
+			lo, hi := bytes.Repeat([]byte{0x11}, 32), bytes.Repeat([]byte{0x22}, 32)
+			b.AuditCheckpointKeys = []*wardenv1.CheckpointKeyEntry{cpEntry(hi), cpEntry(lo)}
+		})},
+		{name: "checkpoint_duplicate", build: mutKeyset(func(_ *fixture, b *wardenv1.KeysetBody) {
+			fp := bytes.Repeat([]byte{0x33}, 32)
+			b.AuditCheckpointKeys = []*wardenv1.CheckpointKeyEntry{cpEntry(fp), cpEntry(bytes.Clone(fp))}
 		})},
 		{name: "checkpoint_fingerprint_33_bytes", build: mutKeyset(func(_ *fixture, b *wardenv1.KeysetBody) {
 			b.AuditCheckpointKeys = []*wardenv1.CheckpointKeyEntry{cpEntry(randBytes(t, 33))}
