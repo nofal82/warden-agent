@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
@@ -155,10 +156,16 @@ func FuzzCheck(f *testing.F) {
 	seeds = append(seeds, packedRecordSeeds(f)...)
 	seeds = append(seeds, explicitDefaultSeeds(f)...)
 	seeds = append(seeds, orderSeeds(f)...)
+	seeds = append(seeds, trustDocFuzzSeeds()...)
 	for _, s := range seeds {
 		f.Add(s)
 	}
 	mds := []protoreflect.MessageDescriptor{bodyMD, outerMD}
+	// The trust documents of signing-and-updates §4 (issue #68), looked
+	// up by name so the target compiles before they exist.
+	for _, name := range trustDocRoots {
+		mds = append(mds, trustMD(f, name))
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		for _, md := range mds {
 			checkErr := wirescan.CheckForTest(b, md)
@@ -173,10 +180,11 @@ func FuzzCheck(f *testing.F) {
 				t.Fatalf("Check accepted input the strict oracle rejects (%s): %x", md.FullName(), b)
 			}
 
-			var m proto.Message = new(wardenv1.EnvelopeBody)
-			if md == outerMD {
-				m = new(wardenv1.SignedEnvelope)
+			mt, err := protoregistry.GlobalTypes.FindMessageByName(md.FullName())
+			if err != nil {
+				t.Fatalf("%s: %v", md.FullName(), err)
 			}
+			m := mt.New().Interface()
 			protoErr := proto.Unmarshal(b, proto.Clone(m))
 			// Completeness, now including split and empty packed records
 			// and explicit defaults (R13 (i), (j)): the oracle decides them.

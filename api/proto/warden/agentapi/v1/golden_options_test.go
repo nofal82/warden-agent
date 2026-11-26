@@ -187,6 +187,11 @@ func TestRedactClassInR5Scope(t *testing.T) {
 		if name == "IpcRefusal" { // an unsigned transport answer, not forwarded
 			continue
 		}
+		// The trust documents travel to the server as opaque signed bytes
+		// (issue #68), never back, so they are outside R5's walk.
+		if trustDocMessages[name] {
+			continue
+		}
 		// The envelope and the requests travel to the server, never back,
 		// so they are outside R5's walk.
 		if md := messageByName(t, protoreflect.FullName("warden.v1."+name)); preM1Files[md.ParentFile().Path()] {

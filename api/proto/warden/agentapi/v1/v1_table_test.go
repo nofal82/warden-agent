@@ -43,9 +43,20 @@ package agentapiv1_test
 //	   full id is 64); installed_release_version 32 with the optional
 //	   SemVer pattern. Accepted by Nofal, PR #60, 2026-11-23; each derived
 //	   bound names its source at the row or option set that uses it.
+//	V7 max_message_bytes on a trust-document body type (KeysetBody,
+//	   ReleaseKeyStatementBody, CatalogBody, ManifestBody) is the kind's
+//	   limit of signing-and-updates §4.2 for the whole SignedDocument
+//	   carrying that body, as on an AgentMessage member type;
+//	   SignedDocument itself carries none, and its body max_bytes 262,144
+//	   is the largest kind limit (V6). Issue #68.
+//	V8 EnabledPlaybook.max_act_steps_per_hour carries max_uint 60, the
+//	   catalog's own greatest value; "… the catalog's value" stays
+//	   hand-written. Issue #68.
 //
 // Requests and the envelope are outside redaction.md R5's scope, so they
-// carry no redact_class.
+// carry no redact_class. The trust documents (signing-and-updates §4.1–
+// §4.6) travel from the control plane to the server, so they carry none
+// either.
 var v1Table = msgTable{
 	// action-envelope §4.1
 	"SignedEnvelope": {opts: maxMsg(16384), fields: []fieldSpec{
@@ -523,6 +534,125 @@ var v1Table = msgTable{
 		{4, "unchecked_databases", "uint32", maxU(64)},
 		{5, "skipped_databases", "uint32", maxU(64)},
 	}},
+
+	// signing-and-updates §4.1. No max_message_bytes: the limit depends
+	// on the kind and sits on the body type (V7).
+	"SignedDocument": {opts: none, fields: []fieldSpec{
+		{1, "key_id", "bytes", exactB(32)},
+		// V6, V7: the largest kind limit, MAX_CATALOG_BYTES (§4.2).
+		{2, "body", "bytes", o(minB(1), maxB(262144))},
+		// Ed25519 exactly 64, ECDSA DER 8 … 72: the option holds the
+		// union; the per-kind length stays hand-written.
+		{3, "signature", "bytes", o(minB(8), maxB(72))},
+	}},
+
+	// signing-and-updates §4.3a; MAX_STATEMENT_BYTES (§4.2, V7).
+	"ReleaseKeyStatementBody": {opts: maxMsg(4096), fields: []fieldSpec{
+		{1, "format_version", "uint32", formatV1},
+		{2, "sequence", "uint64", docSequence},
+		{3, "issued_at", "int64", docTime},
+		// §4.3: a release public key is exactly 91 bytes of DER;
+		// "distinct" stays hand-written.
+		{4, "release_keys", "repeated bytes", o(minC(1), maxC(2), exactB(91), sorted)},
+	}},
+
+	// signing-and-updates §4.4; MAX_KEYSET_BYTES (§4.2, V7).
+	"KeysetBody": {opts: maxMsg(4096), fields: []fieldSpec{
+		{1, "format_version", "uint32", formatV1},
+		{2, "sequence", "uint64", docSequence},
+		{3, "signed_at", "int64", docTime},
+		// "1 or 2 per role" stays hand-written.
+		{4, "keys", "repeated M:KeyEntry", o(minC(2), maxC(4), sortedBy("public_key"))},
+		{5, "controlplane_cas", "repeated M:CaEntry", o(minC(1), maxC(2), sortedBy("fingerprint"))},
+		{6, "release_keys", "repeated bytes", o(minC(1), maxC(2), exactB(91), sorted)},
+		// 0 … 2: a lower bound of 0 gets no min_count.
+		{7, "audit_checkpoint_keys", "repeated M:CheckpointKeyEntry", o(maxC(2), sortedBy("fingerprint"))},
+	}},
+	"KeyEntry": {opts: none, fields: []fieldSpec{
+		{1, "role", "E:KeyRole", req},
+		{2, "public_key", "bytes", exactB(32)},
+		// R13 and MAX_KEY_VALIDITY stay hand-written.
+		{3, "not_before", "int64", docTime},
+		{4, "not_after", "int64", docTime},
+	}},
+	"CaEntry":            validityEntry(),
+	"CheckpointKeyEntry": validityEntry(),
+
+	// signing-and-updates §4.5; MAX_CATALOG_BYTES (§4.2, V7).
+	"CatalogBody": {opts: maxMsg(262144), fields: []fieldSpec{
+		{1, "format_version", "uint32", formatV1},
+		{2, "sequence", "uint64", docSequence},
+		{3, "published_at", "int64", docTime},
+		{4, "entries", "repeated M:CatalogEntry", o(maxC(64), sortedBy("playbook_id"))},
+	}},
+	"CatalogEntry": {opts: none, fields: []fieldSpec{
+		{1, "playbook_id", "string", o(maxB(63), pat(playbookID))},
+		{2, "version", "string", o(maxB(32), pat(semverPattern))},
+		{3, "digest", "bytes", exactB(32)},
+		{4, "steps", "repeated M:CatalogStep", o(minC(1), maxC(32), sortedBy("step_id"))},
+		// R24 (not L3 with an IMPOSSIBLE step) stays hand-written.
+		{5, "max_risk", "E:Risk", req},
+		{6, "autonomy_ceiling", "E:AutonomyLevel", req},
+		// Absent: 3 (action-envelope R40); present: 1 … 60 (V1).
+		{7, "max_act_steps_per_hour", "optional uint32", o(minU(1), maxU(60))},
+		// "ALL only alone" (typed-action-catalog R6a) stays hand-written.
+		{8, "unit_categories", "repeated E:UnitCategory", o(maxC(3), sorted)},
+		// V6: 256, as unitRef; "only on tls-cert-expiring" stays
+		// hand-written.
+		{9, "renewal_units", "repeated string", o(maxC(4), maxB(256), pat(unitPattern), sorted)},
+	}},
+	"CatalogStep": {opts: none, fields: []fieldSpec{
+		{1, "step_id", "string", o(maxB(63), pat(stepID))},
+		// "All of one class and one rollback kind" (R24) stays
+		// hand-written; 20 is reserved in the enum.
+		{2, "allowed_primitives", "repeated E:Primitive", o(minC(1), maxC(8), sorted)},
+		{3, "rollback_kind", "E:RollbackKind", req},
+	}},
+
+	// signing-and-updates §4.6; MAX_MANIFEST_BYTES (§4.2, V7).
+	"ManifestBody": {opts: maxMsg(32768), fields: []fieldSpec{
+		{1, "format_version", "uint32", formatV1},
+		// "Must equal the local server-ID file" stays hand-written.
+		{2, "server_id", "string", o(exactB(36), pat(uuidV4Pattern))},
+		{3, "sequence", "uint64", docSequence},
+		// "≤ now + MAX_SKEW" stays hand-written.
+		{4, "issued_at", "int64", docTime},
+		// "Empty or exactly 24" (V1): only the greatest length.
+		{5, "post_recovery", "bytes", maxB(24)},
+		{6, "playbooks", "repeated M:EnabledPlaybook", o(maxC(64), sortedBy("playbook_id"))},
+		{7, "unfreeze", "repeated string", o(maxC(64), maxB(63), pat(playbookID), sorted)},
+		// V6: 256 per unit, as unitRef.
+		{8, "backup_units", "repeated string", o(maxC(8), maxB(256), pat(unitPattern), sorted)},
+		{9, "admin_listed_units", "repeated string", o(maxC(32), maxB(256), pat(unitPattern), sorted)},
+	}},
+	"EnabledPlaybook": {opts: none, fields: []fieldSpec{
+		{1, "playbook_id", "string", o(maxB(63), pat(playbookID))},
+		{2, "autonomy_ceiling", "E:AutonomyLevel", req},
+		// V8.
+		{3, "max_act_steps_per_hour", "optional uint32", o(minU(1), maxU(60))},
+	}},
+}
+
+// trustDocMessages are the warden.v1 messages of signing-and-updates
+// §4.1–§4.6 (issue #68). The control plane sends them to the server as
+// opaque signed bytes (agent-api TrustDocument.document), so, as the
+// envelope, no redaction or class-table walk may reach them.
+var trustDocMessages = map[string]bool{
+	"SignedDocument": true, "ReleaseKeyStatementBody": true, "KeysetBody": true,
+	"KeyEntry": true, "CaEntry": true, "CheckpointKeyEntry": true,
+	"CatalogBody": true, "CatalogEntry": true, "CatalogStep": true,
+	"ManifestBody": true, "EnabledPlaybook": true,
+}
+
+// validityEntry is the row of CaEntry and CheckpointKeyEntry
+// (signing-and-updates §4.4): a 32-byte fingerprint and a validity period
+// (R13; MAX_CA_ENTRY_VALIDITY and MAX_KEY_VALIDITY stay hand-written).
+func validityEntry() msgSpec {
+	return msgSpec{opts: none, fields: []fieldSpec{
+		{1, "fingerprint", "bytes", exactB(32)},
+		{2, "not_before", "int64", docTime},
+		{3, "not_after", "int64", docTime},
+	}}
 }
 
 func beforeAfter(typ string) msgSpec {
@@ -565,6 +695,10 @@ const (
 
 var (
 	formatV1 = o(minU(1), maxU(1))
+	// signing-and-updates §4.3a–§4.6: a document sequence is
+	// 1 … 2^63 − 1 and a document time 1 … 2^40 − 1.
+	docSequence = o(minU(1), maxU(1<<63-1))
+	docTime     = o(minI(1), maxI(1<<40-1))
 	// typed-action-catalog §4.3 rule 1; the other path rules stay
 	// hand-written.
 	absPath = o(minB(1), maxB(4095))
