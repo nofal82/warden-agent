@@ -118,11 +118,6 @@ func p256GeneratorDER(tb testing.TB) []byte {
 	return der
 }
 
-func fingerprint(b []byte) []byte {
-	sum := sha256.Sum256(b)
-	return sum[:]
-}
-
 // fixture holds one trust root and the keys a valid keyset names.
 type fixture struct {
 	root, env, man, cp edKey
