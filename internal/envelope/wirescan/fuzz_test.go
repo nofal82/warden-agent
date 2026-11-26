@@ -157,6 +157,12 @@ func FuzzCheck(f *testing.F) {
 	seeds = append(seeds, explicitDefaultSeeds(f)...)
 	seeds = append(seeds, orderSeeds(f)...)
 	seeds = append(seeds, trustDocFuzzSeeds()...)
+	// Fully populated documents, so the fuzzer starts from the deep
+	// paths (CatalogEntry, CatalogStep, packed enums).
+	for _, name := range []protoreflect.FullName{"warden.v1.KeysetBody", "warden.v1.CatalogBody", "warden.v1.ManifestBody"} {
+		b, _ := populatedDoc(f, name)
+		seeds = append(seeds, b)
+	}
 	for _, s := range seeds {
 		f.Add(s)
 	}

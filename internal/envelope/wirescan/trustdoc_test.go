@@ -42,7 +42,7 @@ func trustMD(tb testing.TB, name protoreflect.FullName) protoreflect.MessageDesc
 
 // populatedDoc is a deterministic encoding of name with every field set
 // and every repeated field holding two elements (populate).
-func populatedDoc(t *testing.T, name protoreflect.FullName) ([]byte, protoreflect.Message) {
+func populatedDoc(t testing.TB, name protoreflect.FullName) ([]byte, protoreflect.Message) {
 	t.Helper()
 	mt, err := protoregistry.GlobalTypes.FindMessageByName(name)
 	if err != nil {
@@ -88,6 +88,10 @@ func TestTrustDocumentScan(t *testing.T) {
 
 		// R13 (c): a non-repeated field twice.
 		{"signed_document_key_id_twice", signed, cat(keyID, keyID), wirescan.ErrDuplicateField},
+		// The optional fields are exempt from rule (j) only: twice is
+		// still a duplicate.
+		{"catalog_entry_max_act_twice", catalogEntry, cat(pbID, fVarint(nil, 7, 1), fVarint(nil, 7, 1)), wirescan.ErrDuplicateField},
+		{"enabled_playbook_max_act_twice", manifest, cat(fv1, fBytes(nil, 6, cat(pbID, fVarint(nil, 3, 1), fVarint(nil, 3, 1)))), wirescan.ErrDuplicateField},
 
 		// R13 (d), (a): wire-type mismatch and groups.
 		{"keyset_sequence_as_bytes", keyset, cat(fv1, fBytes(nil, 2, []byte{1})), wirescan.ErrWireType},
@@ -115,6 +119,7 @@ func TestTrustDocumentScan(t *testing.T) {
 
 		// R13 (k): fields out of ascending order.
 		{"keyset_sequence_before_format", keyset, cat(fVarint(nil, 2, 1), fv1), wirescan.ErrNonCanonical},
+		{"catalog_step_rollback_before_primitives", step, cat(stepID, fVarint(nil, 3, 2), fBytes(nil, 2, packedVarints(11))), wirescan.ErrNonCanonical},
 		{"signed_document_signature_before_body", signed,
 			cat(keyID, fBytes(nil, 3, make([]byte, 64)), fBytes(nil, 2, []byte{1})), wirescan.ErrNonCanonical},
 	})
