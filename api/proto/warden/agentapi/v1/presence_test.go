@@ -252,8 +252,8 @@ func TestOptionalFieldsRoundTrip(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// TestOptionalGoTypes: the generated Go fields of the fifteen optional
-// fields that predate issue #68 are pointers, so absent (nil) and a
+// TestOptionalGoTypes: the generated Go fields of all seventeen optional
+// fields (the two of issue #68 included) are pointers, so absent (nil) and a
 // present zero are distinct in code too.
 func TestOptionalGoTypes(t *testing.T) {
 	msgs := []proto.Message{
@@ -267,6 +267,8 @@ func TestOptionalGoTypes(t *testing.T) {
 		&agentapiv1.SignedReplyReport{AdvisoryDocumentSequence: proto.Uint64(0)},
 		&agentapiv1.EnvelopeAdvisory{LastIpcRefusal: wardenv1.IpcRefusalCode_IPC_REFUSAL_CODE_UNSPECIFIED.Enum()},
 		&agentapiv1.AdminToolRecord{RefusedSequence: proto.Uint64(0), ReleaseSequence: proto.Uint64(0)},
+		&wardenv1.CatalogEntry{MaxActStepsPerHour: proto.Uint32(0)},
+		&wardenv1.EnabledPlaybook{MaxActStepsPerHour: proto.Uint32(0)},
 	}
 	present := 0
 	for _, m := range msgs {
@@ -282,8 +284,8 @@ func TestOptionalGoTypes(t *testing.T) {
 			return true
 		})
 	}
-	if present != 15 {
-		t.Errorf("%d present fields, want 15", present)
+	if present != 17 {
+		t.Errorf("%d present fields, want 17", present)
 	}
 }
 
