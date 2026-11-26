@@ -47,8 +47,19 @@ var v1SignedBodyOptional = []protoreflect.FullName{
 	"warden.v1.ExecutorStatusBody.recovery_floor",
 }
 
+// v1TrustDocOptional: the two trust-document fields of
+// signing-and-updates §4.5 and §4.6, where absence means "the catalog's
+// value" and differs from every present value. Nofal's ruling 2026-11-26
+// on the conflict with agent-api R52b (issue #68); warden PR #93 amended R52b
+// and AC48 to thirteen (merged 2026-11-26).
+var v1TrustDocOptional = []protoreflect.FullName{
+	"warden.v1.CatalogEntry.max_act_steps_per_hour",
+	"warden.v1.EnabledPlaybook.max_act_steps_per_hour",
+}
+
 func v1Optional() []protoreflect.FullName {
-	return append(slices.Clone(v1TypedResultOptional), v1SignedBodyOptional...)
+	out := append(slices.Clone(v1TypedResultOptional), v1SignedBodyOptional...)
+	return append(out, v1TrustDocOptional...)
 }
 
 // TestOptionalAllowListAgentapi (AC48): the fields declared proto3
@@ -64,10 +75,11 @@ func TestOptionalAllowListAgentapi(t *testing.T) {
 
 // TestOptionalAllowListWardenV1 (AC48): the fields declared proto3
 // optional in warden.v1, every file included, are exactly the eleven of
-// R52b.
+// R52b plus the two trust-document fields of Nofal's ruling 2026-11-26
+// (issue #68): thirteen.
 func TestOptionalAllowListWardenV1(t *testing.T) {
-	if got := len(v1Optional()); got != 11 {
-		t.Fatalf("allow-list has %d fields, R52b lists 11", got)
+	if got := len(v1Optional()); got != 13 {
+		t.Fatalf("allow-list has %d fields, R52b (as amended 2026-11-26) lists 13", got)
 	}
 	for _, v := range optionalViolations(allMessages(packageFiles(t, wardenPkg)), v1Optional()) {
 		t.Error(v)
@@ -111,7 +123,7 @@ func optionalTestFile(t *testing.T, pkg, msg string, fields []struct {
 
 // TestOptionalAllowListDetects (AC48): a test-only copy of a §4 message
 // with a fifth optional field, a test-only warden.v1-style message with an
-// optional field outside the eleven, and a listed field declared without
+// optional field outside the thirteen, and a listed field declared without
 // optional each fail the check.
 func TestOptionalAllowListDetects(t *testing.T) {
 	type f = struct {
@@ -128,7 +140,7 @@ func TestOptionalAllowListDetects(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
-	t.Run("optional outside the eleven", func(t *testing.T) {
+	t.Run("optional outside the thirteen", func(t *testing.T) {
 		mds := optionalTestFile(t, "wardentest.v1", "FsUsageResult", []f{{"total_bytes", true}})
 		got := optionalViolations(mds, nil)
 		want := []string{"wardentest.v1.FsUsageResult.total_bytes: optional field not in the R52b allow-list"}
@@ -176,7 +188,7 @@ func zeroOf(fd protoreflect.FieldDescriptor) protoreflect.Value {
 
 var deterministic = proto.MarshalOptions{Deterministic: true}
 
-// TestOptionalFieldsRoundTrip (AC48): each of the fifteen optional fields
+// TestOptionalFieldsRoundTrip (AC48): each of the seventeen optional fields
 // round-trips absent, present with zero (or the empty string) and present
 // with a non-zero value, and absent stays distinct from a present zero,
 // through both proto.Unmarshal and the strict scanner.
@@ -240,9 +252,9 @@ func TestOptionalFieldsRoundTrip(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// TestOptionalGoTypes: the generated Go fields of the fifteen optional
-// fields are pointers, so absent (nil) and a present zero are distinct in
-// code too.
+// TestOptionalGoTypes: the generated Go fields of all seventeen optional
+// fields (the two of issue #68 included) are pointers, so absent (nil) and a
+// present zero are distinct in code too.
 func TestOptionalGoTypes(t *testing.T) {
 	msgs := []proto.Message{
 		&wardenv1.PrimitiveResult{ExitStatus: proto.Int32(0)},
@@ -255,6 +267,8 @@ func TestOptionalGoTypes(t *testing.T) {
 		&agentapiv1.SignedReplyReport{AdvisoryDocumentSequence: proto.Uint64(0)},
 		&agentapiv1.EnvelopeAdvisory{LastIpcRefusal: wardenv1.IpcRefusalCode_IPC_REFUSAL_CODE_UNSPECIFIED.Enum()},
 		&agentapiv1.AdminToolRecord{RefusedSequence: proto.Uint64(0), ReleaseSequence: proto.Uint64(0)},
+		&wardenv1.CatalogEntry{MaxActStepsPerHour: proto.Uint32(0)},
+		&wardenv1.EnabledPlaybook{MaxActStepsPerHour: proto.Uint32(0)},
 	}
 	present := 0
 	for _, m := range msgs {
@@ -270,8 +284,8 @@ func TestOptionalGoTypes(t *testing.T) {
 			return true
 		})
 	}
-	if present != 15 {
-		t.Errorf("%d present fields, want 15", present)
+	if present != 17 {
+		t.Errorf("%d present fields, want 17", present)
 	}
 }
 

@@ -311,7 +311,11 @@ var (
 	// AgentMessage it is the limit of the whole AgentMessage carrying it
 	// (agent-api R11). On a warden.v1 message it is the whole-message limit
 	// its spec states (MAX_ENVELOPE_BYTES, MAX_RESULT_BYTES, the IPC refusal
-	// and the signed result body).
+	// and the signed result body). On a trust-document body type
+	// (KeysetBody, ReleaseKeyStatementBody, CatalogBody, ManifestBody,
+	// ReleaseBody) it is
+	// the kind's limit of signing-and-updates §4.2 for the whole
+	// SignedDocument carrying that body.
 	//
 	// optional uint32 max_message_bytes = 50101;
 	E_MaxMessageBytes = &file_warden_v1_options_proto_extTypes[13]

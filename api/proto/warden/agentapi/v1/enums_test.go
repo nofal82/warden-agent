@@ -113,9 +113,19 @@ var v1Enums = enumTable{
 	"HelperCleanupMethod":       {"CGROUP_KILL", "FREEZE"},
 	"ProcessIdentityMethod":     {"PIDFD", "O_PATH_FALLBACK"},
 	"DatabaseUnavailableReason": {"CONTAINMENT_INCOMPLETE", "LEFTOVER_HELPER_CGROUP", "HELPER_CGROUP_NOT_EMPTY"},
+	// signing-and-updates §4.4, §4.5. Primitive is not here: its values
+	// skip the reserved 20, so TestPrimitiveEnumMirrorsTypedRequest in
+	// api/proto/warden/v1 checks it against the TypedRequest oneof.
+	"KeyRole":      {"ENVELOPE", "MANIFEST"},
+	"Risk":         {"LOW", "MEDIUM", "HIGH"},
+	"UnitCategory": {"WEB", "DATABASE", "ADMIN_LISTED", "ALL"},
+	"RollbackKind": {"NOT_APPLICABLE", "INVERSE", "NONE_NEEDED", "HOUSEKEEPING", "IMPOSSIBLE"},
 	"DbCondition": {"MONGODB_AUTHORIZATION_NOT_ENFORCED", "MONGODB_HELPER_LOGIN_FAILED",
 		"POSTGRES_TOO_MANY_CONNECTABLE_DATABASES", "POSTGRES_UNCHECKED_DATABASES",
 		"POSTGRES_SKIPPED_DATABASES", "POSTGRES_LOGIN_EVENT_TRIGGER"},
+	// signing-and-updates §4.7 (Artifact).
+	"ArtifactComponent": {"AGENT", "EXECUTOR", "DBHELPER", "ADMIN_TOOL"},
+	"ArtifactArch":      {"AMD64", "ARM64"},
 }
 
 // preM1Enums: every enum of the pre-M1 files (Go reviewer, PR #16):
@@ -201,7 +211,21 @@ func TestAgentapiEnumValues(t *testing.T) {
 // TestNewV1EnumValues: every warden.v1 enum added by issue #12 has exactly
 // the spec's values and numbers.
 func TestNewV1EnumValues(t *testing.T) {
-	for _, v := range enumViolations(wardenPkg, allEnums(newV1Files(t)), v1Enums) {
+	var eds []protoreflect.EnumDescriptor
+	foundPrimitive := false
+	for _, ed := range allEnums(newV1Files(t)) {
+		// Numbered by the P numbers with 20 reserved (signing-and-updates
+		// §4.5); checked in api/proto/warden/v1.
+		if ed.FullName() == "warden.v1.Primitive" {
+			foundPrimitive = true
+			continue
+		}
+		eds = append(eds, ed)
+	}
+	if !foundPrimitive {
+		t.Error("warden.v1.Primitive is not declared (signing-and-updates §4.5, issue #68)")
+	}
+	for _, v := range enumViolations(wardenPkg, eds, v1Enums) {
 		t.Error(v)
 	}
 }

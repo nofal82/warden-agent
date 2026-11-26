@@ -1,0 +1,456 @@
+// Trust documents: the signed keyset, release-key statement, playbook
+// catalog, server manifest and software release manifest, each carried in
+// a SignedDocument.
+//
+// Source of truth: warden/specs/signing-and-updates.md §4.1–§4.7 (§4.2 for
+// the size limits, §4.3 for key encodings), agent-identity.md §4.1 and
+// §4.3 (server UUID form, 32 KiB manifest limit).
+// Field and enum numbers are final wire numbers: never renumber or reuse
+// one; remove one only by reserving its number and name.
+//
+// The signed message of each kind is DOMAIN || 0x00 || body (§4.2, R2).
+// The domain strings are fixed by the verifier and its golden vectors, not
+// by this file: options.proto (agent-api §4.10) has no option for them.
+// Limits below are descriptor data only (decision 0008); verifiers keep
+// their hand-written checks and never read the options.
+//
+// Timestamps are int64 Unix seconds, as in the envelope.
+
+syntax = "proto3";
+
+package warden.v1;
+
+import "warden/v1/envelope.proto";
+import "warden/v1/options.proto";
+
+option go_package = "github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1";
+
+// SignedDocument is the container of every trust document kind (§4.1).
+// The whole-message limit depends on the kind, so it sits on each body
+// type as max_message_bytes, not here.
+message SignedDocument {
+  // SHA-256 of the signer's public key encoding (R10).
+  bytes key_id = 1 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // Deterministic encoding of the kind's body. The greatest length is the
+  // largest kind limit, MAX_CATALOG_BYTES.
+  bytes body = 2 [
+    (min_bytes) = 1,
+    (max_bytes) = 262144
+  ];
+  // Ed25519: exactly 64; ECDSA P-256: ASN.1 DER, 8 … 72. The option holds
+  // the union; the per-kind length is checked by the verifier.
+  bytes signature = 3 [
+    (min_bytes) = 8,
+    (max_bytes) = 72
+  ];
+}
+
+// ReleaseKeyStatementBody: "these are CloudVertex's current release keys",
+// signed by the offline vendor key (§4.3a). Only the ceremony tool reads
+// it. MAX_STATEMENT_BYTES.
+message ReleaseKeyStatementBody {
+  option (max_message_bytes) = 4096;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  uint64 sequence = 2 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // Informational.
+  int64 issued_at = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  // Canonical DER SubjectPublicKeyInfo of an ECDSA P-256 key (§4.3).
+  repeated bytes release_keys = 4 [
+    (min_count) = 1,
+    (max_count) = 2,
+    (min_bytes) = 91,
+    (max_bytes) = 91,
+    (sorted) = true
+  ];
+}
+
+// KeysetBody: the installation root key's statement of the envelope and
+// manifest keys, control-plane CAs, release keys and audit checkpoint keys
+// (§4.4). MAX_KEYSET_BYTES.
+message KeysetBody {
+  option (max_message_bytes) = 4096;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  uint64 sequence = 2 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // Informational; never used for a decision (OQ35).
+  int64 signed_at = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  // 1 or 2 per role, checked by the verifier.
+  repeated KeyEntry keys = 4 [
+    (min_count) = 2,
+    (max_count) = 4,
+    (sorted_by) = "public_key"
+  ];
+  repeated CaEntry controlplane_cas = 5 [
+    (min_count) = 1,
+    (max_count) = 2,
+    (sorted_by) = "fingerprint"
+  ];
+  // Canonical DER SubjectPublicKeyInfo of an ECDSA P-256 key (§4.3); no
+  // validity period (R11).
+  repeated bytes release_keys = 6 [
+    (min_count) = 1,
+    (max_count) = 2,
+    (min_bytes) = 91,
+    (max_bytes) = 91,
+    (sorted) = true
+  ];
+  // 0 … 2. Validated, never used by executors and agents (R11a).
+  repeated CheckpointKeyEntry audit_checkpoint_keys = 7 [
+    (max_count) = 2,
+    (sorted_by) = "fingerprint"
+  ];
+}
+
+// KeyEntry is one envelope or manifest signing key.
+message KeyEntry {
+  KeyRole role = 1 [(required) = true];
+  // Raw 32-byte Ed25519 public key; key_id = SHA-256 of these bytes.
+  bytes public_key = 2 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // R13; not_after − not_before ≤ MAX_KEY_VALIDITY is checked by the
+  // verifier.
+  int64 not_before = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  int64 not_after = 4 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+}
+
+enum KeyRole {
+  KEY_ROLE_UNSPECIFIED = 0;
+  KEY_ROLE_ENVELOPE = 1;
+  KEY_ROLE_MANIFEST = 2;
+}
+
+// CaEntry pins one control-plane CA certificate.
+message CaEntry {
+  // SHA-256 of the CA certificate DER (agent-identity §4.3).
+  bytes fingerprint = 1 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // R13; the MAX_CA_ENTRY_VALIDITY length check is in the verifier.
+  int64 not_before = 2 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  int64 not_after = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+}
+
+// CheckpointKeyEntry names one audit checkpoint key (R11, R11a).
+message CheckpointKeyEntry {
+  // SHA-256 of the raw 32-byte Ed25519 public key (audit-trail R25).
+  bytes fingerprint = 1 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // R13; the MAX_KEY_VALIDITY length check is in the verifier.
+  int64 not_before = 2 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  int64 not_after = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+}
+
+// CatalogBody: the playbooks CI has published, signed with the release
+// key (§4.5). MAX_CATALOG_BYTES.
+message CatalogBody {
+  option (max_message_bytes) = 262144;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  uint64 sequence = 2 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // Informational.
+  int64 published_at = 3 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  repeated CatalogEntry entries = 4 [
+    (max_count) = 64,
+    (sorted_by) = "playbook_id"
+  ];
+}
+
+message CatalogEntry {
+  string playbook_id = 1 [
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{1,62}$"
+  ];
+  // SemVer 2.0.0 without build metadata.
+  string version = 2 [
+    (max_bytes) = 32,
+    (pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+  ];
+  // Playbook package digest (R25).
+  bytes digest = 3 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  repeated CatalogStep steps = 4 [
+    (min_count) = 1,
+    (max_count) = 32,
+    (sorted_by) = "step_id"
+  ];
+  Risk max_risk = 5 [(required) = true];
+  // Not L3 with an IMPOSSIBLE step (R24): checked by the verifier.
+  AutonomyLevel autonomy_ceiling = 6 [(required) = true];
+  // Absent: 3 (action-envelope R40). Explicit presence, so a present value
+  // is encoded even when it is out of range and the verifier refuses it.
+  optional uint32 max_act_steps_per_hour = 7 [
+    (min_uint) = 1,
+    (max_uint) = 60
+  ];
+  // Empty: the playbook may act on no unit. ALL only alone
+  // (typed-action-catalog R6a): checked by the verifier.
+  repeated UnitCategory unit_categories = 8 [
+    (max_count) = 3,
+    (sorted) = true
+  ];
+  // systemd service units; only on tls-cert-expiring (R24), checked by the
+  // verifier. 256 bytes is systemd's unit name limit.
+  repeated string renewal_units = 9 [
+    (max_count) = 4,
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$",
+    (sorted) = true
+  ];
+}
+
+message CatalogStep {
+  string step_id = 1 [
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{0,62}$"
+  ];
+  // All of one class and one rollback kind (R24): checked by the verifier.
+  repeated Primitive allowed_primitives = 2 [
+    (min_count) = 1,
+    (max_count) = 8,
+    (sorted) = true
+  ];
+  // Must equal the executor's fixed kind for the step's primitives (R24).
+  RollbackKind rollback_kind = 3 [(required) = true];
+}
+
+enum Risk {
+  RISK_UNSPECIFIED = 0;
+  RISK_LOW = 1;
+  RISK_MEDIUM = 2;
+  RISK_HIGH = 3;
+}
+
+enum UnitCategory {
+  UNIT_CATEGORY_UNSPECIFIED = 0;
+  UNIT_CATEGORY_WEB = 1;
+  UNIT_CATEGORY_DATABASE = 2;
+  UNIT_CATEGORY_ADMIN_LISTED = 3;
+  UNIT_CATEGORY_ALL = 4;
+}
+
+enum RollbackKind {
+  ROLLBACK_KIND_UNSPECIFIED = 0;
+  // Read-only primitive.
+  ROLLBACK_KIND_NOT_APPLICABLE = 1;
+  ROLLBACK_KIND_INVERSE = 2;
+  ROLLBACK_KIND_NONE_NEEDED = 3;
+  ROLLBACK_KIND_HOUSEKEEPING = 4;
+  ROLLBACK_KIND_IMPOSSIBLE = 5;
+}
+
+// Primitive: each value equals the P number of typed-action-catalog §4.4,
+// which is also the TypedRequest member number. P20 was removed.
+enum Primitive {
+  reserved 20;
+  reserved "PRIMITIVE_CERT_RENEW";
+  PRIMITIVE_UNSPECIFIED = 0;
+  PRIMITIVE_FS_USAGE = 1;
+  PRIMITIVE_FS_LARGEST_ENTRIES = 2;
+  PRIMITIVE_SERVICE_STATUS = 3;
+  PRIMITIVE_WEB_CONFIG_TEST = 4;
+  PRIMITIVE_CERT_INSPECT = 5;
+  PRIMITIVE_PROCESS_TOP = 6;
+  PRIMITIVE_MEM_STATUS = 7;
+  PRIMITIVE_CONTAINER_INSPECT = 8;
+  PRIMITIVE_DB_QUERY_READONLY = 9;
+  PRIMITIVE_DB_BACKUP_VERIFY = 10;
+  PRIMITIVE_SERVICE_RESTART = 11;
+  PRIMITIVE_SERVICE_RESET_FAILED = 12;
+  PRIMITIVE_SERVICE_RELOAD = 13;
+  PRIMITIVE_SERVICE_START = 14;
+  PRIMITIVE_SERVICE_SET_CPU_QUOTA = 15;
+  PRIMITIVE_PROCESS_SIGNAL = 16;
+  PRIMITIVE_FILE_DELETE_BY_AGE = 17;
+  PRIMITIVE_JOURNAL_VACUUM = 18;
+  PRIMITIVE_PKG_CACHE_CLEAN = 19;
+  PRIMITIVE_CONTAINER_RESTART = 21;
+  PRIMITIVE_DB_TERMINATE_SESSION = 22;
+}
+
+// ManifestBody: one server's enabled playbooks and unit lists, signed with
+// the manifest-role key (§4.6). MAX_MANIFEST_BYTES, the 32 KiB limit of
+// the enrollment bundle's manifest field (agent-identity §4.3).
+message ManifestBody {
+  option (max_message_bytes) = 32768;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  // Server UUID, lowercase canonical form (agent-identity §4.1); must equal
+  // the local server-ID file (verifier).
+  string server_id = 2 [
+    (min_bytes) = 36,
+    (max_bytes) = 36,
+    (pattern) = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+  ];
+  uint64 sequence = 3 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // ≤ now + MAX_SKEW (action-envelope R34): checked by the verifier.
+  int64 issued_at = 4 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  // Empty or exactly 24 bytes (R27); the "exactly" part is in the verifier.
+  bytes post_recovery = 5 [(max_bytes) = 24];
+  repeated EnabledPlaybook playbooks = 6 [
+    (max_count) = 64,
+    (sorted_by) = "playbook_id"
+  ];
+  repeated string unfreeze = 7 [
+    (max_count) = 64,
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{1,62}$",
+    (sorted) = true
+  ];
+  // Exact canonical unit names; templates (name@.service) are refused by
+  // the verifier (OQ15).
+  repeated string backup_units = 8 [
+    (max_count) = 8,
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$",
+    (sorted) = true
+  ];
+  repeated string admin_listed_units = 9 [
+    (max_count) = 32,
+    (max_bytes) = 256,
+    (pattern) = "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,240}\\.service$",
+    (sorted) = true
+  ];
+}
+
+message EnabledPlaybook {
+  // Must exist in the installed catalog (verifier).
+  string playbook_id = 1 [
+    (max_bytes) = 63,
+    (pattern) = "^[a-z][a-z0-9-]{1,62}$"
+  ];
+  AutonomyLevel autonomy_ceiling = 2 [(required) = true];
+  // Absent: the catalog's value. Present: 1 … the catalog's value; the
+  // option holds 60, the catalog's own greatest value.
+  optional uint32 max_act_steps_per_hour = 3 [
+    (min_uint) = 1,
+    (max_uint) = 60
+  ];
+}
+
+// ReleaseBody: the software release manifest CI signs with the release key
+// (§4.7). The installer and the admin tool's update modes verify artifacts
+// against it (agent-packaging R21 step 6). MAX_RELEASE_BYTES.
+message ReleaseBody {
+  option (max_message_bytes) = 16384;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  string product = 2 [
+    (min_bytes) = 12,
+    (max_bytes) = 12,
+    (pattern) = "^warden-agent$"
+  ];
+  // SemVer 2.0.0 without build metadata.
+  string version = 3 [
+    (max_bytes) = 32,
+    (pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+  ];
+  // Strictly increasing across releases (CI refuses otherwise).
+  uint64 release_sequence = 4 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // Informational.
+  int64 released_at = 5 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  // Sorted by (component, arch), one per pair: a two-field key that
+  // sorted_by cannot express, so the verifier checks it.
+  repeated Artifact artifacts = 6 [
+    (min_count) = 1,
+    (max_count) = 16
+  ];
+}
+
+// Artifact is one release file, named <component>-<arch> in lowercase
+// inside a release or update bundle.
+message Artifact {
+  ArtifactComponent component = 1 [(required) = true];
+  ArtifactArch arch = 2 [(required) = true];
+  bytes sha256 = 3 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // 1 … 64 MiB.
+  uint64 size = 4 [
+    (min_uint) = 1,
+    (max_uint) = 67108864
+  ];
+}
+
+enum ArtifactComponent {
+  ARTIFACT_COMPONENT_UNSPECIFIED = 0;
+  ARTIFACT_COMPONENT_AGENT = 1;
+  ARTIFACT_COMPONENT_EXECUTOR = 2;
+  ARTIFACT_COMPONENT_DBHELPER = 3;
+  ARTIFACT_COMPONENT_ADMIN_TOOL = 4;
+}
+
+enum ArtifactArch {
+  ARTIFACT_ARCH_UNSPECIFIED = 0;
+  ARTIFACT_ARCH_AMD64 = 1;
+  ARTIFACT_ARCH_ARM64 = 2;
+}

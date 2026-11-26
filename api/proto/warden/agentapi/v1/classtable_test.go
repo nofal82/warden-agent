@@ -340,8 +340,9 @@ func TestClassTableRoots(t *testing.T) {
 			continue
 		}
 		// The envelope and the requests are carried only as opaque signed
-		// bytes (agent-api R22), so no walk may reach them.
-		if preM1Files[messageByName(t, full).ParentFile().Path()] {
+		// bytes (agent-api R22), and so are the trust documents
+		// (TrustDocument.document; issue #68), so no walk may reach them.
+		if preM1Files[messageByName(t, full).ParentFile().Path()] || trustDocMessages[name] {
 			if seenOut[full] || seenIn[full] {
 				t.Errorf("%s: an envelope or request message is reached by a walk", full)
 			}
