@@ -1,7 +1,8 @@
 // Trust documents: the signed keyset, release-key statement, playbook
-// catalog and server manifest, each carried in a SignedDocument.
+// catalog, server manifest and software release manifest, each carried in
+// a SignedDocument.
 //
-// Source of truth: warden/specs/signing-and-updates.md §4.1–§4.6 (§4.2 for
+// Source of truth: warden/specs/signing-and-updates.md §4.1–§4.7 (§4.2 for
 // the size limits, §4.3 for key encodings), agent-identity.md §4.1 and
 // §4.3 (server UUID form, 32 KiB manifest limit).
 // Field and enum numbers are final wire numbers: never renumber or reuse
@@ -385,4 +386,71 @@ message EnabledPlaybook {
     (min_uint) = 1,
     (max_uint) = 60
   ];
+}
+
+// ReleaseBody: the software release manifest CI signs with the release key
+// (§4.7). The installer and the admin tool's update modes verify artifacts
+// against it (agent-packaging R21 step 6). MAX_RELEASE_BYTES.
+message ReleaseBody {
+  option (max_message_bytes) = 16384;
+  uint32 format_version = 1 [
+    (min_uint) = 1,
+    (max_uint) = 1
+  ];
+  string product = 2 [
+    (min_bytes) = 12,
+    (max_bytes) = 12,
+    (pattern) = "^warden-agent$"
+  ];
+  // SemVer 2.0.0 without build metadata.
+  string version = 3 [
+    (max_bytes) = 32,
+    (pattern) = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+  ];
+  // Strictly increasing across releases (CI refuses otherwise).
+  uint64 release_sequence = 4 [
+    (min_uint) = 1,
+    (max_uint) = 9223372036854775807
+  ];
+  // Informational.
+  int64 released_at = 5 [
+    (min_int) = 1,
+    (max_int) = 1099511627775
+  ];
+  // Sorted by (component, arch), one per pair: a two-field key that
+  // sorted_by cannot express, so the verifier checks it.
+  repeated Artifact artifacts = 6 [
+    (min_count) = 1,
+    (max_count) = 16
+  ];
+}
+
+// Artifact is one release file, named <component>-<arch> in lowercase
+// inside a release or update bundle.
+message Artifact {
+  ArtifactComponent component = 1 [(required) = true];
+  ArtifactArch arch = 2 [(required) = true];
+  bytes sha256 = 3 [
+    (min_bytes) = 32,
+    (max_bytes) = 32
+  ];
+  // 1 … 64 MiB.
+  uint64 size = 4 [
+    (min_uint) = 1,
+    (max_uint) = 67108864
+  ];
+}
+
+enum ArtifactComponent {
+  ARTIFACT_COMPONENT_UNSPECIFIED = 0;
+  ARTIFACT_COMPONENT_AGENT = 1;
+  ARTIFACT_COMPONENT_EXECUTOR = 2;
+  ARTIFACT_COMPONENT_DBHELPER = 3;
+  ARTIFACT_COMPONENT_ADMIN_TOOL = 4;
+}
+
+enum ArtifactArch {
+  ARTIFACT_ARCH_UNSPECIFIED = 0;
+  ARTIFACT_ARCH_AMD64 = 1;
+  ARTIFACT_ARCH_ARM64 = 2;
 }

@@ -1,7 +1,8 @@
 // Trust documents: the signed keyset, release-key statement, playbook
-// catalog and server manifest, each carried in a SignedDocument.
+// catalog, server manifest and software release manifest, each carried in
+// a SignedDocument.
 //
-// Source of truth: warden/specs/signing-and-updates.md §4.1–§4.6 (§4.2 for
+// Source of truth: warden/specs/signing-and-updates.md §4.1–§4.7 (§4.2 for
 // the size limits, §4.3 for key encodings), agent-identity.md §4.1 and
 // §4.3 (server UUID form, 32 KiB manifest limit).
 // Field and enum numbers are final wire numbers: never renumber or reuse
@@ -359,6 +360,110 @@ func (x Primitive) Number() protoreflect.EnumNumber {
 // Deprecated: Use Primitive.Descriptor instead.
 func (Primitive) EnumDescriptor() ([]byte, []int) {
 	return file_warden_v1_trust_document_proto_rawDescGZIP(), []int{4}
+}
+
+type ArtifactComponent int32
+
+const (
+	ArtifactComponent_ARTIFACT_COMPONENT_UNSPECIFIED ArtifactComponent = 0
+	ArtifactComponent_ARTIFACT_COMPONENT_AGENT       ArtifactComponent = 1
+	ArtifactComponent_ARTIFACT_COMPONENT_EXECUTOR    ArtifactComponent = 2
+	ArtifactComponent_ARTIFACT_COMPONENT_DBHELPER    ArtifactComponent = 3
+	ArtifactComponent_ARTIFACT_COMPONENT_ADMIN_TOOL  ArtifactComponent = 4
+)
+
+// Enum value maps for ArtifactComponent.
+var (
+	ArtifactComponent_name = map[int32]string{
+		0: "ARTIFACT_COMPONENT_UNSPECIFIED",
+		1: "ARTIFACT_COMPONENT_AGENT",
+		2: "ARTIFACT_COMPONENT_EXECUTOR",
+		3: "ARTIFACT_COMPONENT_DBHELPER",
+		4: "ARTIFACT_COMPONENT_ADMIN_TOOL",
+	}
+	ArtifactComponent_value = map[string]int32{
+		"ARTIFACT_COMPONENT_UNSPECIFIED": 0,
+		"ARTIFACT_COMPONENT_AGENT":       1,
+		"ARTIFACT_COMPONENT_EXECUTOR":    2,
+		"ARTIFACT_COMPONENT_DBHELPER":    3,
+		"ARTIFACT_COMPONENT_ADMIN_TOOL":  4,
+	}
+)
+
+func (x ArtifactComponent) Enum() *ArtifactComponent {
+	p := new(ArtifactComponent)
+	*p = x
+	return p
+}
+
+func (x ArtifactComponent) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ArtifactComponent) Descriptor() protoreflect.EnumDescriptor {
+	return file_warden_v1_trust_document_proto_enumTypes[5].Descriptor()
+}
+
+func (ArtifactComponent) Type() protoreflect.EnumType {
+	return &file_warden_v1_trust_document_proto_enumTypes[5]
+}
+
+func (x ArtifactComponent) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ArtifactComponent.Descriptor instead.
+func (ArtifactComponent) EnumDescriptor() ([]byte, []int) {
+	return file_warden_v1_trust_document_proto_rawDescGZIP(), []int{5}
+}
+
+type ArtifactArch int32
+
+const (
+	ArtifactArch_ARTIFACT_ARCH_UNSPECIFIED ArtifactArch = 0
+	ArtifactArch_ARTIFACT_ARCH_AMD64       ArtifactArch = 1
+	ArtifactArch_ARTIFACT_ARCH_ARM64       ArtifactArch = 2
+)
+
+// Enum value maps for ArtifactArch.
+var (
+	ArtifactArch_name = map[int32]string{
+		0: "ARTIFACT_ARCH_UNSPECIFIED",
+		1: "ARTIFACT_ARCH_AMD64",
+		2: "ARTIFACT_ARCH_ARM64",
+	}
+	ArtifactArch_value = map[string]int32{
+		"ARTIFACT_ARCH_UNSPECIFIED": 0,
+		"ARTIFACT_ARCH_AMD64":       1,
+		"ARTIFACT_ARCH_ARM64":       2,
+	}
+)
+
+func (x ArtifactArch) Enum() *ArtifactArch {
+	p := new(ArtifactArch)
+	*p = x
+	return p
+}
+
+func (x ArtifactArch) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ArtifactArch) Descriptor() protoreflect.EnumDescriptor {
+	return file_warden_v1_trust_document_proto_enumTypes[6].Descriptor()
+}
+
+func (ArtifactArch) Type() protoreflect.EnumType {
+	return &file_warden_v1_trust_document_proto_enumTypes[6]
+}
+
+func (x ArtifactArch) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ArtifactArch.Descriptor instead.
+func (ArtifactArch) EnumDescriptor() ([]byte, []int) {
+	return file_warden_v1_trust_document_proto_rawDescGZIP(), []int{6}
 }
 
 // SignedDocument is the container of every trust document kind (§4.1).
@@ -1230,6 +1335,169 @@ func (x *EnabledPlaybook) GetMaxActStepsPerHour() uint32 {
 	return 0
 }
 
+// ReleaseBody: the software release manifest CI signs with the release key
+// (§4.7). The installer and the admin tool's update modes verify artifacts
+// against it (agent-packaging R21 step 6). MAX_RELEASE_BYTES.
+type ReleaseBody struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FormatVersion uint32                 `protobuf:"varint,1,opt,name=format_version,json=formatVersion,proto3" json:"format_version,omitempty"`
+	Product       string                 `protobuf:"bytes,2,opt,name=product,proto3" json:"product,omitempty"`
+	// SemVer 2.0.0 without build metadata.
+	Version string `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	// Strictly increasing across releases (CI refuses otherwise).
+	ReleaseSequence uint64 `protobuf:"varint,4,opt,name=release_sequence,json=releaseSequence,proto3" json:"release_sequence,omitempty"`
+	// Informational.
+	ReleasedAt int64 `protobuf:"varint,5,opt,name=released_at,json=releasedAt,proto3" json:"released_at,omitempty"`
+	// Sorted by (component, arch), one per pair: a two-field key that
+	// sorted_by cannot express, so the verifier checks it.
+	Artifacts     []*Artifact `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseBody) Reset() {
+	*x = ReleaseBody{}
+	mi := &file_warden_v1_trust_document_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseBody) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseBody) ProtoMessage() {}
+
+func (x *ReleaseBody) ProtoReflect() protoreflect.Message {
+	mi := &file_warden_v1_trust_document_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseBody.ProtoReflect.Descriptor instead.
+func (*ReleaseBody) Descriptor() ([]byte, []int) {
+	return file_warden_v1_trust_document_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ReleaseBody) GetFormatVersion() uint32 {
+	if x != nil {
+		return x.FormatVersion
+	}
+	return 0
+}
+
+func (x *ReleaseBody) GetProduct() string {
+	if x != nil {
+		return x.Product
+	}
+	return ""
+}
+
+func (x *ReleaseBody) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ReleaseBody) GetReleaseSequence() uint64 {
+	if x != nil {
+		return x.ReleaseSequence
+	}
+	return 0
+}
+
+func (x *ReleaseBody) GetReleasedAt() int64 {
+	if x != nil {
+		return x.ReleasedAt
+	}
+	return 0
+}
+
+func (x *ReleaseBody) GetArtifacts() []*Artifact {
+	if x != nil {
+		return x.Artifacts
+	}
+	return nil
+}
+
+// Artifact is one release file, named <component>-<arch> in lowercase
+// inside a release or update bundle.
+type Artifact struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Component ArtifactComponent      `protobuf:"varint,1,opt,name=component,proto3,enum=warden.v1.ArtifactComponent" json:"component,omitempty"`
+	Arch      ArtifactArch           `protobuf:"varint,2,opt,name=arch,proto3,enum=warden.v1.ArtifactArch" json:"arch,omitempty"`
+	Sha256    []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// 1 … 64 MiB.
+	Size          uint64 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Artifact) Reset() {
+	*x = Artifact{}
+	mi := &file_warden_v1_trust_document_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Artifact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Artifact) ProtoMessage() {}
+
+func (x *Artifact) ProtoReflect() protoreflect.Message {
+	mi := &file_warden_v1_trust_document_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
+func (*Artifact) Descriptor() ([]byte, []int) {
+	return file_warden_v1_trust_document_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Artifact) GetComponent() ArtifactComponent {
+	if x != nil {
+		return x.Component
+	}
+	return ArtifactComponent_ARTIFACT_COMPONENT_UNSPECIFIED
+}
+
+func (x *Artifact) GetArch() ArtifactArch {
+	if x != nil {
+		return x.Arch
+	}
+	return ArtifactArch_ARTIFACT_ARCH_UNSPECIFIED
+}
+
+func (x *Artifact) GetSha256() []byte {
+	if x != nil {
+		return x.Sha256
+	}
+	return nil
+}
+
+func (x *Artifact) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
 var File_warden_v1_trust_document_proto protoreflect.FileDescriptor
 
 const file_warden_v1_trust_document_proto_rawDesc = "" +
@@ -1308,7 +1576,20 @@ const file_warden_v1_trust_document_proto_rawDesc = "" +
 	"playbookId\x12I\n" +
 	"\x10autonomy_ceiling\x18\x02 \x01(\x0e2\x18.warden.v1.AutonomyLevelB\x04\xe0\xb5\x18\x01R\x0fautonomyCeiling\x12A\n" +
 	"\x16max_act_steps_per_hour\x18\x03 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18<H\x00R\x12maxActStepsPerHour\x88\x01\x01B\x19\n" +
-	"\x17_max_act_steps_per_hour*Q\n" +
+	"\x17_max_act_steps_per_hour\"\xef\x03\n" +
+	"\vReleaseBody\x12/\n" +
+	"\x0eformat_version\x18\x01 \x01(\rB\b\xa8\xb5\x18\x01\xb0\xb5\x18\x01R\rformatVersion\x124\n" +
+	"\aproduct\x18\x02 \x01(\tB\x1a\x88\xb5\x18\f\x90\xb5\x18\fʵ\x18\x0e^warden-agent$R\aproduct\x12\xc6\x01\n" +
+	"\aversion\x18\x03 \x01(\tB\xab\x01\x90\xb5\x18 ʵ\x18\xa2\x01^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$R\aversion\x12;\n" +
+	"\x10release_sequence\x18\x04 \x01(\x04B\x10\xa8\xb5\x18\x01\xb0\xb5\x18\xff\xff\xff\xff\xff\xff\xff\xff\x7fR\x0freleaseSequence\x12.\n" +
+	"\vreleased_at\x18\x05 \x01(\x03B\r\xb8\xb5\x18\x01\xc0\xb5\x18\xff\xff\xff\xff\xff\x1fR\n" +
+	"releasedAt\x12;\n" +
+	"\tartifacts\x18\x06 \x03(\v2\x13.warden.v1.ArtifactB\b\x98\xb5\x18\x01\xa0\xb5\x18\x10R\tartifacts:\x06\xa8\xbb\x18\x80\x80\x01\"\xc2\x01\n" +
+	"\bArtifact\x12@\n" +
+	"\tcomponent\x18\x01 \x01(\x0e2\x1c.warden.v1.ArtifactComponentB\x04\xe0\xb5\x18\x01R\tcomponent\x121\n" +
+	"\x04arch\x18\x02 \x01(\x0e2\x17.warden.v1.ArtifactArchB\x04\xe0\xb5\x18\x01R\x04arch\x12 \n" +
+	"\x06sha256\x18\x03 \x01(\fB\b\x88\xb5\x18 \x90\xb5\x18 R\x06sha256\x12\x1f\n" +
+	"\x04size\x18\x04 \x01(\x04B\v\xa8\xb5\x18\x01\xb0\xb5\x18\x80\x80\x80 R\x04size*Q\n" +
 	"\aKeyRole\x12\x18\n" +
 	"\x14KEY_ROLE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11KEY_ROLE_ENVELOPE\x10\x01\x12\x15\n" +
@@ -1354,7 +1635,17 @@ const file_warden_v1_trust_document_proto_rawDesc = "" +
 	"\x18PRIMITIVE_JOURNAL_VACUUM\x10\x12\x12\x1d\n" +
 	"\x19PRIMITIVE_PKG_CACHE_CLEAN\x10\x13\x12\x1f\n" +
 	"\x1bPRIMITIVE_CONTAINER_RESTART\x10\x15\x12\"\n" +
-	"\x1ePRIMITIVE_DB_TERMINATE_SESSION\x10\x16\"\x04\b\x14\x10\x14*\x14PRIMITIVE_CERT_RENEWB>Z<github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1b\x06proto3"
+	"\x1ePRIMITIVE_DB_TERMINATE_SESSION\x10\x16\"\x04\b\x14\x10\x14*\x14PRIMITIVE_CERT_RENEW*\xba\x01\n" +
+	"\x11ArtifactComponent\x12\"\n" +
+	"\x1eARTIFACT_COMPONENT_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18ARTIFACT_COMPONENT_AGENT\x10\x01\x12\x1f\n" +
+	"\x1bARTIFACT_COMPONENT_EXECUTOR\x10\x02\x12\x1f\n" +
+	"\x1bARTIFACT_COMPONENT_DBHELPER\x10\x03\x12!\n" +
+	"\x1dARTIFACT_COMPONENT_ADMIN_TOOL\x10\x04*_\n" +
+	"\fArtifactArch\x12\x1d\n" +
+	"\x19ARTIFACT_ARCH_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13ARTIFACT_ARCH_AMD64\x10\x01\x12\x17\n" +
+	"\x13ARTIFACT_ARCH_ARM64\x10\x02B>Z<github.com/nofal82/warden-agent/api/proto/warden/v1;wardenv1b\x06proto3"
 
 var (
 	file_warden_v1_trust_document_proto_rawDescOnce sync.Once
@@ -1368,46 +1659,53 @@ func file_warden_v1_trust_document_proto_rawDescGZIP() []byte {
 	return file_warden_v1_trust_document_proto_rawDescData
 }
 
-var file_warden_v1_trust_document_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_warden_v1_trust_document_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_warden_v1_trust_document_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
+var file_warden_v1_trust_document_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_warden_v1_trust_document_proto_goTypes = []any{
 	(KeyRole)(0),                    // 0: warden.v1.KeyRole
 	(Risk)(0),                       // 1: warden.v1.Risk
 	(UnitCategory)(0),               // 2: warden.v1.UnitCategory
 	(RollbackKind)(0),               // 3: warden.v1.RollbackKind
 	(Primitive)(0),                  // 4: warden.v1.Primitive
-	(*SignedDocument)(nil),          // 5: warden.v1.SignedDocument
-	(*ReleaseKeyStatementBody)(nil), // 6: warden.v1.ReleaseKeyStatementBody
-	(*KeysetBody)(nil),              // 7: warden.v1.KeysetBody
-	(*KeyEntry)(nil),                // 8: warden.v1.KeyEntry
-	(*CaEntry)(nil),                 // 9: warden.v1.CaEntry
-	(*CheckpointKeyEntry)(nil),      // 10: warden.v1.CheckpointKeyEntry
-	(*CatalogBody)(nil),             // 11: warden.v1.CatalogBody
-	(*CatalogEntry)(nil),            // 12: warden.v1.CatalogEntry
-	(*CatalogStep)(nil),             // 13: warden.v1.CatalogStep
-	(*ManifestBody)(nil),            // 14: warden.v1.ManifestBody
-	(*EnabledPlaybook)(nil),         // 15: warden.v1.EnabledPlaybook
-	(AutonomyLevel)(0),              // 16: warden.v1.AutonomyLevel
+	(ArtifactComponent)(0),          // 5: warden.v1.ArtifactComponent
+	(ArtifactArch)(0),               // 6: warden.v1.ArtifactArch
+	(*SignedDocument)(nil),          // 7: warden.v1.SignedDocument
+	(*ReleaseKeyStatementBody)(nil), // 8: warden.v1.ReleaseKeyStatementBody
+	(*KeysetBody)(nil),              // 9: warden.v1.KeysetBody
+	(*KeyEntry)(nil),                // 10: warden.v1.KeyEntry
+	(*CaEntry)(nil),                 // 11: warden.v1.CaEntry
+	(*CheckpointKeyEntry)(nil),      // 12: warden.v1.CheckpointKeyEntry
+	(*CatalogBody)(nil),             // 13: warden.v1.CatalogBody
+	(*CatalogEntry)(nil),            // 14: warden.v1.CatalogEntry
+	(*CatalogStep)(nil),             // 15: warden.v1.CatalogStep
+	(*ManifestBody)(nil),            // 16: warden.v1.ManifestBody
+	(*EnabledPlaybook)(nil),         // 17: warden.v1.EnabledPlaybook
+	(*ReleaseBody)(nil),             // 18: warden.v1.ReleaseBody
+	(*Artifact)(nil),                // 19: warden.v1.Artifact
+	(AutonomyLevel)(0),              // 20: warden.v1.AutonomyLevel
 }
 var file_warden_v1_trust_document_proto_depIdxs = []int32{
-	8,  // 0: warden.v1.KeysetBody.keys:type_name -> warden.v1.KeyEntry
-	9,  // 1: warden.v1.KeysetBody.controlplane_cas:type_name -> warden.v1.CaEntry
-	10, // 2: warden.v1.KeysetBody.audit_checkpoint_keys:type_name -> warden.v1.CheckpointKeyEntry
+	10, // 0: warden.v1.KeysetBody.keys:type_name -> warden.v1.KeyEntry
+	11, // 1: warden.v1.KeysetBody.controlplane_cas:type_name -> warden.v1.CaEntry
+	12, // 2: warden.v1.KeysetBody.audit_checkpoint_keys:type_name -> warden.v1.CheckpointKeyEntry
 	0,  // 3: warden.v1.KeyEntry.role:type_name -> warden.v1.KeyRole
-	12, // 4: warden.v1.CatalogBody.entries:type_name -> warden.v1.CatalogEntry
-	13, // 5: warden.v1.CatalogEntry.steps:type_name -> warden.v1.CatalogStep
+	14, // 4: warden.v1.CatalogBody.entries:type_name -> warden.v1.CatalogEntry
+	15, // 5: warden.v1.CatalogEntry.steps:type_name -> warden.v1.CatalogStep
 	1,  // 6: warden.v1.CatalogEntry.max_risk:type_name -> warden.v1.Risk
-	16, // 7: warden.v1.CatalogEntry.autonomy_ceiling:type_name -> warden.v1.AutonomyLevel
+	20, // 7: warden.v1.CatalogEntry.autonomy_ceiling:type_name -> warden.v1.AutonomyLevel
 	2,  // 8: warden.v1.CatalogEntry.unit_categories:type_name -> warden.v1.UnitCategory
 	4,  // 9: warden.v1.CatalogStep.allowed_primitives:type_name -> warden.v1.Primitive
 	3,  // 10: warden.v1.CatalogStep.rollback_kind:type_name -> warden.v1.RollbackKind
-	15, // 11: warden.v1.ManifestBody.playbooks:type_name -> warden.v1.EnabledPlaybook
-	16, // 12: warden.v1.EnabledPlaybook.autonomy_ceiling:type_name -> warden.v1.AutonomyLevel
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	17, // 11: warden.v1.ManifestBody.playbooks:type_name -> warden.v1.EnabledPlaybook
+	20, // 12: warden.v1.EnabledPlaybook.autonomy_ceiling:type_name -> warden.v1.AutonomyLevel
+	19, // 13: warden.v1.ReleaseBody.artifacts:type_name -> warden.v1.Artifact
+	5,  // 14: warden.v1.Artifact.component:type_name -> warden.v1.ArtifactComponent
+	6,  // 15: warden.v1.Artifact.arch:type_name -> warden.v1.ArtifactArch
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_warden_v1_trust_document_proto_init() }
@@ -1424,8 +1722,8 @@ func file_warden_v1_trust_document_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_warden_v1_trust_document_proto_rawDesc), len(file_warden_v1_trust_document_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   11,
+			NumEnums:      7,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
