@@ -17,10 +17,10 @@ import (
 )
 
 // trustDocRoots are the top-level trust-document messages the scanner
-// must accept as roots (signing-and-updates §4.1, §4.3a–§4.6).
+// must accept as roots (signing-and-updates §4.1, §4.3a–§4.7).
 var trustDocRoots = func() []protoreflect.FullName {
 	var out []protoreflect.FullName
-	for _, n := range []string{"SignedDocument", "ReleaseKeyStatementBody", "KeysetBody", "CatalogBody", "ManifestBody"} {
+	for _, n := range []string{"SignedDocument", "ReleaseKeyStatementBody", "KeysetBody", "CatalogBody", "ManifestBody", "ReleaseBody"} {
 		out = append(out, protoreflect.FullName("warden.v1."+n))
 	}
 	return out
@@ -67,12 +67,17 @@ func TestTrustDocumentScan(t *testing.T) {
 	}
 	catalogFull, _ := populatedDoc(t, "warden.v1.CatalogBody")
 	manifestFull, _ := populatedDoc(t, "warden.v1.ManifestBody")
+	release := trustMD(t, "warden.v1.ReleaseBody")
+	artifact := trustMD(t, "warden.v1.Artifact")
+	releaseFull, _ := populatedDoc(t, "warden.v1.ReleaseBody")
 
 	fv1 := fVarint(nil, 1, 1)
 	keyID := fBytes(nil, 1, make([]byte, 32))
 	stepID := fBytes(nil, 1, []byte("restart"))
 	pbID := fBytes(nil, 1, []byte("restart-nginx"))
 	key := cat(fVarint(nil, 1, 1), fBytes(nil, 2, make([]byte, 32)))
+	sha := fBytes(nil, 3, make([]byte, 32))
+	art := cat(fVarint(nil, 1, 1), fVarint(nil, 2, 1), sha, fVarint(nil, 4, 1))
 
 	runScanCases(t, []scanCase{
 		// Canonical documents, field 7 of KeysetBody included (§4.4).
@@ -122,6 +127,18 @@ func TestTrustDocumentScan(t *testing.T) {
 		{"catalog_step_rollback_before_primitives", step, cat(stepID, fVarint(nil, 3, 2), fBytes(nil, 2, packedVarints(11))), wirescan.ErrNonCanonical},
 		{"signed_document_signature_before_body", signed,
 			cat(keyID, fBytes(nil, 3, make([]byte, 64)), fBytes(nil, 2, []byte{1})), wirescan.ErrNonCanonical},
+
+		// signing-and-updates §4.7: ReleaseBody and Artifact, rules as
+		// above.
+		{"release_full", release, releaseFull, nil},
+		{"artifact_unknown_99_nested", release, cat(fv1, fBytes(nil, 6, fVarint(append([]byte(nil), art...), 99, 1))), wirescan.ErrUnknownField},
+		{"artifact_size_overlong", artifact, fVarintOverlong(cat(fVarint(nil, 1, 1), fVarint(nil, 2, 1), sha), 4, 5), wirescan.ErrNonCanonical},
+		{"artifact_component_2^32", artifact, fVarint(nil, 1, 1<<32), wirescan.ErrNonCanonical},
+		{"artifact_sha256_explicit_empty", artifact, cat(fVarint(nil, 1, 1), fVarint(nil, 2, 1), fBytes(nil, 3, nil)), wirescan.ErrNonCanonical},
+		{"release_format_version_explicit_0", release, fVarint(nil, 1, 0), wirescan.ErrNonCanonical},
+		{"release_artifacts_before_released_at", release, cat(fv1, fBytes(nil, 6, art), fVarint(nil, 5, 1)), wirescan.ErrNonCanonical},
+		{"release_product_as_varint", release, cat(fv1, fVarint(nil, 2, 1)), wirescan.ErrWireType},
+		{"artifact_sha256_twice", artifact, cat(fVarint(nil, 1, 1), fVarint(nil, 2, 1), sha, sha), wirescan.ErrDuplicateField},
 	})
 }
 

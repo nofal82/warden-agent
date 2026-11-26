@@ -123,6 +123,9 @@ var v1Enums = enumTable{
 	"DbCondition": {"MONGODB_AUTHORIZATION_NOT_ENFORCED", "MONGODB_HELPER_LOGIN_FAILED",
 		"POSTGRES_TOO_MANY_CONNECTABLE_DATABASES", "POSTGRES_UNCHECKED_DATABASES",
 		"POSTGRES_SKIPPED_DATABASES", "POSTGRES_LOGIN_EVENT_TRIGGER"},
+	// signing-and-updates §4.7 (Artifact).
+	"ArtifactComponent": {"AGENT", "EXECUTOR", "DBHELPER", "ADMIN_TOOL"},
+	"ArtifactArch":      {"AMD64", "ARM64"},
 }
 
 // preM1Enums: every enum of the pre-M1 files (Go reviewer, PR #16):

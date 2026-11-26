@@ -1,7 +1,7 @@
 package wardenv1_test
 
 // Contract tests for the trust-document messages of signing-and-updates
-// §4.1–§4.6 (issue #68). The messages are looked up by name at run time,
+// §4.1–§4.7 (issue #68). The messages are looked up by name at run time,
 // never through generated Go types, so these tests compile before the
 // .proto exists and fail until it does.
 
@@ -239,6 +239,27 @@ func largestManifest(t *testing.T) protoreflect.Message {
 	return m
 }
 
+// largestRelease is a §4.7 release manifest at every limit: 16 artifacts,
+// a 32-character version and the greatest number in every field. Only
+// 4 × 2 (component, arch) pairs exist, so 16 artifacts repeat pairs;
+// "one per pair" is the verifier's rule, not a size bound.
+func largestRelease(t *testing.T) protoreflect.Message {
+	m := docMsg(t, "ReleaseBody")
+	set(t, m, "format_version", uint32(1))
+	set(t, m, "product", "warden-agent")
+	set(t, m, "version", "1.2.3-"+strings.Repeat("a", 26)) // 32 characters
+	set(t, m, "release_sequence", maxDocSequence)
+	set(t, m, "released_at", maxDocTime)
+	for i := 0; i < 16; i++ {
+		a := addMsg(t, m, "artifacts")
+		set(t, a, "component", "ARTIFACT_COMPONENT_ADMIN_TOOL")
+		set(t, a, "arch", "ARTIFACT_ARCH_ARM64")
+		set(t, a, "sha256", fake(byte(0x80+i), 32))
+		set(t, a, "size", uint64(67108864))
+	}
+	return m
+}
+
 // TestLargestDocumentSizeBounds is signing-and-updates §4.2's size-bound
 // list: the largest valid body of each kind marshals under the stated
 // bound, and the SignedDocument carrying it, with a 32-byte key id and
@@ -254,6 +275,7 @@ func TestLargestDocumentSizeBounds(t *testing.T) {
 		{"catalog", largestCatalog, 251 * 1024, 262144},
 		{"manifest", largestManifest, 20 * 1024, 32768},
 		{"release_key_statement", largestStatement, 4096, 4096},
+		{"release", largestRelease, 4096, 16384},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

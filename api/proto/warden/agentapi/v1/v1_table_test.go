@@ -44,7 +44,7 @@ package agentapiv1_test
 //	   SemVer pattern. Accepted by Nofal, PR #60, 2026-11-23; each derived
 //	   bound names its source at the row or option set that uses it.
 //	V7 max_message_bytes on a trust-document body type (KeysetBody,
-//	   ReleaseKeyStatementBody, CatalogBody, ManifestBody) is the kind's
+//	   ReleaseKeyStatementBody, CatalogBody, ManifestBody, ReleaseBody) is the kind's
 //	   limit of signing-and-updates §4.2 for the whole SignedDocument
 //	   carrying that body, as on an AgentMessage member type;
 //	   SignedDocument itself carries none, and its body max_bytes 262,144
@@ -631,10 +631,32 @@ var v1Table = msgTable{
 		// V8.
 		{3, "max_act_steps_per_hour", "optional uint32", o(minU(1), maxU(60))},
 	}},
+
+	// signing-and-updates §4.7; MAX_RELEASE_BYTES (§4.2, V7)
+	"ReleaseBody": {opts: maxMsg(16384), fields: []fieldSpec{
+		{1, "format_version", "uint32", formatV1},
+		// "Exactly warden-agent": the length and the pattern together.
+		{2, "product", "string", o(exactB(12), pat(`^warden-agent$`))},
+		{3, "version", "string", o(maxB(32), pat(semverPattern))},
+		{4, "release_sequence", "uint64", docSequence},
+		// "Informational": range only.
+		{5, "released_at", "int64", docTime},
+		// No sorted_by: the sort key is the pair (component, arch), which
+		// sorted_by cannot express; it and "one per pair" stay
+		// hand-written.
+		{6, "artifacts", "repeated M:Artifact", o(minC(1), maxC(16))},
+	}},
+	"Artifact": {opts: none, fields: []fieldSpec{
+		{1, "component", "E:ArtifactComponent", req},
+		{2, "arch", "E:ArtifactArch", req},
+		{3, "sha256", "bytes", exactB(32)},
+		// 1 … 64 MiB.
+		{4, "size", "uint64", o(minU(1), maxU(67108864))},
+	}},
 }
 
 // trustDocMessages are the warden.v1 messages of signing-and-updates
-// §4.1–§4.6 (issue #68). The control plane sends them to the server as
+// §4.1–§4.7 (issue #68). The control plane sends them to the server as
 // opaque signed bytes (agent-api TrustDocument.document), so, as the
 // envelope, no redaction or class-table walk may reach them.
 var trustDocMessages = map[string]bool{
@@ -642,6 +664,7 @@ var trustDocMessages = map[string]bool{
 	"KeyEntry": true, "CaEntry": true, "CheckpointKeyEntry": true,
 	"CatalogBody": true, "CatalogEntry": true, "CatalogStep": true,
 	"ManifestBody": true, "EnabledPlaybook": true,
+	"ReleaseBody": true, "Artifact": true,
 }
 
 // validityEntry is the row of CaEntry and CheckpointKeyEntry
