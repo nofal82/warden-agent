@@ -13,14 +13,17 @@ import (
 	wardenv1 "github.com/nofal82/warden-agent/api/proto/warden/v1"
 )
 
-// TestMaxSkewDrift (agent-api AC52): MAX_SKEW (action-envelope R16) has
-// three runtime copies in this repository: MaxSkew here, identity.MaxSkew
-// (certificate validity, R15) and the agent's advisory copy, which depguard
-// keeps out of this package. The contract records the value once, as the
+// TestMaxSkewDrift (agent-api AC52, ceremony 12.1): MAX_SKEW
+// (action-envelope R16) has four runtime copies in this repository: MaxSkew
+// here (envelope), identity.MaxSkew (certificate validity, R15), the agent's
+// advisory copy, which depguard keeps out of this package, and the manifest
+// verifier's trustdoc.MaxSkew (issued_at bound, signing-and-updates §4.6).
+// The control plane's agentendpoint.MaxSkew in warden is the fifth copy and
+// is checked there. The contract records the value once, as the
 // max_skew_seconds option on EnvelopeBody (agent-api §4.10, 50102). No
 // binary reads the option; this test fails when any copy differs from it.
-// The two other copies are read from source so no test import crosses the
-// boundaries depguard enforces.
+// The three other copies here are read from source so no test import
+// crosses the boundaries depguard enforces.
 func TestMaxSkewDrift(t *testing.T) {
 	opts := (&wardenv1.EnvelopeBody{}).ProtoReflect().Descriptor().Options()
 	if !proto.HasExtension(opts, wardenv1.E_MaxSkewSeconds) {
@@ -38,6 +41,9 @@ func TestMaxSkewDrift(t *testing.T) {
 	}
 	if got := constSeconds(t, filepath.Join("..", "identity", "verify.go"), "MaxSkew", "Second"); got != want {
 		t.Errorf("identity.MaxSkew = %d s, want %d (max_skew_seconds)", got, want)
+	}
+	if got := constSeconds(t, filepath.Join("..", "trustdoc", "manifest.go"), "MaxSkew", ""); got != want {
+		t.Errorf("trustdoc.MaxSkew = %d, want %d (max_skew_seconds)", got, want)
 	}
 }
 
