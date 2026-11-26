@@ -16,6 +16,7 @@ control plane, in two proto packages (decision 0008, amended 2026-10-25):
 | `v1/options.proto` | `agent-api.md` §4.10, §4.10.1 (R52c) |
 | `v1/primitive_result.proto` | `typed-action-catalog.md` §4.8, §4.8.1 |
 | `v1/executor.proto` | `executor-ipc.md` §4.3, §4.5–§4.9; `action-envelope.md` §4.4–§4.6 |
+| `v1/trust_document.proto` | `signing-and-updates.md` §4.1–§4.6 (`ReleaseBody`, §4.7, not yet); `agent-identity.md` §4.1, §4.3 |
 | `agentapi/v1/enrollment.proto` | `agent-api.md` §4.3 |
 | `agentapi/v1/stream.proto` | `agent-api.md` §4.4, §4.5 |
 | `agentapi/v1/outbox.proto` | `agent-api.md` §4.6 |
@@ -30,7 +31,7 @@ table `agentapi/v1/classtable_gen.go` is generated from them; after changing a
 (the contract test fails until you do). Since the M2 envelope change
 (issue #57, agent-api R52c, decision 0008), `warden.v1` limits are options
 too, pinned by the golden table in `agentapi/v1/v1_table_test.go`; the
-readings V1–V6 at the top of that table say how a spec limit that needs a
+readings V1–V8 at the top of that table say how a spec limit that needs a
 reading was written. The executor's validators stay hand-written and never
 depend on the options; the strict scanner never reads them.
 
