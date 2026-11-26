@@ -157,6 +157,14 @@ func FuzzCheck(f *testing.F) {
 	seeds = append(seeds, explicitDefaultSeeds(f)...)
 	seeds = append(seeds, orderSeeds(f)...)
 	seeds = append(seeds, trustDocFuzzSeeds()...)
+	// Fully populated documents, so the fuzzer starts from the deep
+	// paths (CatalogEntry, CatalogStep, packed enums). Built from
+	// trustDocRoots rather than a list of name literals, which gitleaks
+	// reads as a key.
+	for _, name := range trustDocRoots {
+		b, _ := populatedDoc(f, name)
+		seeds = append(seeds, b)
+	}
 	for _, s := range seeds {
 		f.Add(s)
 	}

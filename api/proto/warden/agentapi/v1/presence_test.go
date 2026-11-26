@@ -50,8 +50,8 @@ var v1SignedBodyOptional = []protoreflect.FullName{
 // v1TrustDocOptional: the two trust-document fields of
 // signing-and-updates §4.5 and §4.6, where absence means "the catalog's
 // value" and differs from every present value. Nofal's ruling 2026-11-26
-// on the conflict with agent-api R52b (issue #68); a warden PR amends R52b
-// and AC48 to thirteen.
+// on the conflict with agent-api R52b (issue #68); warden PR #93 amended R52b
+// and AC48 to thirteen (merged 2026-11-26).
 var v1TrustDocOptional = []protoreflect.FullName{
 	"warden.v1.CatalogEntry.max_act_steps_per_hour",
 	"warden.v1.EnabledPlaybook.max_act_steps_per_hour",
